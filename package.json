@@ -1,0 +1,40 @@
+{
+  "name": "dashboard-clipper",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test:aggregator": "node scripts/test-aggregator.js",
+    "test:api": "node scripts/test-aggregator.js"
+  },
+  "dependencies": {
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.75.1",
+    "axios": "^1.12.2",
+    "chart.js": "^4.4.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.555.0",
+    "next": "^16.0.7",
+    "react": "19.1.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "19.1.0",
+    "react-icons": "^5.5.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "^16.0.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

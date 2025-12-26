@@ -1,0 +1,26 @@
+name: Auto Refresh Data
+
+on:
+  schedule:
+    # Run every 4 hours at minute 0 (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Allow manual trigger from Actions tab
+
+jobs:
+  refresh-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh TikTok Data
+        run: |
+          echo "Triggering TikTok refresh..."
+          curl -f -X GET "${{ secrets.APP_URL }}/api/admin/tiktok/refresh-all" || echo "TikTok refresh failed"
+        continue-on-error: true
+
+      - name: Wait before Instagram refresh
+        run: sleep 30
+
+      - name: Refresh Instagram Data
+        run: |
+          echo "Triggering Instagram refresh..."
+          curl -f -X GET "${{ secrets.APP_URL }}/api/admin/ig/refresh-all" || echo "Instagram refresh failed"
+        continue-on-error: true

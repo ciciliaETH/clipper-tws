@@ -1,0 +1,13 @@
+name: tiktok-refresh-cron (edge) — schedule disabled
+on:
+  # schedule:
+  #   - cron: "*/20 * * * *"  # Disabled to avoid double refresh; use Next.js workflow instead
+  workflow_dispatch: {}
+jobs:
+  call-refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Supabase Edge Function
+        shell: bash
+        run: curl -sS -X GET -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE }}" -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE }}" "https://nyiwkaipsmtehmlsrmtm.supabase.co/functions/v1/tiktok-refresh?concurrency=3"
+
