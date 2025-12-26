@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { hasRequiredHashtag } from '@/lib/hashtag-filter';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60 seconds to stay safe
@@ -299,7 +300,7 @@ export async function GET(req: Request) {
       const totalIGMap = new Map<string,{views:number;likes:number;comments:number}>();
 
       // per-campaign breakdown
-      const { data: campaigns } = await supa.from('campaigns').select('id, name').order('start_date', { ascending: true });
+      const { data: campaigns } = await supa.from('campaigns').select('id, name, required_hashtags').order('start_date', { ascending: true });
       if (campaigns && campaigns.length) {
         const { data: empGroups } = await supa.from('employee_groups').select('campaign_id, employee_id').in('campaign_id', campaigns.map((c:any)=> c.id));
         const byCamp = new Map<string, string[]>();
@@ -318,7 +319,33 @@ export async function GET(req: Request) {
           const ttHandles = await deriveTTUsernames(camp.id, ids);
           const igHandles = await deriveIGUsernamesForCampaign(supa, camp.id);
 
-          if (!snapshotsOnly && ttHandles.length) {
+          const requiredHashtags: string[] = Array.isArray((camp as any)?.required_hashtags) ? (camp as any).required_hashtags : [];
+
+          if (requiredHashtags.length && ttHandles.length) {
+            const { data: ttRows } = await supa
+              .from('tiktok_posts_daily')
+              .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count, title')
+              .in('username', ttHandles)
+              .gte('post_date', start)
+              .lte('post_date', end);
+            const tmp = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
+            for (const r of ttRows||[]) {
+              const title = String((r as any).title||'');
+              if (!hasRequiredHashtag(title, requiredHashtags)) continue;
+              const d = String((r as any).post_date);
+              const cur = tmp.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+              cur.views += Number((r as any).play_count)||0;
+              cur.likes += Number((r as any).digg_count)||0;
+              cur.comments += Number((r as any).comment_count)||0;
+              cur.shares += Number((r as any).share_count)||0;
+              cur.saves += Number((r as any).save_count)||0;
+              tmp.set(d, cur);
+            }
+            for (const k of keys) {
+              const pv = tmp.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+              ttHistMap.set(k, { date:k, ...pv });
+            }
+          } else if (!snapshotsOnly && ttHandles.length) {
             const { data: ttRows } = await supa
               .from('tiktok_posts_daily')
               .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count')
@@ -346,7 +373,29 @@ export async function GET(req: Request) {
             }
           }
 
-          if (!snapshotsOnly && igHandles.length) {
+          if (requiredHashtags.length && igHandles.length) {
+            const { data: igRows } = await supa
+              .from('instagram_posts_daily')
+              .select('username, post_date, play_count, like_count, comment_count, caption')
+              .in('username', igHandles)
+              .gte('post_date', start)
+              .lte('post_date', end);
+            const tmp = new Map<string,{views:number;likes:number;comments:number}>();
+            for (const r of igRows||[]) {
+              const caption = String((r as any).caption||'');
+              if (!hasRequiredHashtag(caption, requiredHashtags)) continue;
+              const d = String((r as any).post_date);
+              const cur = tmp.get(d) || { views:0, likes:0, comments:0 };
+              cur.views += Number((r as any).play_count)||0;
+              cur.likes += Number((r as any).like_count)||0;
+              cur.comments += Number((r as any).comment_count)||0;
+              tmp.set(d, cur);
+            }
+            for (const k of keys) {
+              const pv = tmp.get(k) || { views:0, likes:0, comments:0 };
+              igHistMap.set(k, { date:k, views: pv.views, likes: pv.likes, comments: pv.comments } as any);
+            }
+          } else if (!snapshotsOnly && igHandles.length) {
             const { data: igRows } = await supa
               .from('instagram_posts_daily')
               .select('username, post_date, play_count, like_count, comment_count')

@@ -22,20 +22,27 @@ export async function GET(req: Request) {
     const windowDays = ([7, 28] as number[]).includes(daysParam) ? daysParam : 7
     const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit') || '10')))
 
-    if (!campaignId) {
-      return NextResponse.json({ error: 'campaign_id required' }, { status: 400 })
-    }
-
     const supabase = supabaseAdmin()
     
-    // Get campaign info including required hashtags
-    const { data: campaign } = await supabase
-      .from('campaigns')
-      .select('id, name, required_hashtags')
-      .eq('id', campaignId)
-      .single()
-    
-    const requiredHashtags = campaign?.required_hashtags || null
+    // If campaign_id is missing, we aggregate across ALL campaigns (all employees)
+    let requiredHashtags: string[] | null = null
+    let employeeIds: string[] = []
+    if (!campaignId) {
+      // All employees (role=karyawan)
+      const { data: emps } = await supabase
+        .from('users')
+        .select('id')
+        .eq('role','karyawan')
+      employeeIds = (emps||[]).map((r:any)=> String(r.id))
+    } else {
+      // Get campaign info including required hashtags
+      const { data: campaign } = await supabase
+        .from('campaigns')
+        .select('id, name, required_hashtags')
+        .eq('id', campaignId)
+        .single()
+      requiredHashtags = (campaign as any)?.required_hashtags || null
+    }
     
     // Calculate date window
     const endISO = new Date().toISOString().slice(0, 10)
@@ -43,28 +50,27 @@ export async function GET(req: Request) {
     startDate.setUTCDate(startDate.getUTCDate() - (windowDays - 1))
     const startISO = startDate.toISOString().slice(0, 10)
 
-    // Get employee list for this campaign
-    const { data: employees } = await supabase
-      .from('employee_groups')
-      .select('employee_id')
-      .eq('campaign_id', campaignId)
-    
-    console.log(`[Top Videos] Campaign ${campaignId}: Found ${employees?.length || 0} employees`)
-    
-    if (!employees || employees.length === 0) {
-      return NextResponse.json({ 
-        videos: [], 
-        campaign_id: campaignId,
-        required_hashtags: requiredHashtags,
-        platform, 
-        start: startISO, 
-        end: endISO, 
-        days: windowDays,
-        debug: { employees_count: 0, reason: 'No employees in campaign' }
-      })
+    // Collect employees according to campaign scope
+    if (campaignId) {
+      const { data: employees } = await supabase
+        .from('employee_groups')
+        .select('employee_id')
+        .eq('campaign_id', campaignId)
+      console.log(`[Top Videos] Campaign ${campaignId}: Found ${employees?.length || 0} employees`)
+      if (!employees || employees.length === 0) {
+        return NextResponse.json({ 
+          videos: [], 
+          campaign_id: campaignId,
+          required_hashtags: requiredHashtags,
+          platform, 
+          start: startISO, 
+          end: endISO, 
+          days: windowDays,
+          debug: { employees_count: 0, reason: 'No employees in campaign' }
+        })
+      }
+      employeeIds = employees.map((e: any) => e.employee_id)
     }
-
-    const employeeIds = employees.map((e: any) => e.employee_id)
 
     // Get usernames mapping
     const { data: users } = await supabase
@@ -290,7 +296,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       videos: topVideos,
-      campaign_id: campaignId,
+      campaign_id: campaignId || null,
       required_hashtags: requiredHashtags,
       platform,
       start: startISO,

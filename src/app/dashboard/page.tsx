@@ -294,16 +294,14 @@ export default function DashboardTotalPage() {
         )}
       </div>
 
-      {/* Top 5 Video FYP Section */}
-      {activeCampaignId && (
-        <div className="mt-8">
-          <TopViralDashboard 
-            campaignId={activeCampaignId} 
-            days={accrualWindow === 7 ? 7 : 28} 
-            limit={5} 
-          />
-        </div>
-      )}
+      {/* Top 5 Video FYP Section (aggregate across all groups when campaignId undefined) */}
+      <div className="mt-8">
+        <TopViralDashboard 
+          campaignId={activeCampaignId || undefined} 
+          days={accrualWindow === 7 ? 7 : 28} 
+          limit={5} 
+        />
+      </div>
     </div>
   );
 }

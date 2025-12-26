@@ -23,7 +23,7 @@ interface Video {
 }
 
 interface TopViralDashboardProps {
-  campaignId: string
+  campaignId?: string
   days?: 7 | 28
   limit?: number
 }
@@ -34,16 +34,17 @@ export default function TopViralDashboard({ campaignId, days = 7, limit = 5 }: T
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!campaignId) return
-    
     const fetchVideos = async () => {
       setLoading(true)
       setError(null)
       
       try {
-        const res = await fetch(
-          `/api/leaderboard/top-videos?campaign_id=${campaignId}&days=${days}&limit=${limit}&platform=all`
-        )
+        const url = new URL('/api/leaderboard/top-videos', window.location.origin)
+        if (campaignId) url.searchParams.set('campaign_id', campaignId)
+        url.searchParams.set('days', String(days))
+        url.searchParams.set('limit', String(limit))
+        url.searchParams.set('platform', 'all')
+        const res = await fetch(url.toString())
         
         if (!res.ok) {
           throw new Error('Failed to fetch top videos')
