@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const interval = (url.searchParams.get('interval') || 'daily').toLowerCase() as 'daily'|'weekly'|'monthly';
     const mode = (url.searchParams.get('mode')||'accrual').toLowerCase();
+    const respectHashtags = url.searchParams.get('respect_hashtags') === '1';
     const snapshotsOnly = url.searchParams.get('snapshots_only') !== '0';
     let startISO = url.searchParams.get('start');
     let endISO = url.searchParams.get('end');
@@ -302,11 +303,50 @@ export async function GET(req: Request) {
       // per-campaign breakdown
       const { data: campaigns } = await supa.from('campaigns').select('id, name, required_hashtags').order('start_date', { ascending: true });
       if (campaigns && campaigns.length) {
-        const { data: empGroups } = await supa.from('employee_groups').select('campaign_id, employee_id').in('campaign_id', campaigns.map((c:any)=> c.id));
+        const { data: empGroups } = await supa
+          .from('employee_groups')
+          .select('campaign_id, employee_id')
+          .in('campaign_id', campaigns.map((c:any)=> c.id));
         const byCamp = new Map<string, string[]>();
         for (const r of empGroups||[]) { const cid=String((r as any).campaign_id); const uid=String((r as any).employee_id); const arr=byCamp.get(cid)||[]; arr.push(uid); byCamp.set(cid, arr); }
+
+        // Helper: if employee_groups is empty for a campaign, derive employee ids from campaign_participants by mapping tiktok usernames to users
+        const resolveIdsFromParticipants = async (campaignId: string): Promise<string[]> => {
+          try {
+            const { data: parts } = await supa
+              .from('campaign_participants')
+              .select('tiktok_username')
+              .eq('campaign_id', campaignId);
+            const handles = Array.from(new Set((parts||[])
+              .map((r:any)=> String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase())
+              .filter(Boolean)));
+            if (!handles.length) return [];
+            const set = new Set<string>();
+            // map via user_tiktok_usernames
+            try {
+              const { data: mapRows } = await supa
+                .from('user_tiktok_usernames')
+                .select('user_id, tiktok_username')
+                .in('tiktok_username', handles);
+              for (const r of mapRows||[]) set.add(String((r as any).user_id));
+            } catch {}
+            // map via users.tiktok_username
+            try {
+              const { data: userRows } = await supa
+                .from('users')
+                .select('id, tiktok_username')
+                .in('tiktok_username', handles);
+              for (const r of userRows||[]) set.add(String((r as any).id));
+            } catch {}
+            return Array.from(set);
+          } catch { return []; }
+        };
+
         for (const camp of campaigns) {
-          const ids = byCamp.get(camp.id) || [];
+          let ids = byCamp.get(camp.id) || [];
+          if (!ids.length) {
+            ids = await resolveIdsFromParticipants(camp.id);
+          }
           // History-based (strict snapshots)
           const series_tiktok_hist = await calcSeriesPlatform(ids, 'tiktok');
           const series_instagram_hist = await calcSeriesPlatform(ids, 'instagram');
@@ -321,7 +361,7 @@ export async function GET(req: Request) {
 
           const requiredHashtags: string[] = Array.isArray((camp as any)?.required_hashtags) ? (camp as any).required_hashtags : [];
 
-          if (requiredHashtags.length && ttHandles.length) {
+          if (respectHashtags && requiredHashtags.length && ttHandles.length && !snapshotsOnly) {
             const { data: ttRows } = await supa
               .from('tiktok_posts_daily')
               .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count, title')
@@ -373,7 +413,7 @@ export async function GET(req: Request) {
             }
           }
 
-          if (requiredHashtags.length && igHandles.length) {
+          if (respectHashtags && requiredHashtags.length && igHandles.length && !snapshotsOnly) {
             const { data: igRows } = await supa
               .from('instagram_posts_daily')
               .select('username, post_date, play_count, like_count, comment_count, caption')

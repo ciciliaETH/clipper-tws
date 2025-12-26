@@ -297,7 +297,6 @@ export default function DashboardTotalPage() {
       {/* Top 5 Video FYP Section (aggregate across all groups when campaignId undefined) */}
       <div className="mt-8">
         <TopViralDashboard 
-          campaignId={activeCampaignId || undefined} 
           days={accrualWindow === 7 ? 7 : 28} 
           limit={5} 
         />
