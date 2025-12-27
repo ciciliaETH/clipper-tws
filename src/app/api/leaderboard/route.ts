@@ -24,74 +24,129 @@ export async function GET(req: Request) {
     const mode = (url.searchParams.get('mode') || 'accrual').toLowerCase();
     const forceDb = mode === 'db' || process.env.LEADERBOARD_PREFER_DB === '1';
     const scope = (url.searchParams.get('scope') || '').toLowerCase(); // 'employees' to aggregate all employees
-    const monthStr = url.searchParams.get('month'); // YYYY-MM to force monthly window
-    const intervalParam = (url.searchParams.get('interval')||'').toLowerCase(); // 'weekly' | 'monthly'
+    const monthStr = url.searchParams.get('month'); // YYYY-MM
+    const intervalParam = (url.searchParams.get('interval')||'').toLowerCase();
     const startParam = url.searchParams.get('start');
     const endParam = url.searchParams.get('end');
     const supabaseAdmin = adminClient();
 
-    // Global accrual across ALL employees for 7/28 days
+    // Global accrual leaderboard SELARAS /groups (pakai campaign aktif + cutoff + snapshots)
     if (mode === 'accrual' && (scope === 'employees' || scope === 'all')) {
       const daysParam = Number(url.searchParams.get('days') || '7');
       const windowDays = ([7,28] as number[]).includes(daysParam) ? daysParam : 7;
       const endISO = new Date().toISOString().slice(0,10);
       const startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+      const cutoffISO = String(url.searchParams.get('cutoff') || process.env.ACCRUAL_CUTOFF_DATE || process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE || '2025-12-20');
 
+      // Ambil SEMUA anggota dari semua groups + union semua user role=karyawan
+      const { data: egAll } = await supabaseAdmin
+        .from('employee_groups')
+        .select('employee_id');
+      const idsEG = Array.from(new Set((egAll||[]).map((r:any)=> String((r as any).employee_id))));
+      const { data: roleUsers } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('role','karyawan');
+      const idsRole = (roleUsers||[]).map((u:any)=> String((u as any).id));
+      const empIds: string[] = Array.from(new Set([ ...idsEG, ...idsRole ]));
+      if (!empIds.length) return NextResponse.json({ top, start: startISO, end: endISO, data: [], scope: 'employees', days: windowDays });
+
+      // Fetch profiles for labeling
       const { data: empUsers } = await supabaseAdmin
         .from('users')
         .select('id, full_name, username, tiktok_username, instagram_username')
-        .eq('role','karyawan');
-      const empIds: string[] = (empUsers||[]).map((u:any)=> String((u as any).id));
-      if (!empIds.length) return NextResponse.json({ top, start: startISO, end: endISO, data: [], scope: 'employees', days: windowDays });
+        .in('id', empIds);
 
-      // Pull history with baseline (prev day)
-      const prev = new Date(startISO+'T00:00:00Z'); prev.setUTCDate(prev.getUTCDate()-1);
-      const prevISO = prev.toISOString().slice(0,10);
-      const { data: hist } = await supabaseAdmin
-        .from('social_metrics_history')
-        .select('user_id, platform, views, likes, comments, shares, saves, captured_at')
-        .in('user_id', empIds)
-        .gte('captured_at', prevISO+'T00:00:00Z')
-        .lte('captured_at', endISO+'T23:59:59Z')
-        .order('user_id', { ascending: true })
-        .order('platform', { ascending: true })
-        .order('captured_at', { ascending: true });
-
-      const byUserPlat = new Map<string, any[]>();
-      for (const r of hist||[]) {
-        const uid = String((r as any).user_id); const plat = String((r as any).platform||'');
-        const key = `${uid}::${plat}`; const arr = byUserPlat.get(key) || []; arr.push(r); byUserPlat.set(key, arr);
-      }
-      const totalsByUser = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
-      for (const [, arr] of byUserPlat.entries()) {
-        let prevRow:any = null; const uid = String((arr?.[0] as any)?.user_id);
-        for (const r of arr) {
-          const date = String((r as any).captured_at).slice(0,10);
-          if (prevRow && date >= startISO && date <= endISO) {
-            const cur = totalsByUser.get(uid) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-            cur.views += Math.max(0, Number((r as any).views||0) - Number((prevRow as any).views||0));
-            cur.likes += Math.max(0, Number((r as any).likes||0) - Number((prevRow as any).likes||0));
-            cur.comments += Math.max(0, Number((r as any).comments||0) - Number((prevRow as any).comments||0));
-            cur.shares += Math.max(0, Number((r as any).shares||0) - Number((prevRow as any).shares||0));
-            cur.saves += Math.max(0, Number((r as any).saves||0) - Number((prevRow as any).saves||0));
-            totalsByUser.set(uid, cur);
-          }
-          prevRow = r;
+      // Helper: accrual per user dari snapshots (persis seperti /groups)
+      const accrualForUser = async (uid: string, startISO: string, endISO: string, cutoffISO: string) => {
+        const prev = new Date(startISO+'T00:00:00Z'); prev.setUTCDate(prev.getUTCDate()-1);
+        const prevISO = prev.toISOString().slice(0,10);
+        const { data: rows } = await supabaseAdmin
+          .from('social_metrics_history')
+          .select('platform, views, likes, comments, shares, saves, captured_at')
+          .eq('user_id', uid)
+          .gte('captured_at', prevISO+'T00:00:00Z')
+          .lte('captured_at', endISO+'T23:59:59Z')
+          .order('captured_at', { ascending: true });
+        const lastTT = new Map<string, any>();
+        const lastIG = new Map<string, any>();
+        for (const r of rows||[]) {
+          const d = String((r as any).captured_at).slice(0,10);
+          const plat = String((r as any).platform||'');
+          if (plat === 'tiktok') lastTT.set(d, r); else if (plat === 'instagram') lastIG.set(d, r);
         }
-      }
-
+        const days: string[] = []; for (let d=new Date(startISO+'T00:00:00Z'); d<=new Date(endISO+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+1)) days.push(d.toISOString().slice(0,10));
+        let totals = { views:0, likes:0, comments:0, shares:0, saves:0 } as any;
+        let prevTT:any = lastTT.get(prevISO) || null;
+        for (const key of days) {
+          const cur = lastTT.get(key);
+          if (cur && prevTT && key >= cutoffISO) {
+            totals.views += Math.max(0, Number((cur as any).views||0) - Number((prevTT as any).views||0));
+            totals.likes += Math.max(0, Number((cur as any).likes||0) - Number((prevTT as any).likes||0));
+            totals.comments += Math.max(0, Number((cur as any).comments||0) - Number((prevTT as any).comments||0));
+            totals.shares += Math.max(0, Number((cur as any).shares||0) - Number((prevTT as any).shares||0));
+            totals.saves += Math.max(0, Number((cur as any).saves||0) - Number((prevTT as any).saves||0));
+          }
+          if (cur) prevTT = cur;
+        }
+        let prevIG:any = lastIG.get(prevISO) || null;
+        for (const key of days) {
+          const cur = lastIG.get(key);
+          if (cur && prevIG && key >= cutoffISO) {
+            totals.views += Math.max(0, Number((cur as any).views||0) - Number((prevIG as any).views||0));
+            totals.likes += Math.max(0, Number((cur as any).likes||0) - Number((prevIG as any).likes||0));
+            totals.comments += Math.max(0, Number((cur as any).comments||0) - Number((prevIG as any).comments||0));
+            totals.shares += Math.max(0, Number((cur as any).shares||0) - Number((prevIG as any).shares||0));
+            totals.saves += Math.max(0, Number((cur as any).saves||0) - Number((prevIG as any).saves||0));
+          }
+          if (cur) prevIG = cur;
+        }
+        return totals;
+      };
+      
       const nameMap = new Map<string,string>();
       for (const u of empUsers||[]) nameMap.set(String((u as any).id), String((u as any).full_name || (u as any).username || (u as any).tiktok_username || (u as any).instagram_username || (u as any).id));
 
-      const rows = Array.from(totalsByUser.entries()).map(([uid, v])=> ({
-        username: nameMap.get(uid) || uid,
-        views: v.views, likes: v.likes, comments: v.comments, shares: v.shares, saves: v.saves, posts: 0,
-        total: v.views + v.likes + v.comments + v.shares + v.saves,
-      }));
+      // Hitung totals persis per user (snapshot accrual) dan saring yang nol
+      const rows: any[] = [];
+      for (const uid of empIds) {
+        const acc = await accrualForUser(uid, startISO, endISO, cutoffISO);
+        const total = acc.views + acc.likes + acc.comments + acc.shares + acc.saves;
+        if (total <= 0) continue;
+        rows.push({
+          username: nameMap.get(uid) || uid,
+          views: acc.views, likes: acc.likes, comments: acc.comments, shares: acc.shares, saves: acc.saves, posts: 0,
+          total,
+        });
+      }
       const sorted = rows.sort((a,b)=> b.total - a.total);
       const limited = top ? sorted.slice(0, top) : sorted;
       const data = limited.map((x,i)=> ({ rank: i+1, ...x }));
-      return NextResponse.json({ top, start: startISO, end: endISO, data, scope:'employees', days: windowDays });
+
+      // Sertakan hadiah kampanye (pakai kampanye terbaru jika ada) agar UI podium menampilkan angka
+      let prizes: { first_prize: number; second_prize: number; third_prize: number } | null = null;
+      try {
+        const { data: latest } = await supabaseAdmin
+          .from('campaigns')
+          .select('id')
+          .order('start_date', { ascending: false })
+          .limit(1);
+        const campId = latest?.[0]?.id as string | undefined;
+        if (campId) {
+          const { data: p } = await supabaseAdmin
+            .from('campaign_prizes')
+            .select('first_prize, second_prize, third_prize')
+            .eq('campaign_id', campId)
+            .maybeSingle();
+          if (p) prizes = {
+            first_prize: Number((p as any).first_prize)||0,
+            second_prize: Number((p as any).second_prize)||0,
+            third_prize: Number((p as any).third_prize)||0,
+          };
+        }
+      } catch {}
+
+      return NextResponse.json({ top, start: startISO, end: endISO, prizes, data, scope:'employees', days: windowDays });
     }
 
     // If monthly + scope=employees → bypass campaign logic and aggregate across all employees

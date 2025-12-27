@@ -26,7 +26,7 @@ export default function LeaderboardPage() {
   const [weeklyEnd, setWeeklyEnd] = useState<string>('')
   const [campaignId, setCampaignId] = useState<string>('')
   const [users, setUsers] = useState<any[]>([])
-    const accrualCutoff = (process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE as string) || '2025-12-20';
+  const accrualCutoff = (process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE as string) || '2025-12-20';
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null)
   const [selectedRow, setSelectedRow] = useState<Row | null>(null)
@@ -46,57 +46,8 @@ export default function LeaderboardPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Failed to load leaderboard');
       setPrizes(json?.prizes || null);
-      const cid = json?.campaign_id || json?.campaignId || '';
-      if (cid) setCampaignId(cid);
       if ('start' in json || 'end' in json) setPeriod({ start: json.start ?? null, end: json.end ?? null });
-
-      // Build rows from the same source as /group to ensure parity
-      if (cid) {
-        const memUrl = new URL(`/api/groups/${encodeURIComponent(cid)}/members`, window.location.origin);
-        memUrl.searchParams.set('mode','accrual');
-        memUrl.searchParams.set('days', iv==='days7' ? '7' : '28');
-        memUrl.searchParams.set('snapshots_only','1');
-        memUrl.searchParams.set('cutoff', accrualCutoff);
-        const mr = await fetch(memUrl.toString(), { cache: 'no-store' });
-        const mj = await mr.json();
-        if (mr.ok) {
-          const rowsBuilt: Row[] = (mj.members||[]).map((p:any)=>({
-            username: String(p.name || p.tiktok_username || 'Anon'),
-            views: Number(p.totals?.views||0),
-            likes: Number(p.totals?.likes||0),
-            comments: Number(p.totals?.comments||0),
-            shares: Number(p.totals?.shares||0),
-            saves: 0,
-            total: Number(p.totals?.views||0)+Number(p.totals?.likes||0)+Number(p.totals?.comments||0)+Number(p.totals?.shares||0)
-          }));
-          rowsBuilt.sort((a,b)=> (b.total||0)-(a.total||0));
-          setRows(rowsBuilt);
-          // build employee->campaign names map for 'di grup mana'
-          try {
-            const campaignsRes = await fetch('/api/campaigns', { cache: 'no-store' });
-            const campaigns = await campaignsRes.json();
-            const mapIdToName = new Map<string,string>((campaigns||[]).map((c:any)=>[String(c.id), String(c.name)]));
-            const groupMap: Record<string,string[]> = {};
-            for (const p of (mj.members||[])) {
-              const uid = String(p.id);
-              const names: string[] = [];
-              if (Array.isArray(p.campaign_ids)) {
-                for (const cid of p.campaign_ids) {
-                  const n = mapIdToName.get(String(cid)); if (n && !names.includes(n)) names.push(n);
-                }
-              }
-              // fallback: active only
-              if (!names.length && cid) { const n=mapIdToName.get(String(cid)); if (n) names.push(n); }
-              groupMap[uid] = names;
-            }
-            setEmployeeGroups(groupMap);
-          } catch {}
-        } else {
-          setRows(json?.data || []);
-        }
-      } else {
-        setRows(json?.data || []);
-      }
+      setRows(json?.data || []);
     } catch(e:any) {
       setError(e?.message || 'Unknown error');
     } finally { setLoading(false); }
