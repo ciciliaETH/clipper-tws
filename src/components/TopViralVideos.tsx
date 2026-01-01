@@ -223,8 +223,7 @@ export default function TopViralVideos({
                 </div>
 
                 {/* Footer */}
-                <div className="mt-3 pt-3 border-t text-xs text-gray-500 flex justify-between">
-                  <span>📅 {new Date(video.post_date).toLocaleDateString()}</span>
+                <div className="mt-3 pt-3 border-t text-xs text-gray-500 text-center">
                   <span>📊 {video.snapshots_count} snapshot{video.snapshots_count > 1 ? 's' : ''}</span>
                 </div>
               </div>

@@ -33,6 +33,11 @@ export default function LeaderboardPage() {
   const [selectedUser, setSelectedUser] = useState<any | null>(null)
   const [showAvatarCard, setShowAvatarCard] = useState<boolean>(false)
   const [employeeGroups, setEmployeeGroups] = useState<Record<string,string[]>>({})
+  
+  // Custom date states
+  const [useCustomDates, setUseCustomDates] = useState(false);
+  const [customStart, setCustomStart] = useState('2025-12-20');
+  const [customEnd, setCustomEnd] = useState('2025-12-26');
 
   const loadEmployees = async (m: string, iv: 'days7'|'days28') => {
     setLoading(true); setError(null);
@@ -41,7 +46,18 @@ export default function LeaderboardPage() {
       // Global leaderboard semua karyawan (bukan hanya 1 group)
       url.searchParams.set('mode','accrual');
       url.searchParams.set('scope','employees');
-      url.searchParams.set('days', iv==='days7' ? '7' : '28');
+      
+      if (useCustomDates) {
+        const start = new Date(customStart);
+        const end = new Date(customEnd);
+        const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        url.searchParams.set('days', String(days));
+        url.searchParams.set('cutoff', customStart);
+        url.searchParams.set('custom', '1');
+      } else {
+        url.searchParams.set('days', iv==='days7' ? '7' : '28');
+      }
+      
       const res = await fetch(url.toString());
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Failed to load leaderboard');
@@ -57,7 +73,7 @@ export default function LeaderboardPage() {
     loadEmployees(month, interval);
     const t = setInterval(()=> setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [month, interval, weeklyStart, weeklyEnd])
+  }, [month, interval, weeklyStart, weeklyEnd, useCustomDates, customStart, customEnd])
 
   useEffect(() => {
     // fetch users for avatar mapping
@@ -124,6 +140,36 @@ export default function LeaderboardPage() {
           <span className="text-white/60">Periode:</span>
           <button className={`px-2 py-1 rounded ${interval==='days7'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days7')}>7 hari</button>
           <button className={`px-2 py-1 rounded ${interval==='days28'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days28')}>28 hari</button>
+          
+          <div className="ml-4 flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer text-white/80">
+              <input 
+                type="checkbox" 
+                checked={useCustomDates} 
+                onChange={(e)=>setUseCustomDates(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <span className="text-xs">Custom Date</span>
+            </label>
+          </div>
+          
+          {useCustomDates && (
+            <>
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e)=>setCustomStart(e.target.value)}
+                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs"
+              />
+              <span className="text-white/60">→</span>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e)=>setCustomEnd(e.target.value)}
+                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs"
+              />
+            </>
+          )}
         </div>
         {/* Header section (title / period / totals) intentionally removed per request */}
       </div>

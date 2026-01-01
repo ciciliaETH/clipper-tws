@@ -55,11 +55,23 @@ export async function GET(req: Request, context: any) {
     const mode = (searchParams.get('mode') || 'postdate').toLowerCase();
     const snapshotsOnly = searchParams.get('snapshots_only') !== '0';
     const daysQ = Number(searchParams.get('days')||'0');
-    const windowDays = ([7,28,60] as number[]).includes(daysQ) ? daysQ : 0;
+    const windowDays = daysQ > 0 ? daysQ : 0;
+    const customMode = searchParams.get('custom') === '1';
+    
     if (mode==='accrual' && windowDays>0) {
-      const endD = new Date();
-      const startD = new Date(); startD.setUTCDate(endD.getUTCDate()-(windowDays-1));
-      start = startD.toISOString().slice(0,10); end = endD.toISOString().slice(0,10);
+      // Check if custom date mode
+      if (customMode) {
+        // Custom date: use cutoff as start, calculate end from days
+        start = cutoffParam;
+        const endD = new Date(cutoffParam + 'T00:00:00Z');
+        endD.setUTCDate(endD.getUTCDate() + (windowDays - 1));
+        end = endD.toISOString().slice(0,10);
+      } else {
+        // Preset mode: rolling window from today
+        const endD = new Date();
+        const startD = new Date(); startD.setUTCDate(endD.getUTCDate()-(windowDays-1));
+        start = startD.toISOString().slice(0,10); end = endD.toISOString().slice(0,10);
+      }
     }
 
     // get employees assigned to this campaign

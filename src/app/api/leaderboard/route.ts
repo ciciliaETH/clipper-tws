@@ -33,10 +33,24 @@ export async function GET(req: Request) {
     // Global accrual leaderboard SELARAS /groups (pakai campaign aktif + cutoff + snapshots)
     if (mode === 'accrual' && (scope === 'employees' || scope === 'all')) {
       const daysParam = Number(url.searchParams.get('days') || '7');
-      const windowDays = ([7,28] as number[]).includes(daysParam) ? daysParam : 7;
-      const endISO = new Date().toISOString().slice(0,10);
-      const startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+      const windowDays = daysParam > 0 ? daysParam : 7;
       const cutoffISO = String(url.searchParams.get('cutoff') || process.env.ACCRUAL_CUTOFF_DATE || process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE || '2025-12-20');
+      const customMode = url.searchParams.get('custom') === '1';
+      
+      let startISO: string;
+      let endISO: string;
+      
+      if (customMode) {
+        // Custom date mode: use cutoff as start, calculate end from days
+        startISO = cutoffISO;
+        const endD = new Date(cutoffISO + 'T00:00:00Z');
+        endD.setUTCDate(endD.getUTCDate() + (windowDays - 1));
+        endISO = endD.toISOString().slice(0, 10);
+      } else {
+        // Preset mode: rolling window from today
+        endISO = new Date().toISOString().slice(0,10);
+        startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+      }
 
       // Ambil SEMUA anggota dari semua groups + union semua user role=karyawan
       const { data: egAll } = await supabaseAdmin

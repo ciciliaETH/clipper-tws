@@ -25,6 +25,12 @@ export default function DashboardTotalPage() {
   const [end, setEnd] = useState<string>(()=> new Date().toISOString().slice(0,10));
   const [mode, setMode] = useState<'postdate'|'accrual'>('accrual');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
+  const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(false);
+  const [accrualCustomStart, setAccrualCustomStart] = useState<string>(() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [accrualCustomEnd, setAccrualCustomEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -37,11 +43,11 @@ export default function DashboardTotalPage() {
   const load = async () => {
     setLoading(true);
     try {
-      // effective window for accrual presets
+      // effective window for accrual presets or custom dates
       const todayStr = new Date().toISOString().slice(0,10);
       const accStart = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(accrualWindow-1)); return d.toISOString().slice(0,10) })();
-      const effStart = mode==='accrual' ? accStart : start;
-      const effEnd = mode==='accrual' ? todayStr : end;
+      const effStart = mode==='accrual' ? (useCustomAccrualDates ? accrualCustomStart : accStart) : start;
+      const effEnd = mode==='accrual' ? (useCustomAccrualDates ? accrualCustomEnd : todayStr) : end;
 
       let json:any = null;
       if (mode === 'accrual') {
@@ -61,7 +67,20 @@ export default function DashboardTotalPage() {
           }
           return Array.from(map.values()).sort((a,b)=> a.date.localeCompare(b.date));
         };
-        const resps = await Promise.all((campaigns||[]).map((c:any)=> fetch(`/api/campaigns/${encodeURIComponent(c.id)}/accrual?days=${accrualWindow}&snapshots_only=1&cutoff=${encodeURIComponent(accrualCutoff)}`, { cache: 'no-store' })));        
+        
+        // Build API URLs with custom date support
+        const buildAccrualUrl = (campaignId: string) => {
+          if (useCustomAccrualDates) {
+            const start = new Date(accrualCustomStart);
+            const end = new Date(accrualCustomEnd);
+            const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            return `/api/campaigns/${encodeURIComponent(campaignId)}/accrual?days=${days}&snapshots_only=1&cutoff=${encodeURIComponent(accrualCustomStart)}&custom=1`;
+          } else {
+            return `/api/campaigns/${encodeURIComponent(campaignId)}/accrual?days=${accrualWindow}&snapshots_only=1&cutoff=${encodeURIComponent(accrualCutoff)}`;
+          }
+        };
+        
+        const resps = await Promise.all((campaigns||[]).map((c:any)=> fetch(buildAccrualUrl(c.id), { cache: 'no-store' })));        
         const accs = await Promise.all(resps.map(r=> r.ok ? r.json() : Promise.resolve(null)));
         const ttAll: any[][] = []; const igAll: any[][] = []; const totalAll: any[][] = [];
         accs.forEach((acc:any, idx:number)=>{
@@ -122,9 +141,10 @@ export default function DashboardTotalPage() {
 
       // Hide data before cutoff by zeroing values but keep dates on axis (Accrual only)
       if (mode === 'accrual') {
+        const cutoffDate = useCustomAccrualDates ? accrualCustomStart : accrualCutoff;
         const zeroBefore = (arr: any[] = []) => arr.map((it:any)=>{
           if (!it || typeof it !== 'object') return it;
-          if (String(it.date) < accrualCutoff) {
+          if (String(it.date) < cutoffDate) {
             const r:any = { ...it };
             if ('views' in r) r.views = 0;
             if ('likes' in r) r.likes = 0;
@@ -159,7 +179,7 @@ export default function DashboardTotalPage() {
     setLoading(false);
   };
 
-  useEffect(()=>{ load(); }, [start, end, interval, mode, accrualWindow, activeCampaignId]);
+  useEffect(()=>{ load(); }, [start, end, interval, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, activeCampaignId]);
   useEffect(()=>{
     // Fetch active campaign ID
     const fetchCampaign = async () => {
@@ -255,11 +275,32 @@ export default function DashboardTotalPage() {
           )}
         </div>
         <div className="mt-3 flex justify-end">
-          <div className="flex items-center gap-2 mr-2">
-            <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-            <span className="text-white/50">s/d</span>
-            <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-          </div>
+          {mode === 'postdate' ? (
+            <div className="flex items-center gap-2 mr-2">
+              <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+              <span className="text-white/50">s/d</span>
+              <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 items-end">
+              <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useCustomAccrualDates}
+                  onChange={(e) => setUseCustomAccrualDates(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-blue-600"
+                />
+                <span>Custom Date</span>
+              </label>
+              {useCustomAccrualDates && (
+                <div className="flex items-center gap-2">
+                  <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                  <span className="text-white/50">→</span>
+                  <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -270,7 +311,7 @@ export default function DashboardTotalPage() {
           <span className="text-white/60">Mode:</span>
           <button className={`px-2 py-1 rounded ${mode==='accrual'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('accrual')}>Accrual</button>
           <button className={`px-2 py-1 rounded ${mode==='postdate'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('postdate')}>Post Date</button>
-          {mode==='accrual' && (
+          {mode==='accrual' && !useCustomAccrualDates && (
             <div className="flex items-center gap-2 ml-2">
               <span className="text-white/60">Rentang:</span>
               <button className={`px-2 py-1 rounded ${accrualWindow===7?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(7)}>7 hari</button>

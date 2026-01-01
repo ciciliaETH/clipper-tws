@@ -169,7 +169,7 @@ export async function GET(req: Request) {
             username: last.username,
             owner_name: ownerName,
             owner_id: ownerId,
-            post_date: last.post_date,
+            post_date: first.post_date, // Use first snapshot date (closer to actual post date)
             link: `https://www.tiktok.com/@${last.username}/video/${videoId}`,
             metrics: {
               views,
@@ -270,7 +270,7 @@ export async function GET(req: Request) {
             username: last.username,
             owner_name: ownerName,
             owner_id: ownerId,
-            post_date: last.post_date,
+            post_date: first.post_date, // Use first snapshot date (closer to actual post date)
             link: `https://www.instagram.com/reel/${last.code || postId}/`,
             metrics: {
               views,

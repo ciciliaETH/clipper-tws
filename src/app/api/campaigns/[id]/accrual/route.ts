@@ -34,15 +34,42 @@ export async function GET(req: Request, ctx: any) {
     const url = new URL(req.url);
     // Rolling preset window for accrual; ignore arbitrary start/end when days provided
     const daysQ = Number(url.searchParams.get('days') || '0');
-    const windowDays = ([7,28,60] as number[]).includes(daysQ) ? daysQ : 7;
-    const endISO = new Date().toISOString().slice(0,10);
-    const startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+    const windowDays = daysQ > 0 ? daysQ : 7;
+    const cutoff = String(url.searchParams.get('cutoff') || process.env.ACCRUAL_CUTOFF_DATE || '2025-12-17');
+    const customMode = url.searchParams.get('custom') === '1';
+    
+    // Calculate date range
+    let startISO: string;
+    let endISO: string;
+    
+    console.log('[DEBUG API] Received params:', { 
+      daysQ, 
+      windowDays, 
+      cutoff, 
+      customMode,
+      hasCutoff: url.searchParams.has('cutoff'),
+      defaultCutoff: process.env.ACCRUAL_CUTOFF_DATE || '2025-12-17'
+    });
+    
+    if (customMode) {
+      // Custom date mode: cutoff is the start date, calculate end date from days parameter
+      startISO = cutoff;
+      const endDate = new Date(cutoff + 'T00:00:00Z');
+      endDate.setUTCDate(endDate.getUTCDate() + (windowDays - 1));
+      endISO = endDate.toISOString().slice(0, 10);
+      console.log('[DEBUG API] Custom date mode:', { startISO, endISO, windowDays });
+    } else {
+      // Preset mode: rolling window from today
+      endISO = new Date().toISOString().slice(0,10);
+      startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+      console.log('[DEBUG API] Preset mode:', { startISO, endISO, windowDays });
+    }
+    
     const respectHashtags = url.searchParams.get('respect_hashtags') === '1';
     // snapshots_only: default ON (strict accrual from social_metrics_history only)
     const snapshotsOnly = url.searchParams.get('snapshots_only') !== '0';
     const maskParam = String(url.searchParams.get('mask') || '1');
     const trimParam = url.searchParams.get('trim') === '1';
-    const cutoff = String(url.searchParams.get('cutoff') || process.env.ACCRUAL_CUTOFF_DATE || '2025-12-17');
 
     // Fetch campaign required_hashtags for filtering
     const { data: campaign } = await admin

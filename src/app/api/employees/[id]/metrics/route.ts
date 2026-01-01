@@ -190,12 +190,28 @@ export async function GET(req: Request, context: any) {
 
     // Accrual mode: build series from social_metrics_history deltas (per captured day)
     if (mode === 'accrual') {
-      // Ignore arbitrary start/end for accrual. Use rolling preset window (7|28|60 days; default 7)
+      // Rolling preset window or custom date range
       const daysQ = Number(url.searchParams.get('days') || '0');
-      const windowDays = ([7,28,60] as number[]).includes(daysQ) ? daysQ : 7;
-      const endISO = new Date().toISOString().slice(0,10);
-      const startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
-      // startISO / endISO already set from preset window above
+      const windowDays = daysQ > 0 ? daysQ : 7;
+      const cutoffParam = url.searchParams.get('cutoff');
+      const customMode = url.searchParams.get('custom') === '1';
+      
+      let startISO: string;
+      let endISO: string;
+      
+      if (customMode && cutoffParam) {
+        // Custom date mode: use cutoff as start, calculate end from days
+        startISO = cutoffParam;
+        const endD = new Date(cutoffParam + 'T00:00:00Z');
+        endD.setUTCDate(endD.getUTCDate() + (windowDays - 1));
+        endISO = endD.toISOString().slice(0,10);
+      } else {
+        // Preset mode: rolling window from today
+        endISO = new Date().toISOString().slice(0,10);
+        startISO = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(windowDays-1)); return d.toISOString().slice(0,10) })();
+      }
+      
+      // startISO / endISO already set from preset window or custom date above
       // fetch history for this employee id for both platforms
       // include snapshot sehari sebelum start agar delta hari pertama tidak hilang
       const pre = new Date(startISO+'T00:00:00Z'); pre.setUTCDate(pre.getUTCDate()-1);
