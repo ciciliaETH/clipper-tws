@@ -23,8 +23,21 @@ export async function GET(req: Request) {
     const cronSecret = process.env.CRON_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY
     const isVercelCron = Boolean(req.headers.get('x-vercel-cron'))
     
+    // Debug logging
+    console.log('[TikTok Cron Auth Debug]', {
+      hasCronSecret: !!process.env.CRON_SECRET,
+      hasServiceRole: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      hasSecretParam: !!secretParam,
+      hasAuthHeader: !!authHeader,
+      hasToken: !!token,
+      isVercelCron,
+      secretMatch: secretParam === cronSecret,
+      tokenMatch: token === cronSecret
+    })
+    
     // Allow if: Vercel Cron header, valid token, or valid secret param
     if (!isVercelCron && token !== cronSecret && secretParam !== cronSecret) {
+      console.error('[TikTok Cron] Authentication failed')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
