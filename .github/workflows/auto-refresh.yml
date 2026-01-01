@@ -13,14 +13,14 @@ jobs:
       - name: Refresh TikTok Data
         run: |
           echo "Triggering TikTok refresh..."
-          curl -f -X GET "${{ secrets.APP_URL }}/api/admin/tiktok/refresh-all" || echo "TikTok refresh failed"
+          curl -v "${{ secrets.APP_URL }}/api/cron/tiktok-refresh?limit=100&concurrency=3" || echo "TikTok refresh failed"
         continue-on-error: true
 
       - name: Wait before Instagram refresh
-        run: sleep 30
+        run: sleep 60
 
       - name: Refresh Instagram Data
         run: |
           echo "Triggering Instagram refresh..."
-          curl -f -X GET "${{ secrets.APP_URL }}/api/admin/ig/refresh-all" || echo "Instagram refresh failed"
+          curl -v "${{ secrets.APP_URL }}/api/cron/instagram-refresh?limit=100&concurrency=3" || echo "Instagram refresh failed"
         continue-on-error: true
