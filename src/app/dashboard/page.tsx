@@ -31,6 +31,8 @@ export default function DashboardTotalPage() {
     return d.toISOString().slice(0, 10);
   });
   const [accrualCustomEnd, setAccrualCustomEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [weeklyView, setWeeklyView] = useState<boolean>(false);
+  const [platformFilter, setPlatformFilter] = useState<'all'|'tiktok'|'instagram'>('all');
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -209,34 +211,220 @@ export default function DashboardTotalPage() {
 
   const chartData = useMemo(()=>{
     if (!data) return null;
-    const labels = (data.total || []).map((s:any)=>{
+    
+    // Helper: group data by week
+    const groupByWeek = (series: any[], startDate: string) => {
+      const start = new Date(startDate);
+      const weekMap = new Map<number, { views: number; likes: number; comments: number; shares: number; saves: number; startDate: Date; endDate: Date }>();
+      
+      series.forEach((s: any) => {
+        const date = new Date(s.date);
+        const daysDiff = Math.floor((date.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+        const weekNum = Math.floor(daysDiff / 7);
+        
+        const current = weekMap.get(weekNum) || { 
+          views: 0, likes: 0, comments: 0, shares: 0, saves: 0,
+          startDate: new Date(start.getTime() + weekNum * 7 * 24 * 60 * 60 * 1000),
+          endDate: new Date(start.getTime() + (weekNum * 7 + 6) * 24 * 60 * 60 * 1000)
+        };
+        current.views += Number(s.views) || 0;
+        current.likes += Number(s.likes) || 0;
+        current.comments += Number(s.comments) || 0;
+        current.shares += Number(s.shares) || 0;
+        current.saves += Number(s.saves) || 0;
+        weekMap.set(weekNum, current);
+      });
+      
+      return Array.from(weekMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([weekNum, data]) => ({ weekNum, ...data }));
+    };
+    
+    let labels: string[];
+    let processedData: any;
+    
+    if (weeklyView && useCustomAccrualDates && mode === 'accrual') {
+      // Weekly aggregation
+      const startDate = accrualCustomStart;
+      const weeklyTotal = groupByWeek(data.total || [], startDate);
+      
+      labels = weeklyTotal.map((w: any) => {
+        const start = format(w.startDate, 'd MMM', { locale: localeID });
+        const end = format(w.endDate, 'd MMM', { locale: localeID });
+        return `Week ${w.weekNum + 1} (${start}-${end})`;
+      });
+      
+      const datasets: any[] = [];
+      
+      // Filter data based on platform selection
+      const getSeriesForPlatform = () => {
+        if (platformFilter === 'tiktok') return weeklyTotal;
+        if (platformFilter === 'instagram') return weeklyTotal;
+        return weeklyTotal;
+      };
+      
+      const getTikTokSeries = () => {
+        if (platformFilter === 'instagram') return [];
+        return Array.isArray(data.total_tiktok) && data.total_tiktok.length 
+          ? groupByWeek(data.total_tiktok, startDate) 
+          : [];
+      };
+      
+      const getInstagramSeries = () => {
+        if (platformFilter === 'tiktok') return [];
+        return Array.isArray(data.total_instagram) && data.total_instagram.length 
+          ? groupByWeek(data.total_instagram, startDate) 
+          : [];
+      };
+      
+      // Total line (filtered by platform)
+      let totalVals = weeklyTotal.map((w: any) => 
+        metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+      );
+      
+      if (platformFilter === 'tiktok' && Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
+        const weeklyTT = groupByWeek(data.total_tiktok, startDate);
+        totalVals = weeklyTT.map((w: any) => 
+          metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+        );
+      } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram) && data.total_instagram.length) {
+        const weeklyIG = groupByWeek(data.total_instagram, startDate);
+        totalVals = weeklyIG.map((w: any) => 
+          metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+        );
+      }
+      
+      datasets.push({ 
+        label: platformFilter === 'all' ? 'Total' : platformFilter === 'tiktok' ? 'TikTok' : 'Instagram', 
+        data: totalVals, 
+        borderColor: palette[0], 
+        backgroundColor: palette[0] + '33', 
+        fill: true, 
+        tension: 0.35 
+      });
+      
+      // Platform breakdown (only if 'all' is selected)
+      if (platformFilter === 'all') {
+        const weeklyTT = getTikTokSeries();
+        if (weeklyTT.length > 0) {
+          const ttVals = weeklyTT.map((w: any) => 
+            metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+          );
+          datasets.push({ 
+            label: 'TikTok', 
+            data: ttVals, 
+            borderColor: '#38bdf8', 
+            backgroundColor: 'rgba(56,189,248,0.15)', 
+            fill: false, 
+            tension: 0.35 
+          });
+        }
+        
+        const weeklyIG = getInstagramSeries();
+        if (weeklyIG.length > 0) {
+          const igVals = weeklyIG.map((w: any) => 
+            metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+          );
+          datasets.push({ 
+            label: 'Instagram', 
+            data: igVals, 
+            borderColor: '#f43f5e', 
+            backgroundColor: 'rgba(244,63,94,0.15)', 
+            fill: false, 
+            tension: 0.35 
+          });
+        }
+      }
+      
+      // Per group lines (filter by platform)
+      for (let i = 0; i < (data.groups || []).length; i++) {
+        const g = data.groups[i];
+        let seriesToUse = g.series || [];
+        
+        if (platformFilter === 'tiktok' && g.series_tiktok) {
+          seriesToUse = g.series_tiktok;
+        } else if (platformFilter === 'instagram' && g.series_instagram) {
+          seriesToUse = g.series_instagram;
+        }
+        
+        const weeklyGroup = groupByWeek(seriesToUse, startDate);
+        const vals = weeklyGroup.map((w: any) => 
+          metric === 'likes' ? w.likes : metric === 'comments' ? w.comments : w.views
+        );
+        const color = palette[(i + 1) % palette.length];
+        datasets.push({ 
+          label: g.name, 
+          data: vals, 
+          borderColor: color, 
+          backgroundColor: color + '33', 
+          fill: false, 
+          tension: 0.35 
+        });
+      }
+      
+      return { labels, datasets };
+    }
+    
+    // Daily view (existing code)
+    labels = (data.total || []).map((s:any)=>{
       const d = parseISO(s.date);
       if (interval==='monthly') return format(d,'MMM yyyy', {locale: localeID});
       return format(d,'d MMM', {locale: localeID});
     });
     const datasets:any[] = [];
-    // Total first
-    const totalVals = (data.total||[]).map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-    datasets.push({ label:'Total', data: totalVals, borderColor: palette[0], backgroundColor: palette[0]+'33', fill: true, tension: 0.35 });
-    // Platform breakdown if available
-    if (Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
-      const ttVals = data.total_tiktok.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-      datasets.push({ label:'TikTok', data: ttVals, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35 });
+    
+    // Total first (filtered by platform)
+    let totalSeries = data.total || [];
+    if (platformFilter === 'tiktok' && Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
+      totalSeries = data.total_tiktok;
+    } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram) && data.total_instagram.length) {
+      totalSeries = data.total_instagram;
     }
-    if (Array.isArray(data.total_instagram) && data.total_instagram.length) {
-      const igVals = data.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-      datasets.push({ label:'Instagram', data: igVals, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35 });
+    
+    const totalVals = totalSeries.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+    datasets.push({ 
+      label: platformFilter === 'all' ? 'Total' : platformFilter === 'tiktok' ? 'TikTok' : 'Instagram',
+      data: totalVals, 
+      borderColor: palette[0], 
+      backgroundColor: palette[0]+'33', 
+      fill: true, 
+      tension: 0.35 
+    });
+    
+    // Platform breakdown if available (only when 'all' selected)
+    if (platformFilter === 'all') {
+      if (Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
+        const ttVals = data.total_tiktok.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+        datasets.push({ label:'TikTok', data: ttVals, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35 });
+      }
+      if (Array.isArray(data.total_instagram) && data.total_instagram.length) {
+        const igVals = data.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+        datasets.push({ label:'Instagram', data: igVals, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35 });
+      }
     }
-    // Per group lines
+    
+    // Per group lines (filter by platform)
     for (let i=0;i<(data.groups||[]).length;i++){
       const g = data.groups[i];
-      const map:Record<string,any> = {}; (g.series||[]).forEach((s:any)=>{ map[String(s.date)] = s; });
-      const vals = (data.total||[]).map((t:any)=>{ const it = map[String(t.date)] || { views:0, likes:0, comments:0 }; return metric==='likes'? it.likes : metric==='comments'? it.comments : it.views; });
+      let seriesToUse = g.series || [];
+      
+      if (platformFilter === 'tiktok' && g.series_tiktok) {
+        seriesToUse = g.series_tiktok;
+      } else if (platformFilter === 'instagram' && g.series_instagram) {
+        seriesToUse = g.series_instagram;
+      }
+      
+      const map:Record<string,any> = {}; 
+      seriesToUse.forEach((s:any)=>{ map[String(s.date)] = s; });
+      const vals = (totalSeries).map((t:any)=>{ 
+        const it = map[String(t.date)] || { views:0, likes:0, comments:0 }; 
+        return metric==='likes'? it.likes : metric==='comments'? it.comments : it.views; 
+      });
       const color = palette[(i+1)%palette.length];
       datasets.push({ label: g.name, data: vals, borderColor: color, backgroundColor: color+'33', fill: false, tension:0.35 });
     }
     return { labels, datasets };
-  }, [data, metric, interval]);
+  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter]);
 
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
@@ -293,10 +481,21 @@ export default function DashboardTotalPage() {
                 <span>Custom Date</span>
               </label>
               {useCustomAccrualDates && (
-                <div className="flex items-center gap-2">
-                  <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                  <span className="text-white/50">→</span>
-                  <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                    <span className="text-white/50">→</span>
+                    <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={weeklyView}
+                      onChange={(e) => setWeeklyView(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-blue-600"
+                    />
+                    <span>Tampilan Mingguan</span>
+                  </label>
                 </div>
               )}
             </div>
@@ -340,6 +539,18 @@ export default function DashboardTotalPage() {
           <button className={`px-2 py-1 rounded ${metric==='likes'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('likes')}>Likes</button>
           <button className={`px-2 py-1 rounded ${metric==='comments'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('comments')}>Comments</button>
         </div>
+      </div>
+      
+      {/* Platform Filter */}
+      <div className="mb-3 flex items-center gap-2 text-xs">
+        <span className="text-white/60">Platform:</span>
+        <button className={`px-2 py-1 rounded ${platformFilter==='all'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('all')}>Semua</button>
+        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='tiktok'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('tiktok')}>
+          <span className="text-[#38bdf8]">●</span> TikTok
+        </button>
+        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='instagram'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('instagram')}>
+          <span className="text-[#f43f5e]">●</span> Instagram
+        </button>
       </div>
 
       <div className="glass rounded-2xl p-4 md:p-6 border border-white/10 overflow-x-auto">
