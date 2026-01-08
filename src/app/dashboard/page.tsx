@@ -211,7 +211,23 @@ export default function DashboardTotalPage() {
         
         if (res.ok && json.data) {
           console.log('[HISTORICAL] Data loaded successfully, count:', json.data.length);
-          console.log('[HISTORICAL] Sample entry:', json.data[0]);
+          console.log('[HISTORICAL] ═══════════════════════════════════════════════');
+          console.log('[HISTORICAL] DETAIL SETIAP RECORD:');
+          json.data.forEach((record: any, index: number) => {
+            console.log(`[HISTORICAL] Record ${index + 1}:`, {
+              id: record.id,
+              periode: `${record.start_date} → ${record.end_date}`,
+              platform: record.platform,
+              views: Number(record.views) || 0,
+              likes: Number(record.likes) || 0,
+              comments: Number(record.comments) || 0,
+              shares: Number(record.shares) || 0,
+              saves: Number(record.saves) || 0,
+              notes: record.notes
+            });
+          });
+          console.log('[HISTORICAL] ═══════════════════════════════════════════════');
+          
           // Sort by start_date to show chronologically
           const sorted = json.data.sort((a: any, b: any) => 
             new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
@@ -575,6 +591,186 @@ export default function DashboardTotalPage() {
       
       console.log('[WEEKLY VIEW] After filtering empty periods, remaining:', allPeriods.length);
       
+      // ═══════════════════════════════════════════════════════════════════
+      // AUDIT: Log all periods with detailed breakdown
+      // ═══════════════════════════════════════════════════════════════════
+      console.log('\n🔍 [AUDIT] SEMUA PERIODE YANG DITAMPILKAN:');
+      console.log('[AUDIT] ═══════════════════════════════════════════════════════');
+      
+      let totalAllViews = 0;
+      let totalAllLikes = 0;
+      let totalAllComments = 0;
+      let totalTikTokViews = 0;
+      let totalInstagramViews = 0;
+      
+      // Special check for periode 27 Des 2025 - 26 Jan 2026
+      const targetStart = new Date('2025-12-27');
+      const targetEnd = new Date('2026-01-26');
+      let targetPeriodViews = 0;
+      let targetPeriodLikes = 0;
+      let targetPeriodComments = 0;
+      let targetPeriodTikTok = 0;
+      let targetPeriodInstagram = 0;
+      
+      allPeriods.forEach((period: any, index: number) => {
+        const startStr = period.startDate.toISOString().slice(0, 10);
+        const endStr = period.endDate.toISOString().slice(0, 10);
+        const isInTarget = period.startDate >= targetStart && period.endDate <= targetEnd;
+        
+        console.log(`\n[AUDIT] Periode ${index + 1}/${allPeriods.length}:`);
+        console.log(`  📅 Tanggal: ${startStr} → ${endStr}`);
+        console.log(`  🏷️  Tipe: ${period.is_historical ? '📊 HISTORICAL' : '🔴 REAL-TIME'}`);
+        console.log(`  👁️  Views: ${period.views.toLocaleString('id-ID')}`);
+        console.log(`  ❤️  Likes: ${period.likes.toLocaleString('id-ID')}`);
+        console.log(`  💬 Comments: ${period.comments.toLocaleString('id-ID')}`);
+        console.log(`  🎵 TikTok: ${period.tiktok.toLocaleString('id-ID')}`);
+        console.log(`  📷 Instagram: ${period.instagram.toLocaleString('id-ID')}`);
+        
+        if (isInTarget) {
+          console.log(`  ⚠️  MASUK PERIODE TARGET (27 Des - 26 Jan)`);
+          targetPeriodViews += period.views;
+          targetPeriodLikes += period.likes;
+          targetPeriodComments += period.comments;
+          targetPeriodTikTok += period.tiktok;
+          targetPeriodInstagram += period.instagram;
+        }
+        
+        totalAllViews += period.views;
+        totalAllLikes += period.likes;
+        totalAllComments += period.comments;
+        totalTikTokViews += period.tiktok;
+        totalInstagramViews += period.instagram;
+      });
+      
+      console.log('\n[AUDIT] ═══════════════════════════════════════════════════════');
+      console.log('[AUDIT] 📊 GRAND TOTAL DARI CHART:');
+      console.log(`[AUDIT]   Total Views: ${totalAllViews.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Total Likes: ${totalAllLikes.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Total Comments: ${totalAllComments.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Total TikTok: ${totalTikTokViews.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Total Instagram: ${totalInstagramViews.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   TikTok + Instagram = ${(totalTikTokViews + totalInstagramViews).toLocaleString('id-ID')}`);
+      
+      console.log('\n[AUDIT] 🎯 PERIODE TARGET (27 Des 2025 - 26 Jan 2026):');
+      console.log(`[AUDIT]   Views dalam periode: ${targetPeriodViews.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Likes dalam periode: ${targetPeriodLikes.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Comments dalam periode: ${targetPeriodComments.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   TikTok dalam periode: ${targetPeriodTikTok.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   Instagram dalam periode: ${targetPeriodInstagram.toLocaleString('id-ID')}`);
+      console.log(`[AUDIT]   TikTok + Instagram = ${(targetPeriodTikTok + targetPeriodInstagram).toLocaleString('id-ID')} ⚠️`);
+      console.log(`[AUDIT]   ⚠️  EXPECTED (dari hitungan manual): 101,463,460`);
+      console.log(`[AUDIT]   ⚠️  SELISIH: ${(101463460 - (targetPeriodTikTok + targetPeriodInstagram)).toLocaleString('id-ID')}`);
+      console.log('[AUDIT] ═══════════════════════════════════════════════════════\n');
+      console.log('');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('[AUDIT] CHART PERIODS BREAKDOWN');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      let runningViews = 0;
+      let historicalCount = 0;
+      let realtimeCount = 0;
+      
+      const auditTable = allPeriods.map((p: any, idx: number) => {
+        const start = p.startDate.toISOString().slice(0, 10);
+        const end = p.endDate.toISOString().slice(0, 10);
+        const views = Number(p.views) || 0;
+        const tiktok = Number(p.tiktok) || 0;
+        const instagram = Number(p.instagram) || 0;
+        
+        runningViews += views;
+        
+        if (p.is_historical) {
+          historicalCount++;
+        } else {
+          realtimeCount++;
+        }
+        
+        return {
+          '#': idx + 1,
+          'Start': start,
+          'End': end,
+          'Type': p.is_historical ? '📊 Historical' : '🔴 Real-time',
+          'Views': views.toLocaleString('id-ID'),
+          'TikTok': tiktok.toLocaleString('id-ID'),
+          'Instagram': instagram.toLocaleString('id-ID'),
+          'Running Total': runningViews.toLocaleString('id-ID')
+        };
+      });
+      
+      console.table(auditTable);
+      
+      console.log('');
+      console.log('[AUDIT] SUMMARY:');
+      console.log('  Total periods:', allPeriods.length);
+      console.log('  Historical:', historicalCount);
+      console.log('  Real-time:', realtimeCount);
+      console.log('  ─────────────────────────────────────────');
+      console.log('  TOTAL VIEWS (from chart):', runningViews.toLocaleString('id-ID'));
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('');
+      
+      // ═══════════════════════════════════════════════════════════════════
+      // SPECIAL AUDIT: Check specific period 27 Des 2025 - 26 Jan 2026
+      // ═══════════════════════════════════════════════════════════════════
+      const targetStart = new Date('2025-12-27');
+      const targetEnd = new Date('2026-01-26');
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('[AUDIT] SPECIFIC PERIOD: 27 Desember 2025 - 26 Januari 2026');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      const periodsInRange = allPeriods.filter((p: any) => {
+        // Check if period overlaps with target range
+        return p.startDate >= targetStart && p.endDate <= targetEnd;
+      });
+      
+      console.log('[AUDIT] Found', periodsInRange.length, 'periods in target range');
+      
+      let targetTotal = 0;
+      let targetTikTok = 0;
+      let targetInstagram = 0;
+      
+      const targetAudit = periodsInRange.map((p: any, idx: number) => {
+        const views = Number(p.views) || 0;
+        const tiktok = Number(p.tiktok) || 0;
+        const instagram = Number(p.instagram) || 0;
+        
+        targetTotal += views;
+        targetTikTok += tiktok;
+        targetInstagram += instagram;
+        
+        return {
+          '#': idx + 1,
+          'Start': p.startDate.toISOString().slice(0, 10),
+          'End': p.endDate.toISOString().slice(0, 10),
+          'Type': p.is_historical ? '📊 Historical' : '🔴 Real-time',
+          'TikTok': tiktok.toLocaleString('id-ID'),
+          'Instagram': instagram.toLocaleString('id-ID'),
+          'TOTAL': views.toLocaleString('id-ID')
+        };
+      });
+      
+      if (targetAudit.length > 0) {
+        console.table(targetAudit);
+        console.log('');
+        console.log('[AUDIT] RESULT FOR 27 Des 2025 - 26 Jan 2026:');
+        console.log('  TikTok views:', targetTikTok.toLocaleString('id-ID'));
+        console.log('  Instagram views:', targetInstagram.toLocaleString('id-ID'));
+        console.log('  ═══════════════════════════════════════════════════');
+        console.log('  TOTAL (TikTok + Instagram):', targetTotal.toLocaleString('id-ID'));
+        console.log('  ═══════════════════════════════════════════════════');
+        console.log('');
+        console.log('  ⚠️  Manual calculation expected: 101,463,460');
+        console.log('  📊 Website showing:', targetTotal.toLocaleString('id-ID'));
+        console.log('  📉 Difference:', (101463460 - targetTotal).toLocaleString('id-ID'));
+      } else {
+        console.log('[AUDIT] ⚠️  NO PERIODS FOUND in target range!');
+        console.log('[AUDIT] This might be the issue. Check date filters.');
+      }
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('');
+      
       // Generate labels from sorted periods
       labels = allPeriods.map((p: any) => {
         const start = format(p.startDate, 'd MMM', { locale: localeID });
@@ -750,14 +946,18 @@ export default function DashboardTotalPage() {
       comments: Number(data.totals?.comments || 0)
     };
     
-    console.log('[GRAND TOTALS] Real-time totals:', totals);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[AUDIT] GRAND TOTALS CALCULATION');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[AUDIT] Real-time totals from database:', totals);
+    console.log('[AUDIT] Real-time data.totals object:', data.totals);
     
     // Add historical data if enabled and available
     if (showHistorical && historicalData.length > 0) {
-      console.log('[GRAND TOTALS] Adding historical data...');
-      console.log('[GRAND TOTALS] Historical records count:', historicalData.length);
+      console.log('[AUDIT] Historical data enabled, processing', historicalData.length, 'records');
       
       let historicalSum = { views: 0, likes: 0, comments: 0 };
+      const auditLog: any[] = [];
       
       historicalData.forEach((h: any, idx: number) => {
         const views = Number(h.views) || 0;
@@ -768,33 +968,39 @@ export default function DashboardTotalPage() {
         historicalSum.likes += likes;
         historicalSum.comments += comments;
         
-        if (idx < 3) {
-          console.log(`[GRAND TOTALS] Historical record ${idx}:`, {
-            period: `${h.start_date} to ${h.end_date}`,
-            platform: h.platform,
-            views, likes, comments
-          });
-        }
+        auditLog.push({
+          index: idx + 1,
+          period: `${h.start_date} → ${h.end_date}`,
+          platform: h.platform,
+          views: views.toLocaleString('id-ID'),
+          runningTotal: historicalSum.views.toLocaleString('id-ID')
+        });
       });
       
-      console.log('[GRAND TOTALS] Historical sum:', historicalSum);
+      console.log('[AUDIT] Historical records breakdown:');
+      console.table(auditLog);
       
+      console.log('[AUDIT] Historical sum:', {
+        views: historicalSum.views.toLocaleString('id-ID'),
+        likes: historicalSum.likes.toLocaleString('id-ID'),
+        comments: historicalSum.comments.toLocaleString('id-ID')
+      });
+      
+      const beforeAdd = { ...totals };
       totals.views += historicalSum.views;
       totals.likes += historicalSum.likes;
       totals.comments += historicalSum.comments;
       
-      console.log('[GRAND TOTALS] Final totals (real-time + historical):', totals);
-      console.log('[GRAND TOTALS] Breakdown:', {
-        realTime: {
-          views: Number(data.totals?.views || 0),
-          likes: Number(data.totals?.likes || 0),
-          comments: Number(data.totals?.comments || 0)
-        },
-        historical: historicalSum,
-        combined: totals
-      });
+      console.log('[AUDIT] FINAL CALCULATION:');
+      console.log('  Real-time views:', beforeAdd.views.toLocaleString('id-ID'));
+      console.log('  Historical views:', historicalSum.views.toLocaleString('id-ID'));
+      console.log('  ═════════════════════════════════');
+      console.log('  TOTAL views:', totals.views.toLocaleString('id-ID'));
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     } else {
-      console.log('[GRAND TOTALS] Historical data not included (showHistorical:', showHistorical, ', count:', historicalData.length, ')');
+      console.log('[AUDIT] Historical data NOT included');
+      console.log('  Reason: showHistorical =', showHistorical, ', count =', historicalData.length);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     }
     
     return totals;
