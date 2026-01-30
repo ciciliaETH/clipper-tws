@@ -164,7 +164,6 @@ export async function GET(req: Request) {
                   arr[i].views += dailyViews;
                   arr[i].likes += dailyLikes;
                   arr[i].comments += dailyComments;
-                  }
                 }
               }
             }
