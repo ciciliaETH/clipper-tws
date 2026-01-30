@@ -12,13 +12,13 @@ function supabaseAdmin() {
   );
 }
 
-// GET: Get posts count per day based on post_date
+// GET: Get posts count per day based on taken_at
 export async function GET(req: Request) {
   try {
     const supabase = supabaseAdmin();
     const { searchParams } = new URL(req.url);
-    const startDate = searchParams.get('start') || '';
-    const endDate = searchParams.get('end') || new Date().toISOString().slice(0, 10);
+    const startDate = searchParams.get('start') || '2026-01-01'; // Default: 1 Januari 2026
+    const endDate = searchParams.get('end') || new Date().toISOString().slice(0, 10); // Default: hari ini
     const campaignId = searchParams.get('campaign_id') || '';
     const platform = (searchParams.get('platform') || 'all').toLowerCase();
 
@@ -111,10 +111,10 @@ export async function GET(req: Request) {
     if ((platform === 'all' || platform === 'tiktok') && tiktokUsernames.size > 0) {
       const { data: ttPosts } = await supabase
         .from('tiktok_posts_daily')
-        .select('video_id, username, post_date, title')
+        .select('video_id, username, taken_at, title')
         .in('username', Array.from(tiktokUsernames))
-        .gte('post_date', startDate)
-        .lte('post_date', endDate);
+        .gte('taken_at', startDate + 'T00:00:00Z')
+        .lte('taken_at', endDate + 'T23:59:59Z');
 
       // Group by date, count unique video_ids
       const videosByDate = new Map<string, Set<string>>();
@@ -124,7 +124,7 @@ export async function GET(req: Request) {
           if (!hasRequiredHashtag(row.title, requiredHashtags)) continue;
         }
         
-        const date = String(row.post_date);
+        const date = new Date(row.taken_at).toISOString().slice(0,10);
         if (!videosByDate.has(date)) {
           videosByDate.set(date, new Set());
         }
@@ -144,10 +144,10 @@ export async function GET(req: Request) {
     if ((platform === 'all' || platform === 'instagram') && instagramUsernames.size > 0) {
       const { data: igPosts } = await supabase
         .from('instagram_posts_daily')
-        .select('id, username, post_date, caption')
+        .select('id, username, taken_at, caption')
         .in('username', Array.from(instagramUsernames))
-        .gte('post_date', startDate)
-        .lte('post_date', endDate);
+        .gte('taken_at', startDate + 'T00:00:00Z')
+        .lte('taken_at', endDate + 'T23:59:59Z');
 
       // Group by date, count unique ids
       const postIdsByDate = new Map<string, Set<string>>();
@@ -157,7 +157,7 @@ export async function GET(req: Request) {
           if (!hasRequiredHashtag((row as any).caption, requiredHashtags)) continue;
         }
         
-        const date = String((row as any).post_date);
+        const date = new Date((row as any).taken_at).toISOString().slice(0,10);
         if (!postIdsByDate.has(date)) {
           postIdsByDate.set(date, new Set());
         }

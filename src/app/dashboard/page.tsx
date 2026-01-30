@@ -19,11 +19,11 @@ import TopViralDashboard from '@/components/TopViralDashboard';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
 export default function DashboardTotalPage() {
-  const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('daily');
+  const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('weekly');
   const [metric, setMetric] = useState<'views'|'likes'|'comments'>('views');
   const [start, setStart] = useState<string>(()=>{ const d=new Date(); const s=new Date(); s.setDate(d.getDate()-30); return s.toISOString().slice(0,10)});
   const [end, setEnd] = useState<string>(()=> new Date().toISOString().slice(0,10));
-  const [mode, setMode] = useState<'postdate'|'accrual'>('accrual');
+  const [mode, setMode] = useState<'postdate'|'accrual'>('postdate');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
   const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(true); // Changed to true
   const [accrualCustomStart, setAccrualCustomStart] = useState<string>(() => {
@@ -118,8 +118,8 @@ export default function DashboardTotalPage() {
           return weeks;
         };
         
-        // Historical cutoff: data sebelum/sama dengan tanggal ini dari historical, setelahnya dari real-time
-        const HISTORICAL_CUTOFF = '2026-01-02';
+        // Historical cutoff: data s.d. 22 Jan 2026 dari historical, 23 Jan 2026 ke atas realtime
+        const HISTORICAL_CUTOFF = '2026-01-23';
         
         console.log('[ACCRUAL] Building URLs for campaigns...');
         
@@ -127,10 +127,10 @@ export default function DashboardTotalPage() {
         const rangeStart = accrualCustomStart;
         const rangeEnd = accrualCustomEnd;
         
-        // ALWAYS fetch realtime from FIXED start date (2026-01-03) for consistency
+        // ALWAYS fetch realtime starting 23 Jan 2026 for consistency
         // This ensures the same baseline is used regardless of user-selected range
-        const REALTIME_FIXED_START = '2026-01-03';
-        const needsRealtime = rangeEnd > HISTORICAL_CUTOFF;
+        const REALTIME_FIXED_START = '2026-01-23';
+        const needsRealtime = rangeEnd >= REALTIME_FIXED_START;
         // Always start from fixed date to ensure consistent baseline calculations
         const realtimeStart = REALTIME_FIXED_START;
         
@@ -192,12 +192,115 @@ export default function DashboardTotalPage() {
           console.log('[ACCRUAL] All dates in historical period, no real-time fetch needed');
           json = { interval:'daily', start: effStart, end: effEnd, groups: [], total: [], total_tiktok: [], total_instagram: [] };
         }
+        
+        // LOAD HISTORICAL DATA for Accrual mode (dates < 2026-01-23)
+        const HISTORICAL_DATA_CUTOFF = '2026-01-23'; // realtime mulai 23 Jan 2026
+        const HISTORICAL_LAST_DAY = '2026-01-22';
+        if (rangeStart <= HISTORICAL_LAST_DAY) {
+          console.log('[ACCRUAL] Loading historical data from weekly_historical_data...');
+          const histEndISO = (rangeEnd <= HISTORICAL_LAST_DAY ? rangeEnd : HISTORICAL_LAST_DAY);
+          const histRes = await fetch(`/api/admin/weekly-historical?start=${rangeStart}&end=${histEndISO}`, { cache: 'no-store' });
+          if (histRes.ok) {
+            const histData = await histRes.json();
+            console.log('[ACCRUAL] Historical data loaded:', histData);
+            
+            // Generate all date keys in range
+            const allKeys: string[] = [];
+            const ds = new Date(effStart + 'T00:00:00Z');
+            const de = new Date(effEnd + 'T00:00:00Z');
+            for (let d = new Date(ds); d <= de; d.setUTCDate(d.getUTCDate() + 1)) {
+              allKeys.push(d.toISOString().slice(0, 10));
+            }
+            
+            // Process historical weekly data and distribute across days
+            const histTTMap = new Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>();
+            const histIGMap = new Map<string, {views:number;likes:number;comments:number}>();
+            
+            for (const row of histData.tiktok || []) {
+              const weekStart = String(row.start_date);
+              const weekEnd = String(row.end_date);
+              const daysInWeek = Math.round((new Date(weekEnd).getTime() - new Date(weekStart).getTime()) / (24*60*60*1000)) + 1;
+              
+              for (const k of allKeys) {
+                if (k >= weekStart && k <= weekEnd && k < HISTORICAL_DATA_CUTOFF) {
+                  const cur = histTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+                  cur.views += Math.round((Number(row.views) || 0) / daysInWeek);
+                  cur.likes += Math.round((Number(row.likes) || 0) / daysInWeek);
+                  cur.comments += Math.round((Number(row.comments) || 0) / daysInWeek);
+                  cur.shares += Math.round((Number(row.shares) || 0) / daysInWeek);
+                  cur.saves += Math.round((Number(row.saves) || 0) / daysInWeek);
+                  histTTMap.set(k, cur);
+                }
+              }
+            }
+            
+            for (const row of histData.instagram || []) {
+              const weekStart = String(row.start_date);
+              const weekEnd = String(row.end_date);
+              const daysInWeek = Math.round((new Date(weekEnd).getTime() - new Date(weekStart).getTime()) / (24*60*60*1000)) + 1;
+              
+              for (const k of allKeys) {
+                if (k >= weekStart && k <= weekEnd && k < HISTORICAL_DATA_CUTOFF) {
+                  const cur = histIGMap.get(k) || { views:0, likes:0, comments:0 };
+                  cur.views += Math.round((Number(row.views) || 0) / daysInWeek);
+                  cur.likes += Math.round((Number(row.likes) || 0) / daysInWeek);
+                  cur.comments += Math.round((Number(row.comments) || 0) / daysInWeek);
+                  histIGMap.set(k, cur);
+                }
+              }
+            }
+            
+            // Merge historical data with realtime data
+            const mergeHistorical = (arr: any[], histMap: Map<string, any>, platform: 'tiktok'|'instagram'|'total') => {
+              const resultMap = new Map<string, any>();
+              // First add realtime data
+              for (const item of arr) {
+                resultMap.set(item.date, { ...item });
+              }
+              // Then add/merge historical data for dates < cutoff
+              for (const k of allKeys) {
+                if (k < HISTORICAL_DATA_CUTOFF) {
+                  let histValue: any;
+                  if (platform === 'total') {
+                    const tt = histTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+                    const ig = histIGMap.get(k) || { views:0, likes:0, comments:0 };
+                    histValue = { views: tt.views + ig.views, likes: tt.likes + ig.likes, comments: tt.comments + ig.comments, shares: tt.shares, saves: tt.saves };
+                  } else if (platform === 'tiktok') {
+                    histValue = histTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+                  } else {
+                    histValue = histIGMap.get(k) || { views:0, likes:0, comments:0 };
+                  }
+                  const existing = resultMap.get(k);
+                  if (existing) {
+                    // Merge (add historical to existing)
+                    existing.views = (existing.views || 0) + (histValue.views || 0);
+                    existing.likes = (existing.likes || 0) + (histValue.likes || 0);
+                    existing.comments = (existing.comments || 0) + (histValue.comments || 0);
+                    if (platform !== 'instagram') {
+                      existing.shares = (existing.shares || 0) + (histValue.shares || 0);
+                      existing.saves = (existing.saves || 0) + (histValue.saves || 0);
+                    }
+                  } else {
+                    resultMap.set(k, { date: k, ...histValue });
+                  }
+                }
+              }
+              return Array.from(resultMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+            };
+            
+            json.total = mergeHistorical(json.total || [], histTTMap, 'total');
+            json.total_tiktok = mergeHistorical(json.total_tiktok || [], histTTMap, 'tiktok');
+            json.total_instagram = mergeHistorical(json.total_instagram || [], histIGMap, 'instagram');
+            
+            console.log('[ACCRUAL] After merging historical, total entries:', json.total.length);
+          }
+        }
       } else {
         // Post date: gunakan endpoint groups/series bawaan
         const url = new URL('/api/groups/series', window.location.origin);
         url.searchParams.set('start', effStart);
         url.searchParams.set('end', effEnd);
-        url.searchParams.set('interval', interval);
+        url.searchParams.set('interval', 'weekly');
         url.searchParams.set('mode', mode);
         url.searchParams.set('cutoff', accrualCutoff);
         const res = await fetch(url.toString(), { cache: 'no-store' });
@@ -237,39 +340,15 @@ export default function DashboardTotalPage() {
         }
       } catch {}
 
-      // Hide data before cutoff by zeroing values but keep dates on axis (Accrual only)
+      // Note: Tidak ada masking cutoff untuk accrual; historical akan ditampilkan apa adanya
       if (mode === 'accrual') {
-        const cutoffDate = accrualCutoff; // hanya realtime yang di-mask oleh cutoff global
-        const zeroBefore = (arr: any[] = []) => arr.map((it:any)=>{
-          if (!it || typeof it !== 'object') return it;
-          if (String(it.date) <= cutoffDate) {
-            const r:any = { ...it };
-            if ('views' in r) r.views = 0;
-            if ('likes' in r) r.likes = 0;
-            if ('comments' in r) r.comments = 0;
-            if ('shares' in r) r.shares = 0;
-            if ('saves' in r) r.saves = 0;
-            return r;
+        const sumSeries = (arr:any[] = []) => arr.reduce((a:any,s:any)=>(
+          {
+            views: (a.views||0) + (Number(s.views)||0),
+            likes: (a.likes||0) + (Number(s.likes)||0),
+            comments: (a.comments||0) + (Number(s.comments)||0)
           }
-          return it;
-        });
-        if (json?.total) json.total = zeroBefore(json.total);
-        if (json?.total_tiktok) json.total_tiktok = zeroBefore(json.total_tiktok);
-        if (json?.total_instagram) json.total_instagram = zeroBefore(json.total_instagram);
-        if (Array.isArray(json?.groups)) {
-          json.groups = json.groups.map((g:any)=>({
-            ...g,
-            series: zeroBefore(g.series),
-            series_tiktok: zeroBefore(g.series_tiktok),
-            series_instagram: zeroBefore(g.series_instagram),
-          }));
-        }
-        // Recompute header totals from masked series so header matches chart
-        const sumSeries = (arr:any[] = []) => arr.reduce((a:any,s:any)=>({
-          views: (a.views||0) + (Number(s.views)||0),
-          likes: (a.likes||0) + (Number(s.likes)||0),
-          comments: (a.comments||0) + (Number(s.comments)||0)
-        }), { views:0, likes:0, comments:0 });
+        ), { views:0, likes:0, comments:0 });
         json.totals = sumSeries(json.total || []);
       }
       setData(json);
@@ -279,7 +358,7 @@ export default function DashboardTotalPage() {
 
   useEffect(()=>{ load(); }, [start, end, interval, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, activeCampaignId]);
   
-  // Load historical data
+  // Load historical data (weekly_historical_data)
   useEffect(() => {
     const loadHistorical = async () => {
       if (!showHistorical) {
@@ -291,30 +370,34 @@ export default function DashboardTotalPage() {
       console.log('[HISTORICAL] Loading data... platformFilter:', platformFilter);
       
       try {
-        // Fetch employee historical metrics (no date filter to show all historical data)
-        const platformParam = platformFilter === 'all' ? '' : platformFilter;
-        
-        const url = `/api/admin/employee-historical?platform=${platformParam}`;
+        // Fetch weekly historical for fixed window (2 Aug 2025 .. 22 Jan 2026)
+        const startISO = '2025-08-02';
+        const endISO = '2026-01-22';
+        const url = `/api/admin/weekly-historical?start=${startISO}&end=${endISO}`;
         console.log('[HISTORICAL] Fetching from:', url);
-        
-        const res = await fetch(url);
+        const res = await fetch(url, { cache: 'no-store' });
         const json = await res.json();
-        
-        console.log('[HISTORICAL] Response status:', res.status);
-        console.log('[HISTORICAL] Response data:', json);
-        
-        if (res.ok && json.data) {
-          console.log('[HISTORICAL] Data loaded successfully, count:', json.data.length);
-          console.log('[HISTORICAL] Sample entry:', json.data[0]);
-          // Sort by start_date to show chronologically
-          const sorted = json.data.sort((a: any, b: any) => 
-            new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
-          );
-          setHistoricalData(sorted);
-        } else {
-          console.error('[HISTORICAL] Failed to load:', json.error);
-          setHistoricalData([]);
+        if (!res.ok) throw new Error(json?.error || 'Failed historical');
+        const tt = Array.isArray(json.tiktok)? json.tiktok: [];
+        const ig = Array.isArray(json.instagram)? json.instagram: [];
+        const map = new Map<string, any>();
+        const keyOf = (r:any)=> `${String(r.start_date)}|${String(r.end_date)}`;
+        for (const r of tt) {
+          const k = keyOf(r);
+          const cur = map.get(k) || { start_date: r.start_date, end_date: r.end_date, views:0, likes:0, comments:0, tiktok:0, tiktok_likes:0, tiktok_comments:0, instagram:0, instagram_likes:0, instagram_comments:0 };
+          cur.tiktok += Number((r as any).views)||0; cur.tiktok_likes += Number((r as any).likes)||0; cur.tiktok_comments += Number((r as any).comments)||0;
+          cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
+          map.set(k, cur);
         }
+        for (const r of ig) {
+          const k = keyOf(r);
+          const cur = map.get(k) || { start_date: r.start_date, end_date: r.end_date, views:0, likes:0, comments:0, tiktok:0, tiktok_likes:0, tiktok_comments:0, instagram:0, instagram_likes:0, instagram_comments:0 };
+          cur.instagram += Number((r as any).views)||0; cur.instagram_likes += Number((r as any).likes)||0; cur.instagram_comments += Number((r as any).comments)||0;
+          cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
+          map.set(k, cur);
+        }
+        const arr = Array.from(map.values()).sort((a,b)=> new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+        setHistoricalData(arr);
       } catch (error) {
         console.error('[HISTORICAL] Exception:', error);
         setHistoricalData([]);
@@ -322,7 +405,7 @@ export default function DashboardTotalPage() {
     };
     
     loadHistorical();
-  }, [showHistorical, platformFilter]);
+  }, [showHistorical]);
   
   // Load posts data for chart
   useEffect(() => {
@@ -608,8 +691,8 @@ export default function DashboardTotalPage() {
       }
       
       // Historical cutoff for weekly view
-      const HISTORICAL_CUTOFF = '2026-01-02';
-      const REALTIME_START = '2026-01-03';
+      const HISTORICAL_CUTOFF = '2026-01-22';
+      const REALTIME_START = '2026-01-23';
       
       console.log('[WEEKLY VIEW] ═══════════════════════════════════════════════════════════');
       console.log('[WEEKLY VIEW] Range:', accrualCustomStart, 'to', accrualCustomEnd);
@@ -968,12 +1051,147 @@ export default function DashboardTotalPage() {
       return { labels, datasets };
     }
     
-    // Daily view (existing code)
-    labels = (data.total || []).map((s:any)=>{
-      const d = parseISO(s.date);
-      if (interval==='monthly') return format(d,'MMM yyyy', {locale: localeID});
-      return format(d,'d MMM', {locale: localeID});
-    });
+    // Postdate Weekly: build from historical periods (DB) then realtime weekly starting 2026-01-23
+    if (mode==='postdate' && interval==='weekly') {
+      const REALTIME_START = '2026-01-23';
+      const anchor = new Date(REALTIME_START+'T00:00:00Z');
+      const toDate = (s:string)=> new Date(s+'T00:00:00Z');
+      // 1) Historical periods directly from DB weekly_historical_data
+      const histPeriods: any[] = [];
+      for (const r of (historicalData||[])) {
+        const hs = String((r as any).start_date||'');
+        const he = String((r as any).end_date||'');
+        if (!hs || !he) continue;
+        const startDate = toDate(hs); const endDate = toDate(he);
+        histPeriods.push({
+          startDate, endDate,
+          views: Number((r as any).views)||0,
+          likes: Number((r as any).likes)||0,
+          comments: Number((r as any).comments)||0,
+          tiktok: Number((r as any).tiktok_views|| (r as any).tiktok)||0,
+          tiktok_likes: Number((r as any).tiktok_likes||0),
+          tiktok_comments: Number((r as any).tiktok_comments||0),
+          instagram: Number((r as any).instagram_views|| (r as any).instagram)||0,
+          instagram_likes: Number((r as any).instagram_likes||0),
+          instagram_comments: Number((r as any).instagram_comments||0),
+          is_historical: true,
+          groups: []
+        });
+      }
+      // 2) Realtime weekly from data.total* (daily) starting at REALTIME_START
+      const sumSeries = (arr:any[] = [], key:'views'|'likes'|'comments') => arr.reduce((acc:Map<number,number>, s:any)=>{
+        const d = new Date(String(s.date)+'T00:00:00Z');
+        if (d < anchor) return acc; // ignore pre-cutoff realtime
+        const idx = Math.floor((d.getTime()-anchor.getTime())/(7*24*60*60*1000));
+        const cur = acc.get(idx)||0; acc.set(idx, cur + Number(s[key]||0)); return acc;
+      }, new Map<number,number>());
+      const mapViews = sumSeries(data.total||[], 'views');
+      const mapLikes = sumSeries(data.total||[], 'likes');
+      const mapComments = sumSeries(data.total||[], 'comments');
+      const mapTTViews = sumSeries(data.total_tiktok||[], 'views');
+      const mapTTLikes = sumSeries(data.total_tiktok||[], 'likes');
+      const mapTTComments = sumSeries(data.total_tiktok||[], 'comments');
+      const mapIGViews = sumSeries(data.total_instagram||[], 'views');
+      const mapIGLikes = sumSeries(data.total_instagram||[], 'likes');
+      const mapIGComments = sumSeries(data.total_instagram||[], 'comments');
+      const rtPeriods: any[] = [];
+      const indices = Array.from(new Set([ ...mapViews.keys(), ...mapLikes.keys(), ...mapComments.keys() ])).sort((a,b)=> a-b);
+      for (const idx of indices) {
+        const startDate = new Date(anchor.getTime() + idx*7*24*60*60*1000);
+        const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate()+6);
+        rtPeriods.push({
+          startDate, endDate,
+          views: mapViews.get(idx)||0,
+          likes: mapLikes.get(idx)||0,
+          comments: mapComments.get(idx)||0,
+          tiktok: mapTTViews.get(idx)||0,
+          tiktok_likes: mapTTLikes.get(idx)||0,
+          tiktok_comments: mapTTComments.get(idx)||0,
+          instagram: mapIGViews.get(idx)||0,
+          instagram_likes: mapIGLikes.get(idx)||0,
+          instagram_comments: mapIGComments.get(idx)||0,
+          is_historical: false,
+          groups: []
+        });
+      }
+      const allPeriods = [...histPeriods, ...rtPeriods].sort((a,b)=> a.startDate.getTime()-b.startDate.getTime());
+      // Labels
+      const labels = allPeriods.map((p:any)=>{
+        const ds = p.startDate.getUTCDate();
+        const de = p.endDate.getUTCDate();
+        const tail = format(p.endDate,'MMM yyyy', { locale: localeID });
+        return `${ds}-${de} ${tail}`;
+      });
+      // Datasets (totals + platform breakdown)
+      const pick = (p:any)=> metric==='likes'? p.likes : metric==='comments'? p.comments : p.views;
+      const totalVals = allPeriods.map(p=> pick(p));
+      const datasets:any[] = [ { label: platformFilter==='all'?'Total': platformFilter==='tiktok'?'TikTok':'Instagram', data: totalVals, borderColor: palette[0], backgroundColor: palette[0]+'33', fill:true, tension:0.35, yAxisID:'y' } ];
+      if (platformFilter==='all') {
+        const ttVals = allPeriods.map((p:any)=> metric==='likes'? (p.tiktok_likes||0) : metric==='comments'? (p.tiktok_comments||0) : (p.tiktok||0));
+        const igVals = allPeriods.map((p:any)=> metric==='likes'? (p.instagram_likes||0) : metric==='comments'? (p.instagram_comments||0) : (p.instagram||0));
+        datasets.push({ label:'TikTok', data: ttVals, borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,0.15)', fill:false, tension:0.35, yAxisID:'y' });
+        datasets.push({ label:'Instagram', data: igVals, borderColor:'#f43f5e', backgroundColor:'rgba(244,63,94,0.15)', fill:false, tension:0.35, yAxisID:'y' });
+      }
+
+      // Per-group lines (realtime only; historical buckets remain zero)
+      if (Array.isArray(data.groups) && data.groups.length) {
+        const histLen = histPeriods.length;
+        // Build map of weekNum -> position index within realtime segment
+        const idxToPos = new Map<number, number>();
+        indices.forEach((wIdx:number, pos:number)=> idxToPos.set(wIdx, pos));
+        for (let gi=0; gi<data.groups.length; gi++) {
+          const g = data.groups[gi];
+          let series: any[] = (g.series||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
+          if (platformFilter==='tiktok' && g.series_tiktok) series = (g.series_tiktok||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
+          else if (platformFilter==='instagram' && g.series_instagram) series = (g.series_instagram||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
+          if (!series.length) continue;
+          const weekly = groupByWeek(series, REALTIME_START);
+          const weekMap = new Map<number, any>();
+          weekly.forEach((w:any)=> weekMap.set(w.weekNum, w));
+          const vals = new Array(allPeriods.length).fill(0);
+          for (const [wIdx, pos] of idxToPos.entries()) {
+            const w = weekMap.get(wIdx);
+            if (!w) continue;
+            const v = metric==='likes'? (w.likes||0) : metric==='comments'? (w.comments||0) : (w.views||0);
+            vals[histLen + pos] = v;
+          }
+          datasets.push({ label: g.name, data: vals, borderColor: palette[(gi+3)%palette.length], backgroundColor:'transparent', fill:false, tension:0.35, yAxisID:'y' });
+        }
+      }
+
+      // Posts overlay (realtime only) if enabled
+      if (showPosts && postsData.length>0) {
+        const histLen = histPeriods.length;
+        const vals = new Array(allPeriods.length).fill(0);
+        // Build a map of date->count
+        const pmap = new Map<string, number>();
+        postsData.forEach((p:any)=> pmap.set(String(p.date), Number(p.posts||0)));
+        indices.forEach((wIdx:number, pos:number)=>{
+          const startDate = new Date(anchor.getTime() + wIdx*7*24*60*60*1000);
+          const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate()+6);
+          let sum=0; for (const [ds,c] of pmap.entries()) { const d=new Date(ds+'T00:00:00Z'); if (d>=startDate && d<=endDate) sum+=Number(c)||0; }
+          vals[histLen + pos] = sum;
+        });
+        datasets.push({ label:'Posts', data: vals, borderColor:'#a855f7', backgroundColor:'rgba(168,85,247,0.15)', fill:false, tension:0.35, yAxisID:'y1', borderDash:[5,5] });
+      }
+      return { labels, datasets };
+    }
+
+    // Postdate view: build labels based on interval
+    if (interval === 'weekly') {
+      labels = (data.total || []).map((s:any)=>{
+        const start = parseISO(s.date);
+        const end = new Date(start.getTime()); end.setUTCDate(end.getUTCDate()+6);
+        const ds = start.getUTCDate();
+        const de = end.getUTCDate();
+        const tail = format(end,'MMM yyyy', { locale: localeID });
+        return `${ds}-${de} ${tail}`;
+      });
+    } else if (interval === 'monthly') {
+      labels = (data.total || []).map((s:any)=> format(parseISO(s.date),'MMM yyyy', {locale: localeID}));
+    } else {
+      labels = (data.total || []).map((s:any)=> format(parseISO(s.date),'d MMM', {locale: localeID}));
+    }
     const datasets:any[] = [];
     
     // Total first (filtered by platform)
@@ -1180,15 +1398,7 @@ export default function DashboardTotalPage() {
               <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
             </div>
           )}
-          <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={weeklyView}
-              onChange={(e) => setWeeklyView(e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-blue-600"
-            />
-            <span>Tampilan Mingguan</span>
-          </label>
+          {/* Tampilan selalu mingguan, checkbox dihapus */}
         </div>
       </div>
 
@@ -1197,28 +1407,12 @@ export default function DashboardTotalPage() {
         {/* Left: Mode (+ accrual window when applicable) */}
         <div className="flex items-center gap-2 justify-start">
           <span className="text-white/60">Mode:</span>
-          <button className={`px-2 py-1 rounded ${mode==='accrual'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('accrual')}>Accrual</button>
-          <button className={`px-2 py-1 rounded ${mode==='postdate'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('postdate')}>Post Date</button>
-          {mode==='accrual' && !useCustomAccrualDates && (
-            <div className="flex items-center gap-2 ml-2">
-              <span className="text-white/60">Rentang:</span>
-              <button className={`px-2 py-1 rounded ${accrualWindow===7?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(7)}>7 hari</button>
-              <button className={`px-2 py-1 rounded ${accrualWindow===28?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(28)}>28 hari</button>
-              <button className={`px-2 py-1 rounded ${accrualWindow===60?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(60)}>60 hari</button>
-            </div>
-          )}
+          <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
         </div>
 
-        {/* Center: Interval */}
+        {/* Center: Interval removed - historical data is weekly only */}
         <div className="flex items-center gap-2 justify-center">
-          {mode!=='accrual' && (
-            <>
-              <span className="text-white/60">Interval:</span>
-              <button className={`px-2 py-1 rounded ${interval==='daily'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('daily')}>Harian</button>
-              <button className={`px-2 py-1 rounded ${interval==='weekly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('weekly')}>Mingguan</button>
-              <button className={`px-2 py-1 rounded ${interval==='monthly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('monthly')}>Bulanan</button>
-            </>
-          )}
+          {/* Interval dihapus - data historical mingguan saja */}
         </div>
 
         {/* Right: Metric */}

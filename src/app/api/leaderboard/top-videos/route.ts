@@ -112,13 +112,13 @@ export async function GET(req: Request) {
       console.log(`[Top Videos] TikTok: ${tiktokUsernames.length} usernames to query: ${tiktokUsernames.slice(0, 5).join(', ')}${tiktokUsernames.length > 5 ? '...' : ''}`)
       
       if (tiktokUsernames.length > 0) {
-        // Query only snapshots whose taken_at falls in window; fallback to post_date if taken_at is NULL
-        const orFilter = `and(taken_at.gte.${startISO}T00:00:00Z,taken_at.lte.${endISO}T23:59:59Z),and(taken_at.is.null,post_date.gte.${startISO},post_date.lte.${endISO})`
+        // Query snapshots within the taken_at window
         const { data: tiktokPosts } = await supabase
           .from('tiktok_posts_daily')
-          .select('video_id, username, post_date, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
+          .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
           .in('username', tiktokUsernames)
-          .or(orFilter)
+          .gte('taken_at', startISO + 'T00:00:00Z')
+          .lte('taken_at', endISO + 'T23:59:59Z')
           .order('play_count', { ascending: false })
           .limit(limit * 200)
 
@@ -133,36 +133,25 @@ export async function GET(req: Request) {
 
         console.log(`[Top Videos] TikTok: Found ${tiktokPosts?.length || 0} total posts, groups=${videoMap.size} window ${startISO}..${endISO}`)
 
-        // Calculate accrual for each video within window
+        // Calculate ABSOLUTE totals for each video (last snapshot as of endISO)
         for (const [videoId, snapshots] of videoMap.entries()) {
-          // Sort by date
-          snapshots.sort((a, b) => (a.post_date || '').localeCompare(b.post_date || ''))
+          // Sort by taken_at
+          snapshots.sort((a, b) => (a.taken_at || '').localeCompare(b.taken_at || ''))
           
           const first = snapshots[0]
           const last = snapshots[snapshots.length - 1]
 
-          // Determine actual upload date from earliest taken_at across the group
-          let takenAtGroup: string | null = null
-          for (const s of snapshots) {
-            if (s.taken_at) {
-              const iso = new Date(s.taken_at).toISOString().slice(0, 10)
-              if (!takenAtGroup || iso < takenAtGroup) takenAtGroup = iso
-            }
-          }
-          const actualPostDate = takenAtGroup || snapshots.reduce((min: string, s: any) => {
-            return !min || (s.post_date || '') < min ? (s.post_date || min) : min
-          }, first.post_date)
+          // Determine actual upload date from earliest taken_at
+          const actualPostDate = snapshots.reduce((min: string, s: any) => {
+            const iso = new Date(s.taken_at).toISOString().slice(0,10)
+            return !min || iso < min ? iso : min
+          }, new Date(first.taken_at).toISOString().slice(0,10))
 
-          // Strict: require taken_at inside window if available
-          const anyTakenInWindow = snapshots.some((s) => s.taken_at && (new Date(s.taken_at).getTime() >= startTs && new Date(s.taken_at).getTime() <= endTs))
-          if (!anyTakenInWindow) continue
-
-          // Use only window snapshots to compute accrual within the selected days window
+          // Filter snapshots within window (upload date window); use latest snapshot within window as current total
           const windowSnapshots = snapshots.filter((s) => {
-            const ts = new Date((s.post_date || actualPostDate) + 'T12:00:00Z').getTime()
+            const ts = new Date(s.taken_at).getTime()
             return ts >= startTs && ts <= endTs
           })
-          const firstW = windowSnapshots[0] || first
           const lastW = windowSnapshots[windowSnapshots.length - 1] || last
           
           // Filter by hashtag if required
@@ -170,23 +159,12 @@ export async function GET(req: Request) {
             continue;
           }
           
-          // Accrual = final - initial (or use final if only one snapshot)
-          const isSingle = windowSnapshots.length <= 1
-          const views = isSingle 
-            ? Number(lastW.play_count || 0)
-            : Math.max(0, Number(lastW.play_count || 0) - Number(firstW.play_count || 0))
-          const likes = isSingle
-            ? Number(lastW.digg_count || 0)
-            : Math.max(0, Number(lastW.digg_count || 0) - Number(firstW.digg_count || 0))
-          const comments = isSingle
-            ? Number(lastW.comment_count || 0)
-            : Math.max(0, Number(lastW.comment_count || 0) - Number(firstW.comment_count || 0))
-          const shares = isSingle
-            ? Number(lastW.share_count || 0)
-            : Math.max(0, Number(lastW.share_count || 0) - Number(firstW.share_count || 0))
-          const saves = isSingle
-            ? Number(lastW.save_count || 0)
-            : Math.max(0, Number(lastW.save_count || 0) - Number(firstW.save_count || 0))
+          // Absolute totals at latest snapshot in window (post date ranking)
+          const views = Number(lastW.play_count || 0)
+          const likes = Number(lastW.digg_count || 0)
+          const comments = Number(lastW.comment_count || 0)
+          const shares = Number(lastW.share_count || 0)
+          const saves = Number(lastW.save_count || 0)
 
           // Find owner user
           let ownerName = last.username
@@ -199,7 +177,7 @@ export async function GET(req: Request) {
             }
           }
 
-          // post_date returned to client uses actual upload date computed above
+          // taken_at returned to client uses actual upload date computed above
 
           videos.push({
             platform: 'tiktok',
@@ -207,7 +185,7 @@ export async function GET(req: Request) {
             username: last.username,
             owner_name: ownerName,
             owner_id: ownerId,
-            post_date: actualPostDate, // Use actual upload date
+            taken_at: actualPostDate, // Use actual upload date
             link: `https://www.tiktok.com/@${last.username}/video/${videoId}`,
             metrics: {
               views,
@@ -249,13 +227,13 @@ export async function GET(req: Request) {
       console.log(`[Top Videos] Instagram: ${uniqueIgUsernames.length} usernames to query: ${uniqueIgUsernames.slice(0, 5).join(', ')}${uniqueIgUsernames.length > 5 ? '...' : ''}`)
 
       if (uniqueIgUsernames.length > 0) {
-        // Query only snapshots whose taken_at falls in window; fallback to post_date if taken_at is NULL
-        const orFilter = `and(taken_at.gte.${startISO}T00:00:00Z,taken_at.lte.${endISO}T23:59:59Z),and(taken_at.is.null,post_date.gte.${startISO},post_date.lte.${endISO})`
+        // Query snapshots within the taken_at window
         const { data: igPosts } = await supabase
           .from('instagram_posts_daily')
-          .select('id, code, username, post_date, taken_at, caption, play_count, like_count, comment_count')
+          .select('id, code, username, taken_at, caption, play_count, like_count, comment_count')
           .in('username', uniqueIgUsernames)
-          .or(orFilter)
+          .gte('taken_at', startISO + 'T00:00:00Z')
+          .lte('taken_at', endISO + 'T23:59:59Z')
           .order('play_count', { ascending: false })
           .limit(limit * 200)
 
@@ -270,35 +248,24 @@ export async function GET(req: Request) {
 
         console.log(`[Top Videos] Instagram: Found ${igPosts?.length || 0} total posts, groups=${videoMap.size} window ${startISO}..${endISO}`)
 
-        // Calculate accrual for each post within window
+        // Calculate ABSOLUTE totals for each post (last snapshot as of endISO)
         for (const [postId, snapshots] of videoMap.entries()) {
-          snapshots.sort((a, b) => (a.post_date || '').localeCompare(b.post_date || ''))
+          snapshots.sort((a, b) => (a.taken_at || '').localeCompare(b.taken_at || ''))
           
           const first = snapshots[0]
           const last = snapshots[snapshots.length - 1]
 
-          // Determine actual upload date from earliest taken_at across the group
-          let takenAtGroup: string | null = null
-          for (const s of snapshots) {
-            if (s.taken_at) {
-              const iso = new Date(s.taken_at).toISOString().slice(0, 10)
-              if (!takenAtGroup || iso < takenAtGroup) takenAtGroup = iso
-            }
-          }
-          const actualPostDate = takenAtGroup || snapshots.reduce((min: string, s: any) => {
-            return !min || (s.post_date || '') < min ? (s.post_date || min) : min
-          }, first.post_date)
+          // Determine actual upload date from earliest taken_at
+          const actualPostDate = snapshots.reduce((min: string, s: any) => {
+            const iso = new Date(s.taken_at).toISOString().slice(0,10)
+            return !min || iso < min ? iso : min
+          }, new Date(first.taken_at).toISOString().slice(0,10))
 
-          // Strict: require taken_at inside window if available
-          const anyTakenInWindow = snapshots.some((s) => s.taken_at && (new Date(s.taken_at).getTime() >= startTs && new Date(s.taken_at).getTime() <= endTs))
-          if (!anyTakenInWindow) continue
-
-          // Use only window snapshots to compute accrual within the selected days window
+          // Filter snapshots within window (upload date window); use latest snapshot within window as current total
           const windowSnapshots = snapshots.filter((s) => {
-            const ts = new Date((s.post_date || actualPostDate) + 'T12:00:00Z').getTime()
+            const ts = new Date(s.taken_at).getTime()
             return ts >= startTs && ts <= endTs
           })
-          const firstW = windowSnapshots[0] || first
           const lastW = windowSnapshots[windowSnapshots.length - 1] || last
           
           // Filter by hashtag if required
@@ -306,16 +273,9 @@ export async function GET(req: Request) {
             continue;
           }
           
-          const isSingle = windowSnapshots.length <= 1
-          const views = isSingle
-            ? Number(lastW.play_count || 0)
-            : Math.max(0, Number(lastW.play_count || 0) - Number(firstW.play_count || 0))
-          const likes = isSingle
-            ? Number(lastW.like_count || 0)
-            : Math.max(0, Number(lastW.like_count || 0) - Number(firstW.like_count || 0))
-          const comments = isSingle
-            ? Number(lastW.comment_count || 0)
-            : Math.max(0, Number(lastW.comment_count || 0) - Number(firstW.comment_count || 0))
+          const views = Number(lastW.play_count || 0)
+          const likes = Number(lastW.like_count || 0)
+          const comments = Number(lastW.comment_count || 0)
 
           // Find owner user
           let ownerName = last.username
@@ -334,7 +294,7 @@ export async function GET(req: Request) {
             username: last.username,
             owner_name: ownerName,
             owner_id: ownerId,
-            post_date: actualPostDate, // Use actual upload date
+            taken_at: actualPostDate, // Use actual upload date
             link: `https://www.instagram.com/reel/${last.code || postId}/`,
             metrics: {
               views,
@@ -358,8 +318,8 @@ export async function GET(req: Request) {
       console.log(`[Top Videos] Top video: ${topVideos[0].platform} @${topVideos[0].username} - ${topVideos[0].metrics.views} views`)
     }
 
-    // === CALCULATE ACTUAL TOTAL POSTS FROM post_date (accurate count) ===
-    // Query unique video_id/id based on post_date in range (not taken_at/snapshots)
+    // === CALCULATE ACTUAL TOTAL POSTS FROM taken_at (accurate count) ===
+    // Query unique video_id/id based on taken_at in range (precise timestamps)
     let actualTotalPosts = 0;
     
     // Get TikTok usernames from users table
@@ -406,14 +366,14 @@ export async function GET(req: Request) {
     }
     const uniqueIgUsernamesAll = Array.from(new Set(instagramUsernamesForCount));
     
-    // Count unique TikTok videos by post_date
+    // Count unique TikTok videos by taken_at
     if ((platform === 'all' || platform === 'tiktok') && uniqueTTUsernamesAll.length > 0) {
       const { data: ttUnique } = await supabase
         .from('tiktok_posts_daily')
-        .select('video_id, username, post_date, title')
+        .select('video_id, username, taken_at, title')
         .in('username', uniqueTTUsernamesAll)
-        .gte('post_date', startISO)
-        .lte('post_date', endISO);
+        .gte('taken_at', startISO + 'T00:00:00Z')
+        .lte('taken_at', endISO + 'T23:59:59Z');
       
       // Get unique video_ids with hashtag filter
       const uniqueTTVideos = new Set<string>();
@@ -426,14 +386,14 @@ export async function GET(req: Request) {
       actualTotalPosts += uniqueTTVideos.size;
     }
     
-    // Count unique Instagram posts by post_date
+    // Count unique Instagram posts by taken_at
     if ((platform === 'all' || platform === 'instagram') && uniqueIgUsernamesAll.length > 0) {
       const { data: igUnique } = await supabase
         .from('instagram_posts_daily')
-        .select('id, username, post_date, caption')
+        .select('id, username, taken_at, caption')
         .in('username', uniqueIgUsernamesAll)
-        .gte('post_date', startISO)
-        .lte('post_date', endISO);
+        .gte('taken_at', startISO + 'T00:00:00Z')
+        .lte('taken_at', endISO + 'T23:59:59Z');
       
       // Get unique ids with hashtag filter
       const uniqueIGPosts = new Set<string>();
@@ -446,7 +406,7 @@ export async function GET(req: Request) {
       actualTotalPosts += uniqueIGPosts.size;
     }
 
-    console.log(`[Top Videos] Actual Total Posts (by post_date): ${actualTotalPosts} (TT usernames: ${uniqueTTUsernamesAll.length}, IG usernames: ${uniqueIgUsernamesAll.length})`)
+    console.log(`[Top Videos] Actual Total Posts (by taken_at): ${actualTotalPosts} (TT usernames: ${uniqueTTUsernamesAll.length}, IG usernames: ${uniqueIgUsernamesAll.length})`)
 
     return NextResponse.json({
       videos: topVideos,

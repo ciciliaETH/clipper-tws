@@ -68,10 +68,14 @@ export async function POST(req: Request) {
     if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const supa = adminClient();
     const body = await req.json().catch(()=>({}));
-    const maxAccountsPerRequest = body?.limit ? Math.min(body.limit, 5) : 5; // Process max 5 accounts to prevent timeout
+    
+    // Auto-loop mode: process all accounts in batches of 5
+    const batchSize = 5;
+    const maxExecutionTime = 55000; // 55s max (leave 5s buffer for Vercel 60s limit)
     const doFetch = body?.fetch === true;
     const force = body?.force === true;
     const debug = body?.debug === true;
+    const startTime = Date.now();
 
     // Collect IG usernames from multiple sources
     const set = new Set<string>();
@@ -111,16 +115,14 @@ export async function POST(req: Request) {
       all = all.filter(u => !cachedSet.has(u));
     }
     
-    // Apply batch limit
     const totalPending = all.length;
-    const toProcess = all.slice(0, maxAccountsPerRequest);
-    const remaining = totalPending - toProcess.length;
     
-    if (!toProcess.length) return NextResponse.json({ 
+    if (!totalPending) return NextResponse.json({ 
       resolved: 0, 
       fetched: 0, 
       users: 0, 
       remaining: 0,
+      batches: 0,
       message: 'All usernames already resolved!',
       results: [] 
     });
@@ -129,17 +131,29 @@ export async function POST(req: Request) {
     const scraper = process.env.RAPIDAPI_IG_SCRAPER_HOST || 'instagram-scraper-api11.p.rapidapi.com';
     const mediaApi = 'instagram-media-api.p.rapidapi.com'; // Primary API for user ID resolution
 
-    const results: any[] = [];
-    const resolved: Array<{username:string; user_id:string}> = [];
-    const failures: Array<{username:string; reason:string}> = [];
+    // Aggregate results across all batches
+    const allResults: any[] = [];
+    const allResolved: Array<{username:string; user_id:string}> = [];
+    const allFailures: Array<{username:string; reason:string}> = [];
+    let batchCount = 0;
+    let processedCount = 0;
 
     const resolveUserId = async (username: string): Promise<string|undefined> => {
       const u = norm(username);
       
+      // Validate username format
+      if (!u || u.length < 1 || u.length > 30) {
+        console.log(`[Resolve IG] ❌ ${u} invalid username format (length)`);
+        return undefined;
+      }
+      
       // Check cache first
       if (!force) {
         const { data: c } = await supa.from('instagram_user_ids').select('instagram_user_id').eq('instagram_username', u).maybeSingle();
-        if (c?.instagram_user_id) return String(c.instagram_user_id);
+        if (c?.instagram_user_id) {
+          console.log(`[Resolve IG] ✅ ${u} found in cache: ${c.instagram_user_id}`);
+          return String(c.instagram_user_id);
+        }
       }
       
       // Enhanced multi-provider resolution with retry logic
@@ -153,7 +167,7 @@ export async function POST(req: Request) {
                 `https://${mediaApi}/user/id`,
                 mediaApi,
                 { username: u, proxy: '' },
-                12000
+                6000 // Reduced from 12s to 6s for faster failure detection
               );
               if (debug) console.log(`[Resolve IG] ${u} media_api response:`, JSON.stringify(j).slice(0, 500));
               // Response format: { id: "123456789", username: "dailysuli" }
@@ -169,7 +183,7 @@ export async function POST(req: Request) {
           name: 'scraper_link',
           fn: async () => {
             try {
-              const j = await rapidJson(`https://${scraper}/get_instagram_user_id?link=${encodeURIComponent('https://www.instagram.com/'+u)}`, scraper, 10000);
+              const j = await rapidJson(`https://${scraper}/get_instagram_user_id?link=${encodeURIComponent('https://www.instagram.com/'+u)}`, scraper, 5000); // Reduced from 10s to 5s
               if (debug) console.log(`[Resolve IG] ${u} scraper_link response:`, JSON.stringify(j).slice(0, 500));
               return j?.user_id || j?.id || j?.data?.user_id || j?.data?.id;
             } catch (err: any) {
@@ -200,79 +214,88 @@ export async function POST(req: Request) {
     const { protocol, host: reqHost } = new URL(req.url);
     const base = `${protocol}//${reqHost}`;
 
-    // Process each username with delay to avoid rate limits
-    for (let i = 0; i < toProcess.length; i++) {
-      const u = toProcess[i];
-      try {
-        const id = await resolveUserId(u);
-        if (id) {
-          await supa.from('instagram_user_ids').upsert({ 
-            instagram_username: u, 
-            instagram_user_id: id, 
-            created_at: new Date().toISOString() 
-          }, { onConflict: 'instagram_username' });
-          resolved.push({ username: u, user_id: id });
-          results.push({ username: u, ok: true, user_id: id });
-        } else {
-          // Fallback: call internal fetch-ig to leverage extended resolvers
-          try {
-            const res = await fetch(`${base}/api/fetch-ig/${encodeURIComponent(u)}?create=0&debug=1`, { cache: 'no-store' });
-            await res.json().catch(()=>({}));
-            
-            // Recheck cache after fetch-ig
-            const { data: c2 } = await supa.from('instagram_user_ids').select('instagram_user_id').eq('instagram_username', u).maybeSingle();
-            if (c2?.instagram_user_id) {
-              const uid = String(c2.instagram_user_id);
-              resolved.push({ username: u, user_id: uid });
-              results.push({ username: u, ok: true, user_id: uid, via: 'fetch-ig-fallback' });
-              continue;
-            }
-          } catch {}
-          
-          failures.push({ username: u, reason: 'not-found' });
-          results.push({ username: u, ok: false, error: 'not-found' });
-        }
-      } catch (e:any) {
-        failures.push({ username: u, reason: String(e?.message||e) });
-        results.push({ username: u, ok: false, error: String(e?.message||e) });
+    // AUTO-LOOP: Process in batches of 5 until done or timeout
+    while (processedCount < all.length) {
+      // Check timeout
+      const elapsed = Date.now() - startTime;
+      if (elapsed > maxExecutionTime) {
+        console.log(`[Resolve IG] Timeout approaching, stopping after ${processedCount}/${all.length} accounts`);
+        break;
       }
-      
-      // Add delay between requests to avoid rate limits
-      if (i < toProcess.length - 1) {
-        await new Promise(r => setTimeout(r, 500)); // 500ms delay
+
+      batchCount++;
+      const batch = all.slice(processedCount, processedCount + batchSize);
+      console.log(`[Resolve IG] Batch ${batchCount}: Processing ${batch.length} accounts (${processedCount}/${all.length} done)`);
+
+      // Process each username in current batch
+      for (let i = 0; i < batch.length; i++) {
+        const u = batch[i];
+        const startResolve = Date.now();
+        try {
+          console.log(`[Resolve IG] Attempting ${u}...`);
+          const id = await resolveUserId(u);
+          const elapsed = Date.now() - startResolve;
+          
+          if (id) {
+            console.log(`[Resolve IG] ✅ ${u} → ${id} (${elapsed}ms)`);
+            await supa.from('instagram_user_ids').upsert({ 
+              instagram_username: u, 
+              instagram_user_id: id, 
+              created_at: new Date().toISOString() 
+            }, { onConflict: 'instagram_username' });
+            allResolved.push({ username: u, user_id: id });
+            allResults.push({ username: u, ok: true, user_id: id });
+          } else {
+            console.log(`[Resolve IG] ❌ ${u} not found via RapidAPI (${elapsed}ms)`);
+            // SKIP fetch-ig fallback - too slow! Just mark as not-found
+            allFailures.push({ username: u, reason: 'not-found-rapidapi' });
+            allResults.push({ username: u, ok: false, error: 'not-found-rapidapi' });
+          }
+        } catch (e:any) {
+          const elapsed = Date.now() - startResolve;
+          console.log(`[Resolve IG] ❌ ${u} error: ${e?.message} (${elapsed}ms)`);
+          allFailures.push({ username: u, reason: String(e?.message||e) });
+          allResults.push({ username: u, ok: false, error: String(e?.message||e) });
+        }
+        
+        // Add delay between requests to avoid rate limits
+        if (i < batch.length - 1) {
+          await new Promise(r => setTimeout(r, 200)); // 200ms delay (faster)
+        }
+      }
+
+      processedCount += batch.length;
+
+      // Delay between batches
+      if (processedCount < all.length) {
+        await new Promise(r => setTimeout(r, 500)); // 500ms delay between batches (faster)
       }
     }
 
-    // Optionally fetch posts for resolved accounts
+    const remaining = totalPending - processedCount;
+
+    // Optionally fetch posts for resolved accounts (skip for now to save time)
     let fetched = 0;
-    if (doFetch && resolved.length) {
-      const limitFetch = Math.max(1, Math.min(5, Number(process.env.CAMPAIGN_REFRESH_IG_CONCURRENCY || '5')));
-      for (let i=0;i<resolved.length;i+=limitFetch) {
-        const batch = resolved.slice(i, i+limitFetch);
-        await Promise.all(batch.map(async (r)=>{
-          try { 
-            const res = await fetch(`${base}/api/fetch-ig/${encodeURIComponent(r.username)}`); 
-            if (res.ok) fetched += 1; 
-          } catch {}
-        }));
-      }
-    }
+    // if (doFetch && allResolved.length) { ... }
 
     return NextResponse.json({ 
-      users: toProcess.length, 
-      resolved: resolved.length, 
+      users: processedCount, 
+      resolved: allResolved.length, 
       fetched, 
-      failures: failures.length,
+      failures: allFailures.length,
       remaining,
-      success_rate: toProcess.length > 0 ? Math.round((resolved.length / toProcess.length) * 100) : 0,
+      batches: batchCount,
+      total_pending: totalPending,
+      execution_time_ms: Date.now() - startTime,
+      success_rate: processedCount > 0 ? Math.round((allResolved.length / processedCount) * 100) : 0,
       message: remaining > 0
-        ? `Processed ${toProcess.length} accounts. ${remaining} more to go. ${failures.length > 0 ? `(${failures.length} failures)` : ''}`
-        : failures.length > 0 
-          ? `Resolved ${resolved.length} of ${toProcess.length} users. ${failures.length} failures (check RapidAPI rate limits).`
-          : `Successfully resolved all ${resolved.length} users!`,
+        ? `Processed ${processedCount}/${totalPending} accounts in ${batchCount} batches. ${remaining} remaining (timeout). Call again to continue.`
+        : allFailures.length > 0 
+          ? `Resolved ${allResolved.length} of ${processedCount} users in ${batchCount} batches. ${allFailures.length} failures.`
+          : `Successfully resolved all ${allResolved.length} users in ${batchCount} batches! ✅`,
       sources: debug ? sourceCounts : undefined, 
-      results, // Always return results for debugging
-      failures_detail: failures // Return failure details
+      results: allResults, // All results from all batches
+      failures_detail: allFailures
     });
   } catch (e:any) {
     console.error('[Resolve IG User IDs] Error:', e);

@@ -364,17 +364,17 @@ export async function GET(req: Request, context: any) {
         if (!snapshotsOnly && ttUnion.length) {
           const { data: ptt } = await supabase
             .from('tiktok_posts_daily')
-            .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count, title')
+            .select('username, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
             .in('username', ttUnion)
-            .gte('post_date', start)
-            .lte('post_date', end);
+            .gte('taken_at', start + 'T00:00:00Z')
+            .lte('taken_at', end + 'T23:59:59Z');
           for (const r of ptt||[]) {
             if (requiredHashtags && requiredHashtags.length) {
               const title = String((r as any).title || '');
               if (!hasRequiredHashtag(title, requiredHashtags)) continue;
             }
             const uname = String((r as any).username).toLowerCase();
-            const date = String((r as any).post_date);
+            const date = new Date((r as any).taken_at).toISOString().slice(0,10);
             // find owner
             for (const [uid, handles] of userToTT.entries()) {
               if (!handles.includes(uname)) continue;
@@ -393,17 +393,17 @@ export async function GET(req: Request, context: any) {
         if (!snapshotsOnly && igUnion.length) {
           const { data: pig } = await supabase
             .from('instagram_posts_daily')
-            .select('username, post_date, play_count, like_count, comment_count, caption')
+            .select('username, taken_at, play_count, like_count, comment_count, caption')
             .in('username', igUnion)
-            .gte('post_date', start)
-            .lte('post_date', end);
+            .gte('taken_at', start + 'T00:00:00Z')
+            .lte('taken_at', end + 'T23:59:59Z');
           for (const r of pig||[]) {
             if (requiredHashtags && requiredHashtags.length) {
               const caption = String((r as any).caption || '');
               if (!hasRequiredHashtag(caption, requiredHashtags)) continue;
             }
             const uname = String((r as any).username).toLowerCase();
-            const date = String((r as any).post_date);
+            const date = new Date((r as any).taken_at).toISOString().slice(0,10);
             for (const [uid, handles] of userToIG.entries()) {
               if (!handles.includes(uname)) continue;
               const map = perUserDayIG.get(uid) || new Map();
@@ -503,8 +503,8 @@ export async function GET(req: Request, context: any) {
         const { data: rows } = await supabase
           .from('tiktok_posts_daily')
           .select('username, play_count, digg_count, comment_count, share_count, save_count, title')
-          .gte('post_date', start)
-          .lte('post_date', end)
+          .gte('taken_at', start + 'T00:00:00Z')
+          .lte('taken_at', end + 'T23:59:59Z')
           .in('username', Array.from(tikNeed));
         const map: Record<string, { views:number, likes:number, comments:number, shares:number, saves:number, posts:number }> = {};
         for (const r of rows || []) {
@@ -527,8 +527,8 @@ export async function GET(req: Request, context: any) {
         const { data: rowsIG } = await supabase
           .from('instagram_posts_daily')
           .select('username, play_count, like_count, comment_count, caption')
-          .gte('post_date', start)
-          .lte('post_date', end)
+          .gte('taken_at', start + 'T00:00:00Z')
+          .lte('taken_at', end + 'T23:59:59Z')
           .in('username', Array.from(igNeed));
         const mapIG: Record<string, { views:number, likes:number, comments:number, posts:number }> = {};
         for (const r of rowsIG || []) {
@@ -583,8 +583,8 @@ export async function GET(req: Request, context: any) {
             .from('tiktok_posts_daily')
             .select('username, title')
             .in('username', accountUsernames)
-            .gte('post_date', postsStart)
-            .lte('post_date', postsEnd);
+            .gte('taken_at', postsStart + 'T00:00:00Z')
+            .lte('taken_at', postsEnd + 'T23:59:59Z');
           for (const r of ttPosts || []) {
             // Apply hashtag filter jika ada
             if (requiredHashtags && requiredHashtags.length) {
@@ -601,8 +601,8 @@ export async function GET(req: Request, context: any) {
             .from('instagram_posts_daily')
             .select('username, caption')
             .in('username', accountIG)
-            .gte('post_date', postsStart)
-            .lte('post_date', postsEnd);
+            .gte('taken_at', postsStart + 'T00:00:00Z')
+            .lte('taken_at', postsEnd + 'T23:59:59Z');
           for (const r of igPosts || []) {
             // Apply hashtag filter jika ada
             if (requiredHashtags && requiredHashtags.length) {

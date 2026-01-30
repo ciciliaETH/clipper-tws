@@ -125,9 +125,9 @@ export async function POST(req: Request, context: any) {
     const totalsByUser: Record<string, { views:number, likes:number, comments:number, posts:number }> = {}
     try {
       const usernamesLc = igUsernames.map(u => String(u).replace(/^@/, '').toLowerCase())
-      const q = supabaseAdmin.from('instagram_posts_daily').select('username, play_count, like_count, comment_count, post_date').in('username', usernamesLc)
-      if (startISO) q.gte('post_date', startISO)
-      if (endISO) q.lte('post_date', endISO)
+      const q = supabaseAdmin.from('instagram_posts_daily').select('username, play_count, like_count, comment_count, taken_at').in('username', usernamesLc)
+      if (startISO) q.gte('taken_at', startISO + 'T00:00:00Z')
+      if (endISO) q.lte('taken_at', endISO + 'T23:59:59Z')
       const { data: rows } = await q
       for (const r of rows || []) {
         const user = norm((r as any).username)

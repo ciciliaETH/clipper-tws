@@ -267,9 +267,10 @@ Deno.serve(async (req) => {
           const media = node?.media || node
           const id = String(media?.pk || media?.id || media?.code || '')
           if (!id) continue
+          // Try multiple timestamp fields from RapidAPI/scraper response
           const ms = parseMs(media?.taken_at) || parseMs(media?.taken_at_ms) || parseMs(media?.device_timestamp) || parseMs(node?.timestamp) || null
-          if (!ms) continue
-          const post_date = new Date(ms).toISOString().slice(0,10)
+          // Always set taken_at - use NOW() as fallback if ms is NULL
+          const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString()
           let play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0
           let like = Number(media?.like_count ?? media?.edge_liked_by?.count ?? 0) || 0
           let comment = Number(media?.comment_count ?? media?.edge_media_to_comment?.count ?? 0) || 0
@@ -280,7 +281,7 @@ Deno.serve(async (req) => {
           }
           if ((play+like+comment) === 0) continue
           totals.views += play; totals.likes += like; totals.comments += comment; totals.posts_total += 1
-          upserts.push({ id, username: u, post_date, play_count: play, like_count: like, comment_count: comment })
+          upserts.push({ id, username: u, taken_at, play_count: play, like_count: like, comment_count: comment })
         }
 
         // Username-based fallbacks (optional)
@@ -295,7 +296,7 @@ Deno.serve(async (req) => {
                 if (!id) continue
                 const ms = parseMs(m?.timestamp) || parseMs(m?.taken_at)
                 if (!ms) continue
-                const post_date = new Date(ms).toISOString().slice(0,10)
+                const taken_at = new Date(ms).toISOString()
                 let views = Number(m?.video_views || m?.play_count || m?.view_count || m?.video_view_count || 0) || 0
                 let likes = Number(m?.like || m?.like_count || 0) || 0
                 let comments = Number(m?.comment_count || 0) || 0
@@ -306,7 +307,7 @@ Deno.serve(async (req) => {
                 if ((views+likes+comments) === 0) continue
                 totals.views += views; totals.likes += likes; totals.comments += comments; totals.posts_total += 1
                 const caption = String(m?.caption?.text || m?.title || '')
-                upserts.push({ id, username: u, post_date, play_count: views, like_count: likes, comment_count: comments, caption })
+                upserts.push({ id, username: u, taken_at, play_count: views, like_count: likes, comment_count: comments, caption })
               }
               if (medias?.length) { telemetry.tried.push('profile1:getreel'); telemetry.counts['profile1:getreel'] = medias.length }
             } catch (e:any) { telemetry.errors.push(`profile1:getreel ${String(e?.message||e)}`) }
@@ -330,7 +331,7 @@ Deno.serve(async (req) => {
                 const sc = String(it?.shortcode || it?.meta?.shortcode || '')
                 const ts = parseMs(it?.takenAt || it?.meta?.takenAt)
                 if (!sc || !ts) continue
-                const post_date = new Date(ts).toISOString().slice(0,10)
+                const taken_at = new Date(ts).toISOString()
                 let views = Number(it?.playCount || it?.viewCount || 0) || 0
                 let likes = Number(it?.likeCount || 0) || 0
                 let comments = Number(it?.commentCount || 0) || 0
@@ -341,7 +342,7 @@ Deno.serve(async (req) => {
                 if ((views+likes+comments) === 0) continue
                 totals.views += views; totals.likes += likes; totals.comments += comments; totals.posts_total += 1
                 const caption = String(it?.caption || it?.meta?.caption || '')
-                upserts.push({ id: sc, username: u, post_date, play_count: views, like_count: likes, comment_count: comments, caption })
+                upserts.push({ id: sc, username: u, taken_at, play_count: views, like_count: likes, comment_count: comments, caption })
               }
             } catch {}
           }
@@ -368,7 +369,8 @@ Deno.serve(async (req) => {
                     const info = await fetchRapidJson(`https://${IG_HOST}/api/instagram/post_info?code=${encodeURIComponent(sc)}`, IG_HOST, { timeoutMs: 15000 })
                     const m = info?.result?.items?.[0] || info?.result?.media || info?.result || info?.item || info
                     ms = parseMs(m?.taken_at) || parseMs(m?.taken_at_ms)
-                    const post_date = ms ? new Date(ms).toISOString().slice(0,10) : null
+                    // Always set taken_at - use NOW() as fallback if ms is NULL
+                    const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString()
                     let views = Number(m?.play_count || m?.view_count || m?.video_view_count || 0) || 0
                     let likes = Number(m?.like_count || m?.edge_liked_by?.count || 0) || 0
                     let comments = Number(m?.comment_count || m?.edge_media_to_comment?.count || 0) || 0
@@ -376,14 +378,14 @@ Deno.serve(async (req) => {
                       const fixed = await resolveCounts(sc)
                       if (fixed) { views = fixed.play; likes = fixed.like; comments = fixed.comment }
                     }
-                    if (post_date && (views+likes+comments)>0) {
+                    if ((views+likes+comments)>0) {
                       totals.views += views; totals.likes += likes; totals.comments += comments; totals.posts_total += 1
                       const caption = String(m?.caption?.text || m?.title || it?.caption || '')
-                      upserts.push({ id: sc, username: u, post_date, play_count: views, like_count: likes, comment_count: comments, caption })
+                      upserts.push({ id: sc, username: u, taken_at, play_count: views, like_count: likes, comment_count: comments, caption })
                     }
                   } catch {}
                 } else {
-                  const post_date = new Date(ms).toISOString().slice(0,10)
+                  const taken_at = new Date(ms).toISOString()
                   let views = Number(it?.playCount || it?.viewCount || 0) || 0
                   let likes = Number(it?.likeCount || 0) || 0
                   let comments = Number(it?.commentCount || 0) || 0
@@ -394,7 +396,7 @@ Deno.serve(async (req) => {
                   if ((views+likes+comments) === 0) continue
                   totals.views += views; totals.likes += likes; totals.comments += comments; totals.posts_total += 1
                   const caption = String(it?.caption || it?.meta?.caption || '')
-                  upserts.push({ id: sc, username: u, post_date, play_count: views, like_count: likes, comment_count: comments, caption })
+                  upserts.push({ id: sc, username: u, taken_at, play_count: views, like_count: likes, comment_count: comments, caption })
                 }
               }
             } catch {}
@@ -425,9 +427,9 @@ Deno.serve(async (req) => {
               const start = new Date(); start.setUTCDate(start.getUTCDate()-59); const startISO = start.toISOString().slice(0,10)
               const { data: rows } = await supabase
                 .from('instagram_posts_daily')
-                .select('play_count, like_count, comment_count, username, post_date')
+                .select('play_count, like_count, comment_count, username, taken_at')
                 .in('username', list)
-                .gte('post_date', startISO)
+                .gte('taken_at', startISO + 'T00:00:00Z')
               const agg = (rows||[]).reduce((a:any,r:any)=>({
                 views: a.views + (Number(r.play_count)||0),
                 likes: a.likes + (Number(r.like_count)||0),

@@ -44,18 +44,17 @@ export default function LeaderboardPage() {
     try {
       const url = new URL('/api/leaderboard', window.location.origin);
       // Global leaderboard semua karyawan (bukan hanya 1 group)
-      url.searchParams.set('mode','accrual');
       url.searchParams.set('scope','employees');
-      
+      // Post Date mode: gunakan start/end langsung
       if (useCustomDates) {
-        const start = new Date(customStart);
-        const end = new Date(customEnd);
-        const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-        url.searchParams.set('days', String(days));
-        url.searchParams.set('cutoff', customStart);
-        url.searchParams.set('custom', '1');
+        url.searchParams.set('start', customStart);
+        url.searchParams.set('end', customEnd);
       } else {
-        url.searchParams.set('days', iv==='days7' ? '7' : '28');
+        const days = iv==='days7' ? 7 : 28;
+        const end = new Date();
+        const start = new Date(); start.setUTCDate(end.getUTCDate()-(days-1));
+        url.searchParams.set('start', start.toISOString().slice(0,10));
+        url.searchParams.set('end', end.toISOString().slice(0,10));
       }
       
       const res = await fetch(url.toString());

@@ -151,7 +151,7 @@ export async function POST(req: Request, context: any) {
               video_id: String(vid),
               username: u,
               sec_uid: null,
-              post_date: d.toISOString().slice(0,10),
+              taken_at: d.toISOString(),
               play_count: vViews,
               digg_count: vLikes,
               comment_count: vComments,

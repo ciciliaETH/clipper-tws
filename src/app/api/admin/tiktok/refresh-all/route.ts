@@ -156,11 +156,11 @@ async function refreshHandler(req: Request) {
       }, { onConflict: 'platform,username' });
     }
     
-    // Get TikTok usernames from multiple sources (campaign participants, employee assignments, user mappings, profiles)
+    // Get ALL TikTok usernames from user_tiktok_usernames table (PRIMARY SOURCE)
     // CRITICAL: ORDER BY ensures consistent username order across all requests
-    const { data: rows, error: dbError } = await supa
-      .from('campaign_participants')
-      .select('tiktok_username, campaign_id')
+    const { data: userMap, error: dbError } = await supa
+      .from('user_tiktok_usernames')
+      .select('tiktok_username')
       .not('tiktok_username', 'is', null)
       .order('tiktok_username', { ascending: true }) // Alphabetical order for consistency
       .limit(limit);
@@ -174,20 +174,22 @@ async function refreshHandler(req: Request) {
       }, { status: 500 });
     }
     
-    // Additional sources
-    const [empAssign, userMap, userProfiles] = await Promise.all([
+    // Additional sources (campaign participants, employee assignments, user profiles)
+    const [campParticipants, empAssign, userProfiles] = await Promise.all([
+      supa.from('campaign_participants').select('tiktok_username, campaign_id').not('tiktok_username','is',null),
       supa.from('employee_participants').select('tiktok_username').not('tiktok_username','is',null),
-      supa.from('user_tiktok_usernames').select('tiktok_username').not('tiktok_username','is',null),
       supa.from('users').select('tiktok_username').not('tiktok_username','is',null)
     ]);
 
-    // Get unique usernames (one username might be in multiple campaigns)
+    // Get unique usernames (PRIMARY SOURCE: user_tiktok_usernames table)
     const allUsernames = Array.from(new Set([
-      ...(rows||[]).map((r: any) => String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase()),
+      ...((userMap||[]).map((r:any)=> String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase())),
+      ...((campParticipants.data||[]).map((r: any) => String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase())),
       ...((empAssign.data||[]).map((r:any)=> String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase())),
-      ...((userMap.data||[]).map((r:any)=> String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase())),
       ...((userProfiles.data||[]).map((r:any)=> String(r.tiktok_username||'').trim().replace(/^@/,'').toLowerCase())),
     ].filter(Boolean)));
+    
+    console.log(`[TikTok Refresh] Found ${allUsernames.length} unique TikTok usernames across all sources`);
 
     if (!allUsernames || allUsernames.length === 0) {
       return NextResponse.json({ 
@@ -198,7 +200,7 @@ async function refreshHandler(req: Request) {
   
   // For each username, get their campaign_ids for updating later
   const usernameToCampaigns = new Map<string, string[]>();
-  for (const row of rows || []) {
+  for (const row of campParticipants.data || []) {
     const username = String((row as any).tiktok_username || '').trim().replace(/^@/, '').toLowerCase();
     const campaignId = String((row as any).campaign_id);
     if (!username) continue;

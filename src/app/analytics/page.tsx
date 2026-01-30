@@ -22,8 +22,8 @@ export default function AnalyticsPage() {
   const [platform, setPlatform] = useState<'tiktok'|'instagram'>('tiktok');
   const [username, setUsername] = useState('');
   const [label, setLabel] = useState('');
-  const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('daily');
-  const [mode, setMode] = useState<'accrual'|'postdate'>('accrual');
+  const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('weekly');
+  const [mode, setMode] = useState<'accrual'|'postdate'>('postdate');
   const [metric, setMetric] = useState<'views'|'likes'|'comments'>('views');
   const [start, setStart] = useState(()=> { const d=new Date(); const s=new Date(); s.setDate(d.getDate()-7); return s.toISOString().slice(0,10); });
   const [end, setEnd] = useState(()=> new Date().toISOString().slice(0,10));
@@ -105,7 +105,7 @@ export default function AnalyticsPage() {
       const effStart = mode==='accrual' ? accStart : start;
       const effEnd = mode==='accrual' ? todayStr : end;
       u.searchParams.set('start', effStart); u.searchParams.set('end', effEnd);
-      u.searchParams.set('interval', interval); u.searchParams.set('mode', mode); u.searchParams.set('cutoff', accrualCutoff);
+      u.searchParams.set('interval', 'weekly'); u.searchParams.set('mode', mode); u.searchParams.set('cutoff', accrualCutoff);
       const r = await fetch(u.toString(), { cache:'no-store' });
       let j = await r.json();
       if (!r.ok) throw new Error(j?.error || 'Gagal memuat data');
@@ -283,20 +283,11 @@ export default function AnalyticsPage() {
           )}
         </div>
         <div className="mt-3 flex justify-end">
-          {mode==='postdate' ? (
-            <div className="flex items-center gap-2 mr-2">
-              <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-              <span className="text-white/50">s/d</span>
-              <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 mr-2 text-xs">
-              <span className="text-white/60">Rentang:</span>
-              <button className={`px-2 py-1 rounded ${accrualWindow===7?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(7)}>7 hari</button>
-              <button className={`px-2 py-1 rounded ${accrualWindow===28?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(28)}>28 hari</button>
-              <button className={`px-2 py-1 rounded ${accrualWindow===60?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(60)}>60 hari</button>
-            </div>
-          )}
+          <div className="flex items-center gap-2 mr-2">
+            <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+            <span className="text-white/50">s/d</span>
+            <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+          </div>
         </div>
       </div>
 
@@ -304,18 +295,10 @@ export default function AnalyticsPage() {
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-xs">
         <div className="flex items-center gap-2 justify-start">
           <span className="text-white/60">Mode:</span>
-          <button className={`px-2 py-1 rounded ${mode==='accrual'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('accrual')}>Accrual</button>
-          <button className={`px-2 py-1 rounded ${mode==='postdate'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMode('postdate')}>Post Date</button>
+          <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
         </div>
         <div className="flex items-center gap-2 justify-center">
-          {mode!=='accrual' && (
-            <>
-              <span className="text-white/60">Interval:</span>
-              <button className={`px-2 py-1 rounded ${interval==='daily'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('daily')}>Harian</button>
-              <button className={`px-2 py-1 rounded ${interval==='weekly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('weekly')}>Mingguan</button>
-              <button className={`px-2 py-1 rounded ${interval==='monthly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('monthly')}>Bulanan</button>
-            </>
-          )}
+          {/* Interval removed - historical data is weekly only */}
         </div>
         <div className="flex items-center gap-2 justify-end">
           <span className="text-white/60">Metric:</span>

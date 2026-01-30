@@ -28,8 +28,8 @@ export default function CampaignsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [selected, setSelected] = useState<Campaign | null>(null);
   const [metrics, setMetrics] = useState<any | null>(null);
-  const [chartInterval, setChartInterval] = useState<'daily'|'weekly'|'monthly'>('daily');
-  const [chartMode, setChartMode] = useState<'postdate'|'accrual'>('accrual');
+  const [chartInterval, setChartInterval] = useState<'daily'|'weekly'|'monthly'>('weekly');
+  const [chartMode, setChartMode] = useState<'postdate'|'accrual'>('postdate');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
   const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(false);
   const [accrualCustomStart, setAccrualCustomStart] = useState<string>(() => {
@@ -165,27 +165,8 @@ export default function CampaignsPage() {
       try {
         const effStart = groupStart; // ignored by accrual server
         const effEnd = groupEnd;
-        // Always load group metrics first
-        let groupUrl: string;
-        
-        // FIXED: Always fetch from fixed start date for consistent baseline
-        const REALTIME_FIXED_START = '2026-01-03';
-        
-        if (chartMode === 'accrual') {
-          if (useCustomAccrualDates) {
-            // Custom date range - ALWAYS fetch from fixed start for consistent baseline
-            const fixedStart = new Date(REALTIME_FIXED_START);
-            const end = new Date(accrualCustomEnd);
-            const days = Math.ceil((end.getTime() - fixedStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            groupUrl = `/api/campaigns/${selected.id}/accrual?days=${days}&cutoff=${encodeURIComponent(REALTIME_FIXED_START)}&snapshots_only=1&custom=1`;
-            console.log('[DEBUG] Custom Accrual URL (fixed start):', groupUrl);
-            console.log('[DEBUG] Custom dates:', { accrualCustomStart, accrualCustomEnd, fixedStart: REALTIME_FIXED_START, days });
-          } else {
-            groupUrl = `/api/campaigns/${selected.id}/accrual?days=${accrualWindow}&cutoff=${encodeURIComponent(accrualCutoff)}&snapshots_only=1`;
-          }
-        } else {
-          groupUrl = `/api/campaigns/${selected.id}/metrics?start=${effStart}&end=${effEnd}&interval=${chartInterval}`;
-        }
+        // Always load group metrics in Post Date weekly mode
+        const groupUrl = `/api/campaigns/${selected.id}/metrics?start=${effStart}&end=${effEnd}&interval=weekly`;
         const gRes = await fetch(groupUrl, { cache: 'no-store' });
         let gData = await gRes.json();
         console.log('[DEBUG] API Response:', { 
@@ -195,45 +176,7 @@ export default function CampaignsPage() {
           lastDate: gData?.series_total?.[gData?.series_total?.length - 1]?.date
         });
         if (!gRes.ok) throw new Error(gData.error || 'Failed to load metrics');
-        // Mask accrual (realtime only): zero values sebelum cutoff global
-        if (chartMode === 'accrual') {
-          const effectiveCutoff = accrualCutoff;
-          const zeroBefore = (arr: any[] = []) => arr.map((it:any)=>{
-            if (!it || typeof it !== 'object') return it;
-            if (String(it.date) <= effectiveCutoff) {
-              const r:any = { ...it };
-              if ('views' in r) r.views = 0;
-              if ('likes' in r) r.likes = 0;
-              if ('comments' in r) r.comments = 0;
-              if ('shares' in r) r.shares = 0;
-              if ('saves' in r) r.saves = 0;
-              return r;
-            }
-            return it;
-          });
-          if (gData?.series_tiktok) gData.series_tiktok = zeroBefore(gData.series_tiktok);
-          if (gData?.series_instagram) gData.series_instagram = zeroBefore(gData.series_instagram);
-          if (gData?.series_total) gData.series_total = zeroBefore(gData.series_total);
-          if (gData?.series) gData.series = zeroBefore(gData.series);
-          
-          // IMPORTANT: Filter to only include data within user-selected range
-          // This ensures consistency regardless of the fixed fetch start date
-          if (useCustomAccrualDates) {
-            const filterByRange = (arr: any[]) => arr.filter((d: any) => {
-              const dateStr = String(d.date).slice(0, 10);
-              return dateStr >= accrualCustomStart && dateStr <= accrualCustomEnd;
-            });
-            if (gData?.series_tiktok) gData.series_tiktok = filterByRange(gData.series_tiktok);
-            if (gData?.series_instagram) gData.series_instagram = filterByRange(gData.series_instagram);
-            if (gData?.series_total) gData.series_total = filterByRange(gData.series_total);
-            if (gData?.series) gData.series = filterByRange(gData.series);
-            console.log('[DEBUG] After range filter:', {
-              rangeStart: accrualCustomStart,
-              rangeEnd: accrualCustomEnd,
-              seriesLength: gData?.series_total?.length || 0
-            });
-          }
-        }
+        // No accrual masking in Post Date mode
         // Header totals should match the chart exactly -> sum from MASKED series currently shown
         const baseArr = (gData?.series_total || gData?.series || []) as any[];
         const headerSums = baseArr.reduce((a:any, s:any)=>({
@@ -252,26 +195,9 @@ export default function CampaignsPage() {
           const reqs = ids.map(async (eid) => {
             const url = new URL(`/api/employees/${encodeURIComponent(eid)}/metrics`, window.location.origin);
             url.searchParams.set('campaign_id', selected.id);
-            url.searchParams.set('interval', chartInterval);
-            
-            if (chartMode === 'accrual') {
-              url.searchParams.set('mode', 'accrual');
-              url.searchParams.set('snapshots_only','1');
-              if (useCustomAccrualDates) {
-                // FIXED: Always fetch from fixed start for consistent baseline
-                const fixedStart = new Date(REALTIME_FIXED_START);
-                const end = new Date(accrualCustomEnd);
-                const days = Math.ceil((end.getTime() - fixedStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                url.searchParams.set('days', String(days));
-                url.searchParams.set('cutoff', REALTIME_FIXED_START);
-                url.searchParams.set('custom', '1');
-              } else {
-                url.searchParams.set('days', String(accrualWindow));
-              }
-            } else {
-              url.searchParams.set('start', effStart);
-              url.searchParams.set('end', effEnd);
-            }
+            url.searchParams.set('interval', 'weekly');
+            url.searchParams.set('start', effStart);
+            url.searchParams.set('end', effEnd);
             
             const res = await fetch(url.toString(), { cache: 'no-store' });
             const json = await res.json();
@@ -280,32 +206,10 @@ export default function CampaignsPage() {
           const rows = await Promise.all(reqs);
           const nameMap: Record<string,string> = {};
           for (const p of participants) nameMap[p.id] = p.name || `@${p.tiktok_username||''}`;
-          // Mask employee overlay series as well (keep X-axis but zero values before cutoff)
-          const zeroBefore = (arr: any[] = []) => arr.map((it:any)=>{
-            if (!it || typeof it !== 'object') return it;
-            if (String(it.date) < accrualCutoff) {
-              const r:any = { ...it };
-              if ('views' in r) r.views = 0;
-              if ('likes' in r) r.likes = 0;
-              if ('comments' in r) r.comments = 0;
-              if ('shares' in r) r.shares = 0;
-              if ('saves' in r) r.saves = 0;
-              return r;
-            }
-            return it;
-          });
-          // Filter by user-selected range for consistency
-          const filterByRange = (arr: any[]) => {
-            if (!useCustomAccrualDates) return arr;
-            return arr.filter((d: any) => {
-              const dateStr = String(d.date).slice(0, 10);
-              return dateStr >= accrualCustomStart && dateStr <= accrualCustomEnd;
-            });
-          };
           setCompareData(rows.map(r => ({ 
             id: r.id, 
             name: nameMap[r.id] || r.id, 
-            series: chartMode==='accrual' ? filterByRange(zeroBefore(r.data?.series || [])) : (r.data?.series || [])
+            series: r.data?.series || []
           })));
         } else {
           setCompareData([]);
@@ -315,7 +219,7 @@ export default function CampaignsPage() {
       } finally { setLoading(false); }
     };
     loadMetrics();
-  }, [selected, groupStart, groupEnd, chartInterval, chartMode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, chartCompareIds, participants]);
+  }, [selected, groupStart, groupEnd, chartCompareIds, participants]);
 
   useEffect(() => {
     const loadMembers = async () => {
@@ -366,48 +270,16 @@ export default function CampaignsPage() {
         let effEnd: string;
         let apiUrl = `/api/employees/${encodeURIComponent(selectedUser)}/metrics?campaign_id=${selected.id}`;
         
-        if (chartMode === 'accrual') {
-          if (useCustomAccrualDates) {
-            // Custom date range - same as parent
-            effStart = accrualCustomStart;
-            effEnd = accrualCustomEnd;
-            const days = Math.ceil((new Date(effEnd).getTime() - new Date(effStart).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            apiUrl += `&mode=accrual&days=${days}&cutoff=${encodeURIComponent(effStart)}&snapshots_only=1&custom=1`;
-          } else {
-            // Standard accrual window from parent
-            const accStart = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(accrualWindow-1)); return d.toISOString().slice(0,10); })();
-            effStart = accStart;
-            effEnd = todayStr;
-            apiUrl += `&mode=accrual&days=${accrualWindow}&snapshots_only=1`;
-          }
-        } else {
-          // Post date mode - use group dates
-          effStart = groupStart;
-          effEnd = groupEnd;
-          apiUrl += `&start=${effStart}&end=${effEnd}`;
-        }
-        apiUrl += `&interval=${chartInterval}`;
+        // Post date mode - use group dates, weekly
+        effStart = groupStart;
+        effEnd = groupEnd;
+        apiUrl += `&start=${effStart}&end=${effEnd}&interval=weekly`;
         
         const res = await fetch(apiUrl, { cache: 'no-store' });
         const data = await res.json();
         if (res.ok) {
-          const effectiveCutoff = accrualCutoff; // realtime di-mask global
-          const zeroBefore = (arr: any[] = []) => arr.map((it:any)=>{
-            if (!it || typeof it !== 'object') return it;
-            if (String(it.date) <= effectiveCutoff) {
-              const r:any = { ...it };
-              if ('views' in r) r.views = 0;
-              if ('likes' in r) r.likes = 0;
-              if ('comments' in r) r.comments = 0;
-              if ('shares' in r) r.shares = 0;
-              if ('saves' in r) r.saves = 0;
-              return r;
-            }
-            return it;
-          });
-          // Apply cutoff to ALL platforms for per-user series
-          const maskedTT = zeroBefore(data.series_tiktok || []);
-          const maskedIG = zeroBefore(data.series_instagram || []);
+          const maskedTT = data.series_tiktok || [];
+          const maskedIG = data.series_instagram || [];
           setUserSeriesTT(maskedTT);
           setUserSeriesIG(maskedIG);
           // Rebuild combined series from masked TT + masked IG
@@ -900,31 +772,14 @@ export default function CampaignsPage() {
           <div className="glass rounded-2xl p-4 md:p-6 border border-white/10 overflow-x-auto">
             {/* Re-layout controls: Mode on the left, Interval centered, Metric on the right */}
             <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-xs">
-              {/* Left: Mode */}
+              {/* Left: Mode removed - always Post Date weekly */}
               <div className="flex items-center gap-2 justify-start flex-wrap">
-                <span className="text-white/60">Mode:</span>
-                <button className={`px-2 py-1 rounded ${chartMode==='accrual'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setChartMode('accrual')}>Accrual</button>
-                <button className={`px-2 py-1 rounded ${chartMode==='postdate'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setChartMode('postdate')}>Post Date</button>
-                {chartMode === 'accrual' && !useCustomAccrualDates && (
-                  <div className="flex items-center gap-2 ml-2">
-                    <span className="text-white/60">Rentang:</span>
-                    <button className={`px-2 py-1 rounded ${accrualWindow===7?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(7)}>7 hari</button>
-                    <button className={`px-2 py-1 rounded ${accrualWindow===28?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(28)}>28 hari</button>
-                    <button className={`px-2 py-1 rounded ${accrualWindow===60?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setAccrualWindow(60)}>60 hari</button>
-                  </div>
-                )}
+                <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
               </div>
 
-              {/* Center: Interval */}
+              {/* Center: Interval removed - historical data is weekly only */}
               <div className="flex items-center justify-center gap-2">
-                {chartMode !== 'accrual' && (
-                  <>
-                    <span className="text-white/60">Interval:</span>
-                    <button className={`px-2 py-1 rounded ${chartInterval==='daily'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setChartInterval('daily')}>Harian</button>
-                    <button className={`px-2 py-1 rounded ${chartInterval==='weekly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setChartInterval('weekly')}>Mingguan</button>
-                    <button className={`px-2 py-1 rounded ${chartInterval==='monthly'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setChartInterval('monthly')}>Bulanan</button>
-                  </>
-                )}
+                {/* Interval dihapus - data historical mingguan saja */}
               </div>
 
               {/* Right: Metric */}

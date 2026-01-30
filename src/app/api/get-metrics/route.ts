@@ -31,8 +31,8 @@ export async function POST(req: Request) {
     .from('tiktok_posts_daily')
     .select('play_count, digg_count, comment_count, share_count, save_count')
     .eq('username', username)
-    .gte('post_date', startISO)
-    .lte('post_date', endISO);
+    .gte('taken_at', startISO + 'T00:00:00Z')
+    .lte('taken_at', endISO + 'T23:59:59Z');
   if (aggErr) return NextResponse.json({ error: aggErr.message }, { status: 500 });
 
   let views = 0, likes = 0, comments = 0, shares = 0, saves = 0;

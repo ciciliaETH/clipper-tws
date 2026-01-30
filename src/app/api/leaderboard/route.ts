@@ -21,7 +21,8 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const topParam = url.searchParams.get('top');
     const top = topParam ? Math.max(1, Math.min(10000, Number(topParam))) : null; // null = no limit
-    const mode = (url.searchParams.get('mode') || 'accrual').toLowerCase();
+    // Force postdate mode globally
+    const mode = 'postdate';
     const forceDb = mode === 'db' || process.env.LEADERBOARD_PREFER_DB === '1';
     const scope = (url.searchParams.get('scope') || '').toLowerCase(); // 'employees' to aggregate all employees
     const monthStr = url.searchParams.get('month'); // YYYY-MM
@@ -168,19 +169,19 @@ export async function GET(req: Request) {
       const supa = supabaseAdmin;
       // Determine window (monthly by default; support weekly)
       let startISO: string; let endISO: string; let periodType: 'monthly'|'weekly' = 'monthly';
-      if (intervalParam === 'weekly') {
+      // Prefer explicit start/end when provided (postdate)
+      if (startParam && endParam) {
+        startISO = String(startParam);
+        endISO = String(endParam);
         periodType = 'weekly';
-        if (startParam && endParam) {
-          startISO = String(startParam);
-          endISO = String(endParam);
-        } else {
-          const now = new Date();
-          const day = now.getUTCDay();
-          const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((day+6)%7)));
-          const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate()+6);
-          startISO = monday.toISOString().slice(0,10);
-          endISO = sunday.toISOString().slice(0,10);
-        }
+      } else if (intervalParam === 'weekly') {
+        periodType = 'weekly';
+        const now = new Date();
+        const day = now.getUTCDay();
+        const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((day+6)%7)));
+        const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate()+6);
+        startISO = monday.toISOString().slice(0,10);
+        endISO = sunday.toISOString().slice(0,10);
       } else {
         if (monthStr && /^\d{4}-\d{2}$/.test(monthStr)) {
           const [y,m] = monthStr.split('-').map(Number);
@@ -250,8 +251,8 @@ export async function GET(req: Request) {
           .from('tiktok_posts_daily')
           .select('username, play_count, digg_count, comment_count, share_count, save_count')
           .in('username', allTT)
-          .gte('post_date', startISO)
-          .lte('post_date', endISO);
+          .gte('taken_at', startISO + 'T00:00:00Z')
+          .lte('taken_at', endISO + 'T23:59:59Z');
         for (const r of rowsTT || []) {
           const u = String((r as any).username).toLowerCase();
           const cur = aggTT.get(u) || { views:0, likes:0, comments:0, shares:0, saves:0, posts:0 };
@@ -270,8 +271,8 @@ export async function GET(req: Request) {
           .from('instagram_posts_daily')
           .select('username, play_count, like_count, comment_count')
           .in('username', allIG)
-          .gte('post_date', startISO)
-          .lte('post_date', endISO);
+          .gte('taken_at', startISO + 'T00:00:00Z')
+          .lte('taken_at', endISO + 'T23:59:59Z');
         for (const r of rowsIG || []) {
           const u = String((r as any).username).toLowerCase();
           const cur = aggIG.get(u) || { views:0, likes:0, comments:0, posts:0 };
@@ -567,10 +568,10 @@ export async function GET(req: Request) {
         if (ttHandles.length > 0) {
           const { data: ttPosts } = await supabaseAdmin
             .from('tiktok_posts_daily')
-            .select('username, video_id, title, post_date')
+            .select('username, video_id, title, taken_at')
             .in('username', ttHandles)
-            .gte('post_date', startISO)
-            .lte('post_date', endISO);
+            .gte('taken_at', startISO + 'T00:00:00Z')
+            .lte('taken_at', endISO + 'T23:59:59Z');
           for (const post of ttPosts || []) {
             const title = String((post as any).title || '');
             if (hasRequiredHashtag(title, requiredHashtags)) {
@@ -578,7 +579,7 @@ export async function GET(req: Request) {
               // Find user_id for this username
               for (const [uid, handle] of userToTikTok.entries()) {
                 if (handle === username) {
-                  const key = `${uid}::tiktok::${(post as any).post_date}`;
+                  const key = `${uid}::tiktok::${(post as any).taken_at}`;
                   const set = validPostsByUser.get(uid) || new Set<string>();
                   set.add(key);
                   validPostsByUser.set(uid, set);
@@ -592,10 +593,10 @@ export async function GET(req: Request) {
         if (igHandles.length > 0) {
           const { data: igPosts } = await supabaseAdmin
             .from('instagram_posts_daily')
-            .select('username, id, caption, post_date')
+            .select('username, id, caption, taken_at')
             .in('username', igHandles)
-            .gte('post_date', startISO)
-            .lte('post_date', endISO);
+            .gte('taken_at', startISO + 'T00:00:00Z')
+            .lte('taken_at', endISO + 'T23:59:59Z');
           for (const post of igPosts || []) {
             const caption = String((post as any).caption || '');
             if (hasRequiredHashtag(caption, requiredHashtags)) {
@@ -603,7 +604,7 @@ export async function GET(req: Request) {
               // Find user_id for this username
               for (const [uid, handle] of userToInstagram.entries()) {
                 if (handle === username) {
-                  const key = `${uid}::instagram::${(post as any).post_date}`;
+                  const key = `${uid}::instagram::${(post as any).taken_at}`;
                   const set = validPostsByUser.get(uid) || new Set<string>();
                   set.add(key);
                   validPostsByUser.set(uid, set);
@@ -745,10 +746,10 @@ export async function GET(req: Request) {
         if (usernames.length) {
           const { data: rows } = await supabaseAdmin
             .from('tiktok_posts_daily')
-            .select('username, play_count, digg_count, comment_count, share_count, save_count, post_date')
-            .in('username', usernames)
-            .gte('post_date', String(campaignStart || '1970-01-01'))
-            .lte('post_date', String(campaignEnd || new Date().toISOString().slice(0,10)));
+            .select('username, play_count, digg_count, comment_count, share_count, save_count, taken_at')
+            .in('username', ttHandles)
+            .gte('taken_at', String(campaignStart || '1970-01-01') + 'T00:00:00Z')
+            .lte('taken_at', String(campaignEnd || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
           const agg = new Map<string, { views: number, likes: number, comments: number, shares: number, saves: number, posts: number }>();
           for (const r of rows || []) {
             const u = String(r.username).toLowerCase();
@@ -778,10 +779,10 @@ export async function GET(req: Request) {
             if (igUsernames.length) {
               const { data: igRows } = await supabaseAdmin
                 .from('instagram_posts_daily')
-                .select('username, play_count, like_count, comment_count, post_date')
-                .in('username', igUsernames)
-                .gte('post_date', String(campaignStart || '1970-01-01'))
-                .lte('post_date', String(campaignEnd || new Date().toISOString().slice(0,10)));
+                .select('username, play_count, like_count, comment_count, taken_at')
+                .in('username', igHandles)
+                .gte('taken_at', String(campaignStart || '1970-01-01') + 'T00:00:00Z')
+                .lte('taken_at', String(campaignEnd || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
               const aggIG = new Map<string, { views:number, likes:number, comments:number, posts:number }>();
               for (const r of igRows || []) {
                 const u = String((r as any).username).toLowerCase();

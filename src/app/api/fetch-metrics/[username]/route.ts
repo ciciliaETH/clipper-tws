@@ -379,14 +379,26 @@ async function getTikTokData(username: string, cachedSecUid?: string, window?: {
     return true;
   });
 
-  const supabase = await createClient();
+  // CRITICAL: Use admin client for database writes (SSR client needs auth)
+  const supabase = createAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+  
+  console.log(`[TikTok] Attempting to save ${filteredPosts.length} posts to tiktok_posts_daily for ${username}`);
+  
   if (filteredPosts.length > 0) {
+    let successCount = 0;
+    let errorCount = 0;
+    
     for (const post of filteredPosts) {
       const ts = post.createTime ?? post.create_time ?? post.create_time_utc ?? post.create_time_local ?? post.createDate ?? post.create_date;
       const postDate = parsePostTime(ts) || new Date();
       const ids = deriveVideoIds(post);
       if (!ids.video_id) {
         console.warn('[TikTok] Skip upsert: video_id not found for post.', post?.id || post?.aweme_id || 'unknown');
+        errorCount++;
         continue;
       }
       const title = String(post?.title || post?.desc || post?.description || '');
@@ -394,7 +406,6 @@ async function getTikTokData(username: string, cachedSecUid?: string, window?: {
         video_id: ids.video_id,
         username,
         sec_uid: secUid,
-        post_date: postDate.toISOString().slice(0, 10),
         taken_at: postDate.toISOString(), // Store actual TikTok create_time
         title: title || null,
         comment_count: readStat(post,'comment'),
@@ -403,13 +414,33 @@ async function getTikTokData(username: string, cachedSecUid?: string, window?: {
         digg_count: readStat(post,'digg'),
         save_count: readStat(post,'save'),
       };
-  const { error: upsertError } = await supabase.from('tiktok_posts_daily').upsert(upsertData, { onConflict: 'video_id' });
+      
+      const { error: upsertError } = await supabase.from('tiktok_posts_daily').upsert(upsertData, { onConflict: 'video_id' });
+      
       if (upsertError) {
-        console.error('[TikTok] Gagal upsert ke tiktok_posts_daily:', upsertError.message, upsertData);
+        console.error('[TikTok] ❌ FAILED upsert to tiktok_posts_daily:', {
+          error: upsertError.message,
+          code: upsertError.code,
+          details: upsertError.details,
+          hint: upsertError.hint,
+          username,
+          video_id: upsertData.video_id
+        });
+        errorCount++;
       } else {
-        console.log('[TikTok] Berhasil upsert ke tiktok_posts_daily:', upsertData);
+        successCount++;
+        if (successCount <= 3) { // Only log first 3 to avoid spam
+          console.log('[TikTok] ✅ Successfully saved to tiktok_posts_daily:', {
+            video_id: upsertData.video_id,
+            username: upsertData.username,
+            taken_at: upsertData.taken_at,
+            play_count: upsertData.play_count
+          });
+        }
       }
     }
+    
+    console.log(`[TikTok] Save summary for ${username}: ✅ ${successCount} saved, ❌ ${errorCount} failed out of ${filteredPosts.length} total`);
   } else {
     console.warn(`[TikTok] Tidak ada post TikTok dalam window untuk ${username}. Data posts:`, posts.map((p: any) => ({
       id: p.id || p.aweme_id,
@@ -811,7 +842,7 @@ export async function GET(request: Request, context: any) {
       if (added === 0) { 
         emptyStreak += 1; 
         if (emptyStreak >= 2) {
-          console.log(`[scraper7] ${username}: 2 consecutive empty pages, stopping`);
+          console.log(`[scraper7] ${normalized}: 2 consecutive empty pages, stopping`);
           break;
         }
       } else { 
@@ -820,7 +851,7 @@ export async function GET(request: Request, context: any) {
       
       // Stop if hasMore is false
       if (!hasMore) {
-        console.log(`[scraper7] ${username}: hasMore=false, stopping`);
+        console.log(`[scraper7] ${normalized}: hasMore=false, stopping`);
         break;
       }
       
@@ -831,7 +862,7 @@ export async function GET(request: Request, context: any) {
       } else {
         sameCursorStreak += 1;
         if (sameCursorStreak >= 2) {
-          console.log(`[scraper7] ${username}: Cursor not advancing, stopping`);
+          console.log(`[scraper7] ${normalized}: Cursor not advancing, stopping`);
           break;
         }
       }
@@ -932,7 +963,7 @@ export async function GET(request: Request, context: any) {
         const vShares = readStat(v,'share');
         const vSaves = readStat(v,'save');
         totals.views += vViews; totals.likes += vLikes; totals.comments += vComments; totals.shares += vShares; totals.saves += vSaves; totals.posts_total += 1;
-        if (vId) toUpsert.push({ video_id: String(vId), username: normalized, sec_uid: tiktok_sec_uid || null, post_date: d.toISOString().slice(0, 10), taken_at: d.toISOString(), play_count: vViews, digg_count: vLikes, comment_count: vComments, share_count: vShares, save_count: vSaves });
+        if (vId) toUpsert.push({ video_id: String(vId), username: normalized, sec_uid: tiktok_sec_uid || null, taken_at: d.toISOString(), play_count: vViews, digg_count: vLikes, comment_count: vComments, share_count: vShares, save_count: vSaves });
       }
       if (toUpsert.length) {
         const chunkSize = 500;
@@ -1054,65 +1085,27 @@ export async function GET(request: Request, context: any) {
       return allVideos;
     };
     
-    // TRY AGGREGATOR FIRST (PRIORITY #1)
+    // TRY AGGREGATOR ONLY (NO RAPIDAPI FALLBACK!)
     if (AGGREGATOR_ENABLED && !FORCE_RAPID) {
       try {
         const aggVideos = await fetchFromAggregator();
+        videos = aggVideos;
+        telemetry = { mode: 'aggregator', username: normalized, source: AGGREGATOR_BASE, videos_count: aggVideos.length };
+        
         if (aggVideos.length > 0) {
-          videos = aggVideos;
-          telemetry = { mode: 'aggregator', username: normalized, source: AGGREGATOR_BASE, videos_count: aggVideos.length };
           console.log(`[TikTok Fetch] ✓ Aggregator success: ${aggVideos.length} videos`);
         } else {
-          console.log(`[TikTok Fetch] ✗ Aggregator returned 0 videos, falling back to RapidAPI...`);
+          console.log(`[TikTok Fetch] ⚠️ Aggregator returned 0 videos - no data available for this account`);
         }
       } catch (err: any) {
-        console.error(`[TikTok Fetch] ✗ Aggregator failed:`, err.message);
-        console.log(`[TikTok Fetch] Falling back to RapidAPI...`);
-      }
-    }
-    
-    // FALLBACK TO RAPIDAPI IF NEEDED
-    const useRapidCursor = FORCE_RAPID || videos.length === 0;
-    const providerOverride = providerParam === 'api15' || providerParam === 'fast' ? providerParam : undefined;
-    
-    if (useRapidCursor) {
-      console.log(`[TikTok Fetch] Using RapidAPI fallback for @${normalized}...`);
-      const provider = providerOverride || RAPID_PROVIDER;
-      if (provider === 'api15') {
-        const rf = await rapidApi15CursorFetchAll();
-        if (Array.isArray(rf)) videos = rf; else { videos = rf.list || []; telemetry = rf.telemetry; }
-        
-        // CRITICAL FALLBACK: If scraper7 returns ZERO videos, ALWAYS try rapid_cursor as backup
-        // This ensures we NEVER have missing data for ANY account
-        const needsFallback = videos.length === 0 || telemetry?.rateLimited;
-        
-        if (RAPID_FALLBACK_ON_429 && needsFallback) {
-          console.log(`[TikTok Fetch] Scraper7 returned ${videos.length} videos for ${normalized}, trying rapid_cursor fallback...`);
-          const rf2 = await rapidFastCursorFetchAll();
-          let vids2: any[] = Array.isArray(rf2) ? rf2 : (rf2.list || []);
-          if (!Array.isArray(rf2)) telemetry = telemetry || {}; telemetry = { ...(telemetry||{}), alt: rf2.telemetry };
-          if (vids2.length) {
-            const seen = new Set(videos.map((v:any)=> String(v.aweme_id||v.video_id||v.id||'')));
-            for (const v of vids2) { const k = String(v.aweme_id||v.video_id||v.id||''); if (!k||seen.has(k)) continue; seen.add(k); videos.push(v); }
-          }
-        }
-      } else {
-        const rf = await rapidFastCursorFetchAll();
-        if (Array.isArray(rf)) videos = rf; else { videos = rf.list || []; telemetry = rf.telemetry; }
-        if (RAPID_FALLBACK_ON_429 && ((telemetry?.rateLimited) || videos.length === 0)) {
-          const rf2 = await rapidApi15CursorFetchAll();
-          let vids2: any[] = Array.isArray(rf2) ? rf2 : (rf2.list || []);
-          if (!Array.isArray(rf2)) telemetry = telemetry || {}; telemetry = { ...(telemetry||{}), alt: rf2.telemetry };
-          if (vids2.length) {
-            const seen = new Set(videos.map((v:any)=> String(v.aweme_id||v.video_id||v.id||'')));
-            for (const v of vids2) { const k = String(v.aweme_id||v.video_id||v.id||''); if (!k||seen.has(k)) continue; seen.add(k); videos.push(v); }
-          }
-        }
+        console.error(`[TikTok Fetch] ✗ Aggregator error:`, err.message);
+        videos = [];
+        telemetry = { mode: 'aggregator', username: normalized, error: err.message };
       }
     }
     
     // FINAL RESULT LOG
-    console.log(`[TikTok Fetch] Final result: ${videos.length} videos from ${telemetry?.mode || 'rapidapi'}`);
+    console.log(`[TikTok Fetch] Final result: ${videos.length} videos from ${telemetry?.mode || 'aggregator'}`);
     
     // VIDEO ENRICHMENT - Backfill missing stats from tikwm.com
     videos = await Promise.all(videos.map(async (v: any) => {
@@ -1178,17 +1171,51 @@ export async function GET(request: Request, context: any) {
       console.log(`[TikTok Parse] ✅ Video ${vId}: views=${vViews}, likes=${vLikes}, comments=${vComments}, date=${d.toISOString().slice(0,10)}`);
       
       totals.views += vViews; totals.likes += vLikes; totals.comments += vComments; totals.shares += vShares; totals.saves += vSaves; totals.posts_total += 1;
-      if (vId) toUpsert.push({ video_id: String(vId), username: normalized, sec_uid: tiktok_sec_uid || null, post_date: d.toISOString().slice(0, 10), taken_at: d.toISOString(), play_count: vViews, digg_count: vLikes, comment_count: vComments, share_count: vShares, save_count: vSaves });
+      if (vId) toUpsert.push({ 
+        video_id: String(vId), 
+        username: normalized, 
+        sec_uid: tiktok_sec_uid || null, 
+        taken_at: d.toISOString(), 
+        post_date: d.toISOString().slice(0, 10), // Derive post_date from taken_at
+        play_count: vViews, 
+        digg_count: vLikes, 
+        comment_count: vComments, 
+        share_count: vShares, 
+        save_count: vSaves 
+      });
     }
     
     console.log(`[TikTok Parse] ${normalized}: Parsed ${toUpsert.length}/${videos.length} videos. Total stats: views=${totals.views}, likes=${totals.likes}`);
     
     if (toUpsert.length) {
+      console.log(`[TikTok Save] Attempting to save ${toUpsert.length} posts to tiktok_posts_daily for ${normalized}...`);
       const chunkSize = 500;
+      let savedCount = 0;
+      let errorCount = 0;
+      
       for (let i = 0; i < toUpsert.length; i += chunkSize) {
         const chunk = toUpsert.slice(i, i + chunkSize);
-        await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
+        const { error: upsertError, data } = await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
+        
+        if (upsertError) {
+          console.error(`[TikTok Save] ❌ FAILED chunk ${i}-${i+chunk.length}:`, {
+            error: upsertError.message,
+            code: upsertError.code,
+            details: upsertError.details,
+            hint: upsertError.hint,
+            username: normalized,
+            chunkSize: chunk.length
+          });
+          errorCount += chunk.length;
+        } else {
+          console.log(`[TikTok Save] ✅ Saved chunk ${i}-${i+chunk.length} (${chunk.length} posts)`);
+          savedCount += chunk.length;
+        }
       }
+      
+      console.log(`[TikTok Save] Summary for ${normalized}: ✅ ${savedCount} saved, ❌ ${errorCount} failed out of ${toUpsert.length} total`);
+    } else {
+      console.warn(`[TikTok Save] No posts to save for ${normalized} (all filtered out by date range)`);
     }
 
     // Fetch user followers count from RapidAPI
@@ -1203,7 +1230,7 @@ export async function GET(request: Request, context: any) {
 
     let tiktokData: any = { ...totals, followers };
     if (startBound && endBound) {
-      const { data: aggRows } = await admin.from('tiktok_posts_daily').select('play_count, digg_count, comment_count, share_count, save_count, post_date').eq('username', normalized).gte('post_date', startParam!).lte('post_date', endParam!);
+      const { data: aggRows } = await admin.from('tiktok_posts_daily').select('play_count, digg_count, comment_count, share_count, save_count, taken_at').eq('username', normalized).gte('taken_at', startParam! + 'T00:00:00Z').lte('taken_at', endParam! + 'T23:59:59Z');
       if ((aggRows?.length || 0) > 0) {
         const acc = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 } as any;
         for (const r of aggRows || []) { acc.views += safeParseInt(r.play_count); acc.likes += safeParseInt(r.digg_count); acc.comments += safeParseInt(r.comment_count); acc.shares += safeParseInt(r.share_count); acc.saves += safeParseInt(r.save_count); }

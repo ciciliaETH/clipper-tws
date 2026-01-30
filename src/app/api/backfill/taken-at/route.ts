@@ -134,8 +134,7 @@ export async function POST(req: Request) {
             const { error: upErr } = await supa
               .from('instagram_posts_daily')
               .update({ 
-                taken_at: takenAt,
-                post_date: takenAt.slice(0, 10)
+                taken_at: takenAt
               })
               .eq('id', post.id);
 
@@ -202,8 +201,7 @@ export async function POST(req: Request) {
             const { error: upErr } = await supa
               .from('tiktok_posts_daily')
               .update({ 
-                taken_at: takenAt,
-                post_date: takenAt.slice(0, 10)
+                taken_at: takenAt
               })
               .eq('video_id', videoId);
 

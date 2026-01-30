@@ -150,30 +150,39 @@ async function refreshHandler(req: Request) {
     }, { onConflict: 'platform,username' });
   }
 
-  // Get ALL unique Instagram usernames from ALL campaign_instagram_participants (no date filter!)
+  // Get ALL unique Instagram usernames from user_instagram_usernames table (PRIMARY SOURCE)
   // CRITICAL: ORDER BY ensures consistent username order across all requests
-  const { data: rows } = await supa
-    .from('campaign_instagram_participants')
+  const { data: userMap } = await supa
+    .from('user_instagram_usernames')
     .select('instagram_username')
     .not('instagram_username', 'is', null)
     .order('instagram_username', { ascending: true }) // Alphabetical order for consistency
     .limit(limit);
   
-  if (!rows || rows.length === 0) {
+  // Additional sources (campaign participants, employee participants)
+  const [campParticipants, empParticipants] = await Promise.all([
+    supa.from('campaign_instagram_participants').select('instagram_username').not('instagram_username','is',null),
+    supa.from('employee_instagram_participants').select('instagram_username').not('instagram_username','is',null)
+  ]);
+
+  // Get unique usernames (PRIMARY SOURCE: user_instagram_usernames table)
+  const allUsernames = Array.from(new Set([
+    ...((userMap||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
+    ...((campParticipants.data||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
+    ...((empParticipants.data||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
+  ].filter(Boolean)));
+  
+  console.log(`[Instagram Refresh] Found ${allUsernames.length} unique Instagram usernames across all sources`);
+  
+  if (allUsernames.length === 0) {
     return NextResponse.json({ 
       total_usernames: 0, 
       processed: 0, 
       success: 0, 
       failed: 0,
-      message: 'No Instagram usernames found in campaign_instagram_participants'
+      message: 'No Instagram usernames found across all sources'
     });
   }
-
-  // Get unique usernames
-  const allUsernames = Array.from(new Set(
-    rows.map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())
-      .filter(Boolean)
-  ));
 
   // Filter by those that have instagram_user_id if requested
   let usernamesToFetch = allUsernames;

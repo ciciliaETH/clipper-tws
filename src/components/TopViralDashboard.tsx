@@ -9,7 +9,7 @@ interface Video {
   username: string
   owner_name: string
   owner_id: string | null
-  post_date: string
+  taken_at: string
   link: string
   metrics: {
     views: number
@@ -257,7 +257,7 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
 
                 {/* Post Date */}
                 <div className="mt-2 text-xs text-white/50">
-                  Posted: {new Date(video.post_date).toLocaleDateString('id-ID', {
+                  Posted: {new Date(video.taken_at).toLocaleDateString('id-ID', {
                     day: 'numeric',
                     month: 'short',
                     year: 'numeric'

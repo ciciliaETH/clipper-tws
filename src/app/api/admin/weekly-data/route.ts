@@ -81,6 +81,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const {
       week_label,
+      start_date,
+      end_date,
       year,
       campaign_id,
       group_name,
@@ -93,14 +95,14 @@ export async function POST(req: NextRequest) {
       notes
     } = body
     
-    if (!week_label || !year || !platform) {
+    if (!week_label || !start_date || !end_date || !platform) {
       return NextResponse.json(
-        { error: 'Missing required fields: week_label, year, platform' },
+        { error: 'Missing required fields: week_label, start_date, end_date, platform' },
         { status: 400 }
       )
     }
     
-    // Parse week label
+    // Parse week label to get month and week number
     const parsed = parseWeekLabel(week_label)
     if (!parsed) {
       return NextResponse.json({ error: 'Invalid week_label format. Use "W1 Agustus" format' }, { status: 400 })
@@ -110,23 +112,23 @@ export async function POST(req: NextRequest) {
     if (month === 0) {
       return NextResponse.json({ error: 'Invalid month name in week_label' }, { status: 400 })
     }
-    
-    // Calculate dates
-    const dates = calculateWeekDates(year, month, parsed.weekNum)
+
+    // Use provided year or calculate from start_date
+    const finalYear = year || new Date(start_date).getFullYear()
     
     const supabase = adminClient()
     const { data, error } = await supabase
       .from('weekly_historical_data')
       .insert({
         week_label,
-        start_date: dates.start,
-        end_date: dates.end,
-        year,
+        start_date,
+        end_date,
+        year: finalYear,
         month,
         week_num: parsed.weekNum,
         campaign_id: campaign_id || null,
         group_name: group_name || null,
-        platform,
+        platform: platform.toLowerCase(),
         views,
         likes,
         comments,

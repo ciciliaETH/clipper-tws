@@ -29,7 +29,7 @@ async function aggregatePostsDaily(platform:'tiktok'|'instagram', handles: strin
   const map = new Map<string, Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>>() // userId -> date -> values
   if (!handles.length) return map
   if (platform==='tiktok') {
-    const { data: rows } = await supabase.from('tiktok_posts_daily').select('username, post_date, play_count, digg_count, comment_count, share_count, save_count').in('username', handles).gte('post_date', startISO).lte('post_date', endISO)
+    const { data: rows } = await supabase.from('tiktok_posts_daily').select('username, taken_at, play_count, digg_count, comment_count, share_count, save_count').in('username', handles).gte('taken_at', startISO + 'T00:00:00Z').lte('taken_at', endISO + 'T23:59:59Z')
     const ownerByHandle = new Map<string,string>()
     // fetch owner map
     const { data: alias } = await supabase.from('user_tiktok_usernames').select('user_id, tiktok_username').in('tiktok_username', handles)
@@ -39,14 +39,14 @@ async function aggregatePostsDaily(platform:'tiktok'|'instagram', handles: strin
     for (const r of prim||[]) ownerByHandle.set(String((r as any).tiktok_username), String((r as any).id))
     for (const r of rows||[]) {
       const h = String((r as any).username).toLowerCase(); const owner = ownerByHandle.get(h); if (!owner) continue
-      const date = String((r as any).post_date)
+      const date = new Date((r as any).taken_at).toISOString().slice(0,10)
       const uMap = map.get(owner) || new Map()
       const cur = uMap.get(date) || { views:0, likes:0, comments:0, shares:0, saves:0 }
       cur.views += Number((r as any).play_count)||0; cur.likes += Number((r as any).digg_count)||0; cur.comments += Number((r as any).comment_count)||0; cur.shares += Number((r as any).share_count)||0; cur.saves += Number((r as any).save_count)||0
       uMap.set(date, cur); map.set(owner, uMap)
     }
   } else {
-    const { data: rows } = await supabase.from('instagram_posts_daily').select('username, post_date, play_count, like_count, comment_count').in('username', handles).gte('post_date', startISO).lte('post_date', endISO)
+    const { data: rows } = await supabase.from('instagram_posts_daily').select('username, taken_at, play_count, like_count, comment_count').in('username', handles).gte('taken_at', startISO + 'T00:00:00Z').lte('taken_at', endISO + 'T23:59:59Z')
     const ownerByHandle = new Map<string,string>()
     const { data: alias } = await supabase.from('user_instagram_usernames').select('user_id, instagram_username').in('instagram_username', handles)
     for (const h of handles) ownerByHandle.set(h, '')
@@ -55,7 +55,7 @@ async function aggregatePostsDaily(platform:'tiktok'|'instagram', handles: strin
     for (const r of prim||[]) ownerByHandle.set(String((r as any).instagram_username), String((r as any).id))
     for (const r of rows||[]) {
       const h = String((r as any).username).toLowerCase(); const owner = ownerByHandle.get(h); if (!owner) continue
-      const date = String((r as any).post_date)
+      const date = new Date((r as any).taken_at).toISOString().slice(0,10)
       const uMap = map.get(owner) || new Map()
       const cur = uMap.get(date) || { views:0, likes:0, comments:0, shares:0, saves:0 }
       cur.views += Number((r as any).play_count)||0; cur.likes += Number((r as any).like_count)||0; cur.comments += Number((r as any).comment_count)||0

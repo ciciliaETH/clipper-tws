@@ -17,7 +17,7 @@ interface ViralVideo {
   username: string;
   owner_name: string | null;
   owner_id: string;
-  post_date: string;
+  taken_at: string;
   link: string;
   metrics: VideoMetrics;
   snapshots_count: number;

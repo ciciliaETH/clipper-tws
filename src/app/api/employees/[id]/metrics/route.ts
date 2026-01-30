@@ -263,14 +263,14 @@ export async function GET(req: Request, context: any) {
           if (handlesTT.length) {
             const { data: ttRows } = await supabase
               .from('tiktok_posts_daily')
-              .select('post_date, play_count, digg_count, comment_count, share_count, save_count, username, title')
+              .select('taken_at, play_count, digg_count, comment_count, share_count, save_count, username, title')
               .in('username', handlesTT)
-              .gte('post_date', startISO)
-              .lte('post_date', endISO);
+              .gte('taken_at', startISO + 'T00:00:00Z')
+              .lte('taken_at', endISO + 'T23:59:59Z');
             const dayAgg = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
             for (const r of ttRows||[]) {
               if (!hasRequiredHashtag((r as any).title, requiredHashtags)) continue;
-              const d = String((r as any).post_date);
+              const d = new Date((r as any).taken_at).toISOString().slice(0,10);
               const cur = dayAgg.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
               cur.views += Number((r as any).play_count)||0;
               cur.likes += Number((r as any).digg_count)||0;
@@ -300,16 +300,16 @@ export async function GET(req: Request, context: any) {
           if (igHandles.length) {
             const { data: igRows } = await supabase
               .from('instagram_posts_daily')
-              .select('post_date, play_count, like_count, comment_count, username, caption')
+              .select('taken_at, play_count, like_count, comment_count, username, caption')
               .in('username', igHandles)
-              .gte('post_date', startISO)
-              .lte('post_date', endISO);
+              .gte('taken_at', startISO + 'T00:00:00Z')
+              .lte('taken_at', endISO + 'T23:59:59Z');
             const map = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
             for (const r of igRows||[]) {
               // Apply hashtag filter
               if (!hasRequiredHashtag((r as any).caption, requiredHashtags)) continue;
               
-              const d = String((r as any).post_date);
+              const d = new Date((r as any).taken_at).toISOString().slice(0,10);
               const cur = map.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
               cur.views += Number((r as any).play_count)||0;
               cur.likes += Number((r as any).like_count)||0;
@@ -377,8 +377,8 @@ export async function GET(req: Request, context: any) {
         .from('tiktok_posts_daily')
         .select('play_count, digg_count, comment_count, share_count, save_count, title')
         .in('username', normUsernames)
-        .gte('post_date', start)
-        .lte('post_date', end);
+        .gte('taken_at', start + 'T00:00:00Z')
+        .lte('taken_at', end + 'T23:59:59Z');
       for (const r of rows || []) {
         // Apply hashtag filter
         if (!hasRequiredHashtag((r as any).title, requiredHashtags)) continue;
@@ -394,8 +394,8 @@ export async function GET(req: Request, context: any) {
         .from('instagram_posts_daily')
         .select('play_count, like_count, comment_count, caption')
         .in('username', normIG)
-        .gte('post_date', start)
-        .lte('post_date', end);
+        .gte('taken_at', start + 'T00:00:00Z')
+        .lte('taken_at', end + 'T23:59:59Z');
       for (const r of igRows || []) {
         // Apply hashtag filter
         if (!hasRequiredHashtag((r as any).caption, requiredHashtags)) continue;
@@ -465,13 +465,13 @@ export async function GET(req: Request, context: any) {
     try {
       const { data: rows } = await supabase
         .from('instagram_posts_daily')
-        .select('post_date, play_count, like_count, comment_count')
+        .select('taken_at, play_count, like_count, comment_count')
         .in('username', normIG)
-        .gte('post_date', start || '1970-01-01')
-        .lte('post_date', end || new Date().toISOString().slice(0,10));
+        .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
+        .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
       const map = new Map<string,{views:number;likes:number;comments:number}>();
       for (const r of rows||[]) {
-        const key = String((r as any).post_date);
+        const key = new Date((r as any).taken_at).toISOString().slice(0,10);
         const cur = map.get(key) || { views:0, likes:0, comments:0 };
         cur.views += Number((r as any).play_count)||0;
         cur.likes += Number((r as any).like_count)||0;

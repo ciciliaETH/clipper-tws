@@ -124,7 +124,7 @@ export async function GET(req: Request, context: any) {
           if ((row as any)?.instagram_user_id) aggUserId = String((row as any).instagram_user_id);
         } catch {}
         if (!aggUserId) {
-          try { aggUserId = await resolveUserIdViaLink(norm, admin()); } catch {}
+          try { aggUserId = await resolveUserIdViaLink(norm, admin()) || null; } catch {}
         }
 
         // Unlimited pagination loop
@@ -184,7 +184,7 @@ export async function GET(req: Request, context: any) {
             newReelsCount++;
 
             const code = String(media?.code || '');
-            // Derive post_date: prefer exact timestamp from media.taken_at, then linksMap, then RapidAPI, then resolveTimestamp; fallback to today
+            // Derive taken_at: prefer aggregator timestamp, then linksMap, fallback to NULL (backfill will fix)
             let ms: number | null = null;
             // Try to get taken_at directly from media object first (most reliable)
             const takenAt = media?.taken_at || media?.taken_at_timestamp || node?.taken_at || node?.taken_at_timestamp;
@@ -192,17 +192,8 @@ export async function GET(req: Request, context: any) {
               ms = parseMs(takenAt);
             }
             if (!ms && code && linksMap.has(code)) ms = linksMap.get(code)!;
-            // Aggregator doesn't return taken_at, so fetch it from RapidAPI
-            if (!ms && code) {
-              ms = await fetchTakenAt(code);
-              if (ms && debug) console.log(`[IG Fetch] Fetched taken_at for ${code}: ${new Date(ms).toISOString()}`);
-            }
-            if (!ms) {
-              const resolved = await resolveTimestamp(media, node, IG_HOST);
-              if (resolved) ms = resolved;
-            }
-            const post_date = ms ? new Date(ms).toISOString().slice(0,10) : new Date().toISOString().slice(0, 10);
-            const taken_at = ms ? new Date(ms).toISOString() : null; // Store actual timestamp
+            // NO RAPIDAPI! If no timestamp, set NULL - backfill endpoint will fix it later
+            const taken_at = ms ? new Date(ms).toISOString() : null; // NULL = backfill later!
             const caption = extractCaption(media, node);
             const play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0;
             const like = Number(media?.like_count ?? 0) || 0;
@@ -213,8 +204,8 @@ export async function GET(req: Request, context: any) {
               code: code || null, 
               caption: caption || null, 
               username: norm, 
-              post_date,
-              taken_at, // Include actual timestamp if available
+              taken_at, // Actual timestamp or NULL
+              post_date: taken_at ? new Date(taken_at).toISOString().slice(0, 10) : null, // Derive date from taken_at
               play_count: play, 
               like_count: like, 
               comment_count: comment 
@@ -289,19 +280,30 @@ export async function GET(req: Request, context: any) {
             });
           }
         } else {
-          console.log(`[IG Fetch] ⚠️ Aggregator returned 0 reels after ${pageNum} pages, trying RapidAPI fallback...`);
+          console.log(`[IG Fetch] ⚠️ Aggregator returned 0 reels after ${pageNum} pages - NO RAPIDAPI FALLBACK!`);
+          // NO RAPIDAPI FALLBACK! Return empty result
+          return NextResponse.json({ 
+            success: true, 
+            source: 'aggregator', 
+            username: norm, 
+            inserted: 0, 
+            total_views: 0,
+            total_likes: 0,
+            total_comments: 0,
+            message: 'Aggregator returned 0 reels - no data available',
+            telemetry: { source: 'aggregator', totalReels: 0, pagesProcessed: pageNum, success: true }
+          });
         }
       } catch (aggErr: any) {
-        if (aggErr.name === 'AbortError') {
-          console.log(`[IG Fetch] ✗ Aggregator timeout, trying RapidAPI fallback...`);
-        } else {
-          console.warn(`[IG Fetch] ✗ Aggregator error:`, aggErr.message);
-        }
-        fetchTelemetry = {
+        console.error(`[IG Fetch] ✗ Aggregator error (NO RAPIDAPI FALLBACK):`, aggErr.message);
+        // NO RAPIDAPI FALLBACK! Return error
+        return NextResponse.json({
+          error: 'Aggregator failed',
           source: 'aggregator',
-          error: aggErr.message,
+          message: aggErr.message,
+          username: norm,
           success: false
-        };
+        }, { status: 500 });
       }
     }
 
@@ -349,10 +351,17 @@ export async function GET(req: Request, context: any) {
             const code = String(it?.code || '');
             if (!id) continue;
             
-            const ms = parseMs(it?.taken_at) || parseMs(it?.device_timestamp) || parseMs(it?.taken_at_timestamp) || parseMs(it?.timestamp) || parseMs(it?.taken_at_ms) || parseMs(it?.created_at) || parseMs(it?.created_at_utc) || null;
-            if (!ms) continue;
+            // Try multiple timestamp fields from RapidAPI response
+            let ms = parseMs(it?.taken_at) || parseMs(it?.device_timestamp) || parseMs(it?.taken_at_timestamp) || parseMs(it?.timestamp) || parseMs(it?.taken_at_ms) || parseMs(it?.created_at) || parseMs(it?.created_at_utc) || null;
             
-            const post_date = new Date(ms).toISOString().slice(0,10);
+            // Fallback 1: Try fetchTakenAt if we have code
+            if (!ms && code) {
+              ms = await fetchTakenAt(code);
+            }
+            
+            // Fallback 2: Use NOW() if still no timestamp (rare case)
+            const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
+            
             const caption = String(it?.caption?.text || it?.caption || '');
             let play = Number(it?.play_count ?? it?.ig_play_count ?? it?.view_count ?? it?.video_view_count ?? 0) || 0;
             let like = Number(it?.like_count ?? 0) || 0;
@@ -374,7 +383,7 @@ export async function GET(req: Request, context: any) {
               } catch {}
             }
             
-            upserts.push({ id, code: code || null, caption: caption || null, username: norm, post_date, play_count: play, like_count: like, comment_count: comment });
+            upserts.push({ id, code: code || null, caption: caption || null, username: norm, taken_at, play_count: play, like_count: like, comment_count: comment });
           }
           source = 'rapidapi:scraper:fallback';
         } else if (bestResult.source === 'best') {
@@ -384,21 +393,28 @@ export async function GET(req: Request, context: any) {
             const pid = String(media?.id || media?.pk || code || ''); 
             if (!pid) continue;
             
-            const ms = parseMs(media?.taken_at) || parseMs(media?.device_timestamp) || parseMs(media?.taken_at_timestamp) || parseMs(media?.timestamp) || null;
-            if (!ms) continue;
+            // Try multiple timestamp fields from RapidAPI response
+            let ms = parseMs(media?.taken_at) || parseMs(media?.device_timestamp) || parseMs(media?.taken_at_timestamp) || parseMs(media?.timestamp) || null;
             
-            const post_date = new Date(ms).toISOString().slice(0,10);
+            // Fallback 1: Try fetchTakenAt if we have code
+            if (!ms && code) {
+              ms = await fetchTakenAt(code);
+            }
+            
+            // Fallback 2: Use NOW() if still no timestamp (rare case)
+            const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
+            
             const caption = String(media?.caption?.text || media?.caption || media?.edge_media_to_caption?.edges?.[0]?.node?.text || '');
             let play = Number(media?.play_count || media?.view_count || media?.video_view_count || 0) || 0;
             let like = Number(media?.like_count || 0) || 0;
             let comment = Number(media?.comment_count || 0) || 0;
             
             if ((play + like + comment) === 0) {
-              const counts = await resolveCounts(media, { id: pid, code });
+              const counts = await resolveCounts(media, { id: pid, code }, IG_HOST);
               if (counts) { play = counts.play; like = counts.like; comment = counts.comment; }
             }
             
-            upserts.push({ id: pid, code: code || null, caption: caption || null, username: norm, post_date, play_count: play, like_count: like, comment_count: comment });
+            upserts.push({ id: pid, code: code || null, caption: caption || null, username: norm, taken_at, play_count: play, like_count: like, comment_count: comment });
           }
           source = 'rapidapi:best:fallback';
         } else {
@@ -415,18 +431,21 @@ export async function GET(req: Request, context: any) {
         const code = String(m?.shortcode || '');
         const caption = extractCaption(m);
         if (!id) continue;
-        const ms = parseMs(m?.timestamp) || parseMs(m?.taken_at) || null; 
-        if (!ms) continue;
-        const post_date = new Date(ms).toISOString().slice(0,10);
+        
+        // Triple fallback for taken_at
+        let takenAtMs = parseMs(m?.timestamp) || parseMs(m?.taken_at) || parseMs(m?.device_timestamp);
+        if (!takenAtMs && code) takenAtMs = await fetchTakenAt(code);
+        const taken_at = takenAtMs ? new Date(takenAtMs).toISOString() : new Date().toISOString();
+        
         let play = Number(m?.video_views || m?.play_count || m?.view_count || m?.video_view_count || 0) || 0;
         let like = Number(m?.like || m?.like_count || 0) || 0;
         let comment = Number(m?.comment_count || 0) || 0;
         if ((play + like + comment) === 0) {
-          const counts = await resolveCounts({ id, code }, { id, code });
+          const counts = await resolveCounts({ id, code }, { id, code }, IG_HOST);
           if (counts) { play = counts.play; like = counts.like; comment = counts.comment; }
         }
         if ((play + like + comment) === 0) continue;
-        upserts.push({ id, code: code || null, caption: caption || null, username: norm, post_date, play_count: play, like_count: like, comment_count: comment });
+        upserts.push({ id, code: code || null, caption: caption || null, username: norm, taken_at, play_count: play, like_count: like, comment_count: comment });
       }
       if (upserts.length > 0) source = 'profile1:username';
     }
@@ -458,7 +477,7 @@ export async function GET(req: Request, context: any) {
           telemetry.linkMatches += 1; 
         }
         if (!ms) {
-          ms = await resolveTimestamp(media, node);
+          ms = await resolveTimestamp(media, node, IG_HOST);
           if (ms) telemetry.detailResolves += 1;
         }
         if (!ms) { 
@@ -468,7 +487,6 @@ export async function GET(req: Request, context: any) {
       }
       
       const d = new Date(ms!);
-      const post_date = d.toISOString().slice(0,10);
       const code = String(media?.code || node?.code || '');
       const caption = extractCaption(media, node);
       let play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0;
@@ -476,7 +494,7 @@ export async function GET(req: Request, context: any) {
       let comment = Number(media?.comment_count ?? media?.edge_media_to_comment?.count ?? 0) || 0;
       
       if ((play + like + comment) === 0) {
-        const fixed = await resolveCounts(media, node);
+        const fixed = await resolveCounts(media, node, IG_HOST);
         if (fixed) { 
           play = fixed.play; 
           like = fixed.like; 
@@ -484,8 +502,9 @@ export async function GET(req: Request, context: any) {
         }
       }
       if ((play + like + comment) === 0) continue;
-      const taken_at = ms ? new Date(ms).toISOString() : null;
-      upserts.push({ id, code: code || null, caption: caption || null, username: norm, post_date, taken_at, play_count: play, like_count: like, comment_count: comment });
+      // Always set taken_at - use NOW() as fallback if ms is NULL
+      const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
+      upserts.push({ id, code: code || null, caption: caption || null, username: norm, taken_at, play_count: play, like_count: like, comment_count: comment });
     }
 
     if (allowUsernameFallback && upserts.length === 0 && linksMap.size > 0) {
@@ -506,12 +525,11 @@ export async function GET(req: Request, context: any) {
         const sc = String(it?.shortcode || it?.meta?.shortcode || '');
         const ts = parseMs(it?.takenAt || it?.meta?.takenAt);
         if (!sc || !ts) continue;
-        const post_date = new Date(ts).toISOString().slice(0,10);
         let views = Number(it?.playCount || it?.viewCount || 0) || 0;
         let likes = Number(it?.likeCount || 0) || 0;
         let comments = Number(it?.commentCount || 0) || 0;
         if ((views + likes + comments) === 0) {
-          const counts = await resolveCounts({ code: sc }, { code: sc });
+          const counts = await resolveCounts({ code: sc }, { code: sc }, IG_HOST);
           if (counts) { 
             views = counts.play; 
             likes = counts.like; 
@@ -519,8 +537,9 @@ export async function GET(req: Request, context: any) {
           }
         }
         if ((views + likes + comments) === 0) continue;
-        const taken_at = ts ? new Date(ts).toISOString() : null;
-        upserts.push({ id: sc, code: sc, caption: null, username: norm, post_date, taken_at, play_count: views, like_count: likes, comment_count: comments });
+        // Always set taken_at - use NOW() as fallback if ts is NULL
+        const taken_at = ts ? new Date(ts).toISOString() : new Date().toISOString();
+        upserts.push({ id: sc, code: sc, caption: null, username: norm, taken_at, play_count: views, like_count: likes, comment_count: comments });
         telemetry.fallbackLinksUsed += 1;
       }
     }
@@ -550,27 +569,26 @@ export async function GET(req: Request, context: any) {
             });
             const m = info?.result?.items?.[0] || info?.result?.media || info?.result || info?.item || info;
             ms = parseMs(m?.taken_at) || parseMs(m?.taken_at_ms) || null;
-            const post_date = ms ? new Date(ms).toISOString().slice(0,10) : null;
             const caption = extractCaption(m);
             let views = Number(m?.play_count || m?.view_count || m?.video_view_count || 0) || 0;
             let likes = Number(m?.like_count || m?.edge_liked_by?.count || 0) || 0;
             let comments = Number(m?.comment_count || m?.edge_media_to_comment?.count || 0) || 0;
             if ((views + likes + comments) === 0) {
-              const counts = await resolveCounts({ code: sc }, { code: sc });
+              const counts = await resolveCounts({ code: sc }, { code: sc }, IG_HOST);
               if (counts) { 
                 views = counts.play; 
                 likes = counts.like; 
                 comments = counts.comment; 
               }
             }
-            if (post_date && (views + likes + comments) > 0) {
-              const taken_at = ms ? new Date(ms).toISOString() : null;
+            if (ms && (views + likes + comments) > 0) {
+              // Always set taken_at - use NOW() as fallback if ms is NULL
+              const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
               upserts.push({ 
                 id: sc, 
                 code: sc,
                 caption: caption || null,
                 username: norm, 
-                post_date, 
                 taken_at,
                 play_count: views, 
                 like_count: likes, 
@@ -579,12 +597,11 @@ export async function GET(req: Request, context: any) {
             }
           } catch {}
         } else {
-          const post_date = new Date(ms).toISOString().slice(0,10);
           let views = Number(it?.playCount || it?.viewCount || 0) || 0;
           let likes = Number(it?.likeCount || 0) || 0;
           let comments = Number(it?.commentCount || 0) || 0;
           if ((views + likes + comments) === 0) {
-            const counts = await resolveCounts({ code: sc }, { code: sc });
+            const counts = await resolveCounts({ code: sc }, { code: sc }, IG_HOST);
             if (counts) { 
               views = counts.play; 
               likes = counts.like; 
@@ -592,8 +609,9 @@ export async function GET(req: Request, context: any) {
             }
           }
           if ((views + likes + comments) === 0) continue;
-          const taken_at = ms ? new Date(ms).toISOString() : null;
-          upserts.push({ id: sc, code: sc, caption: null, username: norm, post_date, taken_at, play_count: views, like_count: likes, comment_count: comments });
+          // Always set taken_at - use NOW() as fallback if ms is NULL
+          const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
+          upserts.push({ id: sc, code: sc, caption: null, username: norm, taken_at, play_count: views, like_count: likes, comment_count: comments });
         }
       }
     }
@@ -613,12 +631,11 @@ export async function GET(req: Request, context: any) {
           if (!id) continue;
           const ms = parseMs(it?.taken_at) || parseMs(it?.device_timestamp) || null; 
           if (!ms) continue;
-          const post_date = new Date(ms).toISOString().slice(0,10);
           let play = Number(it?.play_count ?? it?.ig_play_count ?? 0) || 0;
           let like = Number(it?.like_count ?? 0) || 0;
           let comment = Number(it?.comment_count ?? 0) || 0;
           if ((play + like + comment) === 0) {
-            const counts = await resolveCounts({ id, code: it?.code }, { id, code: it?.code });
+            const counts = await resolveCounts({ id, code: it?.code }, { id, code: it?.code }, IG_HOST);
             if (counts) { 
               play = counts.play; 
               like = counts.like; 
@@ -628,25 +645,64 @@ export async function GET(req: Request, context: any) {
           if ((play + like + comment) === 0) continue;
           const code = String(it?.code || '');
           const caption = extractCaption(it);
-          const taken_at = ms ? new Date(ms).toISOString() : null;
-          upserts.push({ id, code: code || null, caption: caption || null, username: norm, post_date, taken_at, play_count: play, like_count: like, comment_count: comment });
+          // Always set taken_at - use NOW() as fallback if ms is NULL
+          const taken_at = ms ? new Date(ms).toISOString() : new Date().toISOString();
+          upserts.push({ id, code: code || null, caption: caption || null, username: norm, taken_at, play_count: play, like_count: like, comment_count: comment });
         }
         if (upserts.length > 0) source = 'scraper:user_id';
       }
     }
 
+    console.log(`[Instagram] Attempting to save ${upserts.length} posts to instagram_posts_daily for ${norm}`);
+    
     if (upserts.length) {
       if (cleanup === 'today') {
-        const today = new Date().toISOString().slice(0,10);
+        const todayStart = new Date().toISOString().slice(0,10) + 'T00:00:00Z';
+        const todayEnd = new Date().toISOString().slice(0,10) + 'T23:59:59Z';
         try { 
-          await supa.from('instagram_posts_daily').delete().eq('username', norm).eq('post_date', today); 
-        } catch {}
+          const { error: delError } = await supa.from('instagram_posts_daily').delete().eq('username', norm).gte('taken_at', todayStart).lte('taken_at', todayEnd);
+          if (delError) {
+            console.error('[Instagram] Failed to cleanup today\'s data:', delError.message);
+          } else {
+            console.log('[Instagram] Cleaned up today\'s data before upsert');
+          }
+        } catch (e: any) {
+          console.error('[Instagram] Cleanup error:', e.message);
+        }
       }
+      
       const chunk = 500;
+      let totalSaved = 0;
+      let totalErrors = 0;
+      
       for (let i=0; i<upserts.length; i+=chunk) {
         const part = upserts.slice(i, i+chunk);
-        await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
+        const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
+        
+        if (upsertError) {
+          console.error(`[Instagram] ❌ FAILED to upsert chunk ${i}-${i+part.length}:`, {
+            error: upsertError.message,
+            code: upsertError.code,
+            details: upsertError.details,
+            hint: upsertError.hint,
+            username: norm,
+            chunk_size: part.length
+          });
+          totalErrors += part.length;
+        } else {
+          totalSaved += part.length;
+          if (i === 0) { // Log first chunk sample
+            console.log(`[Instagram] ✅ Saved chunk ${i}-${i+part.length} to instagram_posts_daily. Sample:`, {
+              username: norm,
+              first_post: part[0]?.id,
+              taken_at: part[0]?.taken_at,
+              like_count: part[0]?.like_count
+            });
+          }
+        }
       }
+      
+      console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total`);
     }
 
     const totals = upserts.reduce((a, r)=>({
@@ -712,9 +768,9 @@ export async function GET(req: Request, context: any) {
           
           const { data: rows } = await supa
             .from('instagram_posts_daily')
-            .select('play_count, like_count, comment_count, username, post_date')
+            .select('play_count, like_count, comment_count, username, taken_at')
             .in('username', all)
-            .gte('post_date', startISO);
+            .gte('taken_at', startISO + 'T00:00:00Z');
             
           const agg = (rows||[]).reduce((a:any,r:any)=>({
             views: a.views + (Number(r.play_count)||0),

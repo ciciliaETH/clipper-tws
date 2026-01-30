@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
         video_id: String(videoId),
         username: normalized,
         sec_uid: null as any,
-        post_date: d.toISOString().slice(0,10),
+        taken_at: d.toISOString(),
         comment_count: readStat(post,'comment'),
         play_count: readStat(post,'play'),
         share_count: readStat(post,'share'),

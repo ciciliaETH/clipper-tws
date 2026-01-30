@@ -17,8 +17,9 @@ export async function GET(req: Request) {
   try {
     const supa = adminClient();
     const url = new URL(req.url);
-    const interval = (url.searchParams.get('interval') || 'daily').toLowerCase() as 'daily'|'weekly'|'monthly';
-    const mode = (url.searchParams.get('mode')||'accrual').toLowerCase();
+    // Force weekly + postdate mode
+    const interval = 'weekly' as const;
+    const mode = 'postdate';
     const respectHashtags = url.searchParams.get('respect_hashtags') === '1';
     const snapshotsOnly = url.searchParams.get('snapshots_only') !== '0';
     let startISO = url.searchParams.get('start');
@@ -149,146 +150,136 @@ export async function GET(req: Request) {
       return [];
     };
 
-    // Accrual mode: aggregate from social_metrics_history deltas across all employees
-    // snapshots_only default ON (no augmentation from posts_daily)
+    // Accrual mode: aggregate from post_metrics_history (per-post LAG delta) across all employees
+    // PART 1: Historical period (< 2026-01-23): Use weekly_historical_data
+    // PART 2: Realtime period (>= 2026-01-23): Use post_metrics_history with LAG delta
     if (mode === 'accrual') {
       const start = startISO!; const end = endISO!;
       // keys (daily)
       const keys:string[] = []; const ds=new Date(start+'T00:00:00Z'); const de=new Date(end+'T00:00:00Z'); for (let d=new Date(ds); d<=de; d.setUTCDate(d.getUTCDate()+1)) keys.push(d.toISOString().slice(0,10));
-      // Baseline: gunakan snapshot TERAKHIR sebelum start (tidak harus tepat H-1)
-      // Untuk menjamin konsistensi antara window 7/28 hari, ambil lookback beberapa hari ke belakang.
-      const baselineLookbackDays = 30; // kompromi performa vs akurasi
-      const baselineFrom = new Date(start+'T00:00:00Z'); baselineFrom.setUTCDate(baselineFrom.getUTCDate()-baselineLookbackDays);
-      const prev = new Date(start+'T00:00:00Z'); prev.setUTCDate(prev.getUTCDate()-1); const prevISO = prev.toISOString().slice(0,10);
-      // all employees
-      const { data: emps } = await supa.from('users').select('id').eq('role','karyawan');
-      const allEmpIds = (emps||[]).map((u:any)=> String(u.id));
+      
+      const historicalCutoff = new Date('2026-01-23T00:00:00Z');
+      const historicalCutoffISO = '2026-01-23';
 
-      const calcSeries = async (ids:string[]) => {
-        const totalMap = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
-        const add = (date:string, v:any)=>{ if (date < start || date > end) return; const cur = totalMap.get(date) || { views:0, likes:0, comments:0, shares:0, saves:0 }; cur.views+=v.views; cur.likes+=v.likes; cur.comments+=v.comments; cur.shares+=v.shares; cur.saves+=v.saves; totalMap.set(date, cur); };
-        const buildPlat = async (plat:'tiktok'|'instagram')=>{
-          if (!ids.length) return;
-          const { data: rows } = await supa
-            .from('social_metrics_history')
-            .select('user_id, views, likes, comments, shares, saves, captured_at')
-            .in('user_id', ids)
-            .eq('platform', plat)
-            // ambil snapshot mulai baseline lookback agar ada prev sebelum start
-            .gte('captured_at', baselineFrom.toISOString().slice(0,10)+'T00:00:00Z')
-            .lte('captured_at', end+'T23:59:59Z')
-            .order('user_id', { ascending: true })
-            .order('captured_at', { ascending: true });
-          const byUser = new Map<string, any[]>();
-          for (const r of rows||[]) { const uid=String((r as any).user_id); const arr=byUser.get(uid)||[]; arr.push(r); byUser.set(uid, arr); }
-          for (const [, arr] of byUser.entries()) {
-            // Build last snapshot per day
-            const lastByDay = new Map<string, any>();
-            for (const r of arr) { const d=String((r as any).captured_at).slice(0,10); lastByDay.set(d, r); }
-            // Cari snapshot terakhir SEBELUM start (<= H-1), bukan hanya tepat H-1
-            let prevSnap: any = null;
-            {
-              // scan mundur max baselineLookbackDays hari
-              const base = new Date(start+'T00:00:00Z');
-              for (let i=1;i<=baselineLookbackDays;i++) {
-                const d = new Date(base); d.setUTCDate(d.getUTCDate()-i);
-                const key = d.toISOString().slice(0,10);
-                const cand = lastByDay.get(key);
-                if (cand) { prevSnap = cand; break; }
-              }
-            }
-            let prev = prevSnap;
-            for (const d of keys) {
-              const cur = lastByDay.get(d);
-              if (cur && prev) {
-                const dv=Math.max(0, Number((cur as any).views||0)-Number((prev as any).views||0));
-                const dl=Math.max(0, Number((cur as any).likes||0)-Number((prev as any).likes||0));
-                const dc=Math.max(0, Number((cur as any).comments||0)-Number((prev as any).comments||0));
-                const ds=Math.max(0, Number((cur as any).shares||0)-Number((prev as any).shares||0));
-                const dsv=Math.max(0, Number((cur as any).saves||0)-Number((prev as any).saves||0));
-                add(d, { views: dv, likes: dl, comments: dc, shares: ds, saves: dsv });
-              }
-              if (cur) prev = cur;
-            }
-          }
-        };
-        await buildPlat('tiktok'); await buildPlat('instagram');
-        return keys.map(k=> ({ date:k, ...(totalMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) }));
-      };
-
-      // platform-separated series across all employees (for legend sync)
-      const calcSeriesPlatform = async (ids:string[], plat:'tiktok'|'instagram') => {
+      // Helper: calculate series from post_metrics_history using LAG delta per post (for realtime period only)
+      const calcSeriesPlatform = async (usernames: string[], plat: 'tiktok'|'instagram') => {
         const map = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
-        if (ids.length) {
-          const { data: rows } = await supa
-            .from('social_metrics_history')
-            .select('user_id, views, likes, comments, shares, saves, captured_at')
-            .in('user_id', ids)
-            .eq('platform', plat)
-            .gte('captured_at', baselineFrom.toISOString().slice(0,10)+'T00:00:00Z')
-            .lte('captured_at', end+'T23:59:59Z')
-            .order('user_id', { ascending: true })
-            .order('captured_at', { ascending: true });
-          const byUser = new Map<string, any[]>();
-          for (const r of rows||[]) { const uid=String((r as any).user_id); const arr=byUser.get(uid)||[]; arr.push(r); byUser.set(uid, arr); }
-          for (const [, arr] of byUser.entries()) {
-            const lastByDay = new Map<string, any>();
-            for (const r of arr) { const d=String((r as any).captured_at).slice(0,10); lastByDay.set(d, r); }
-            let prevSnap: any = null;
-            {
-              const base = new Date(start+'T00:00:00Z');
-              for (let i=1;i<=baselineLookbackDays;i++) {
-                const d = new Date(base); d.setUTCDate(d.getUTCDate()-i);
-                const key = d.toISOString().slice(0,10);
-                const cand = lastByDay.get(key);
-                if (cand) { prevSnap = cand; break; }
-              }
-            }
-            let prev = prevSnap;
-            for (const d of keys) {
-              const cur = lastByDay.get(d);
-              if (cur && prev) {
-                const dv=Math.max(0, Number((cur as any).views||0)-Number((prev as any).views||0));
-                const dl=Math.max(0, Number((cur as any).likes||0)-Number((prev as any).likes||0));
-                const dc=Math.max(0, Number((cur as any).comments||0)-Number((prev as any).comments||0));
-                const ds=Math.max(0, Number((cur as any).shares||0)-Number((prev as any).shares||0));
-                const dsv=Math.max(0, Number((cur as any).saves||0)-Number((prev as any).saves||0));
-                if (d >= start && d <= end) {
-                  const curAgg = map.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-                  curAgg.views+=dv; curAgg.likes+=dl; curAgg.comments+=dc; curAgg.shares+=ds; curAgg.saves+=dsv; map.set(d, curAgg);
-                }
-              }
-              if (cur) prev = cur;
-            }
+        if (!usernames.length) return keys.map(k => ({ date:k, views:0, likes:0, comments:0, shares:0, saves:0 }));
+        
+        // Check if we need realtime data
+        if (new Date(end + 'T23:59:59Z') < historicalCutoff) {
+          // All dates are historical, return zeros (will be filled by historical data later)
+          return keys.map(k => ({ date:k, views:0, likes:0, comments:0, shares:0, saves:0 }));
+        }
+        
+        const realtimeStart = new Date(Math.max(new Date(start + 'T00:00:00Z').getTime(), historicalCutoff.getTime()));
+        const realtimeStartISO = realtimeStart.toISOString().slice(0, 10);
+        
+        const tableName = plat === 'tiktok' ? 'tiktok_post_metrics_history' : 'instagram_post_metrics_history';
+        const usernameCol = plat === 'tiktok' ? 'tiktok_username' : 'instagram_username';
+        
+        // Query post metrics history for realtime period only
+        const { data: rows } = await supa
+          .from(tableName)
+          .select('post_id, play_count, like_count, comment_count, share_count, save_count, captured_at')
+          .in(usernameCol, usernames)
+          .gte('captured_at', realtimeStartISO + 'T00:00:00Z')
+          .lte('captured_at', end + 'T23:59:59Z')
+          .order('post_id', { ascending: true })
+          .order('captured_at', { ascending: true });
+        
+        // Group by post_id
+        const byPost = new Map<string, any[]>();
+        for (const r of rows||[]) {
+          const pid = String((r as any).post_id);
+          const arr = byPost.get(pid) || [];
+          arr.push(r);
+          byPost.set(pid, arr);
+        }
+        
+        // Calculate LAG delta per post
+        for (const [, snaps] of byPost.entries()) {
+          snaps.sort((a, b) => new Date((a as any).captured_at).getTime() - new Date((b as any).captured_at).getTime());
+          for (let i = 1; i < snaps.length; i++) {
+            const prev = snaps[i-1];
+            const curr = snaps[i];
+            const date = new Date((curr as any).captured_at).toISOString().slice(0,10);
+            if (date < start || date > end) continue;
+            
+            const deltaViews = Math.max(0, Number((curr as any).play_count||0) - Number((prev as any).play_count||0));
+            const deltaLikes = Math.max(0, Number((curr as any).like_count||0) - Number((prev as any).like_count||0));
+            const deltaComments = Math.max(0, Number((curr as any).comment_count||0) - Number((prev as any).comment_count||0));
+            const deltaShares = Math.max(0, Number((curr as any).share_count||0) - Number((prev as any).share_count||0));
+            const deltaSaves = Math.max(0, Number((curr as any).save_count||0) - Number((prev as any).save_count||0));
+            
+            const curAgg = map.get(date) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            curAgg.views += deltaViews;
+            curAgg.likes += deltaLikes;
+            curAgg.comments += deltaComments;
+            curAgg.shares += deltaShares;
+            curAgg.saves += deltaSaves;
+            map.set(date, curAgg);
           }
         }
+        
         return keys.map(k => ({ date:k, ...(map.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) }));
       };
-      // Helper: derive TT usernames for a campaign from participants and employee mappings
-      const deriveTTUsernames = async (campaignId: string, empIds: string[]): Promise<string[]> => {
+      
+      // Helper: derive TikTok usernames for a campaign from employee_tiktok_participants
+      const deriveTTUsernames = async (campaignId: string): Promise<string[]> => {
         const set = new Set<string>();
-        // explicit campaign participants
+        // From employee_tiktok_participants (new source of truth)
         try {
-          const { data: ttParts } = await supa
-            .from('campaign_participants')
+          const { data: participants } = await supa
+            .from('employee_tiktok_participants')
             .select('tiktok_username')
             .eq('campaign_id', campaignId);
-          for (const r of ttParts||[]) { const u=String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase(); if (u) set.add(u); }
+          for (const r of participants||[]) {
+            const u = String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase();
+            if (u) set.add(u);
+          }
         } catch {}
-        if (empIds.length) {
+        // Fallback to campaign_participants
+        if (set.size === 0) {
           try {
-            const { data: map } = await supa
-              .from('user_tiktok_usernames')
-              .select('tiktok_username, user_id')
-              .in('user_id', empIds);
-            for (const r of map||[]) { const u=String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase(); if (u) set.add(u); }
+            const { data: ttParts } = await supa
+              .from('campaign_participants')
+              .select('tiktok_username')
+              .eq('campaign_id', campaignId);
+            for (const r of ttParts||[]) {
+              const u = String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase();
+              if (u) set.add(u);
+            }
           } catch {}
+        }
+        return Array.from(set);
+      };
+
+      // Helper: derive Instagram usernames for a campaign from employee_instagram_participants
+      const deriveIGUsernames = async (campaignId: string): Promise<string[]> => {
+        const set = new Set<string>();
+        // From employee_instagram_participants (new source of truth)
+        try {
+          const { data: participants } = await supa
+            .from('employee_instagram_participants')
+            .select('instagram_username')
+            .eq('campaign_id', campaignId);
+          for (const r of participants||[]) {
+            const u = String((r as any).instagram_username||'').trim().replace(/^@+/, '').toLowerCase();
+            if (u) set.add(u);
+          }
+        } catch {}
+        // Fallback to campaign_instagram_participants
+        if (set.size === 0) {
           try {
-            const { data: users } = await supa
-              .from('users')
-              .select('tiktok_username, id')
-              .in('id', empIds);
-            for (const r of users||[]) { const u=String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase(); if (u) set.add(u); }
+            const { data: igParts } = await supa
+              .from('campaign_instagram_participants')
+              .select('instagram_username')
+              .eq('campaign_id', campaignId);
+            for (const r of igParts||[]) {
+              const u = String((r as any).instagram_username||'').trim().replace(/^@+/, '').toLowerCase();
+              if (u) set.add(u);
+            }
           } catch {}
         }
         return Array.from(set);
@@ -299,171 +290,106 @@ export async function GET(req: Request) {
       const totalMap = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
       const totalTTMap = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
       const totalIGMap = new Map<string,{views:number;likes:number;comments:number}>();
+      
+      // HISTORICAL DATA: Load weekly_historical_data for period < 2026-01-23
+      const historicalMap = new Map<string, Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>>();
+      
+      if (new Date(start + 'T00:00:00Z') < historicalCutoff) {
+        const historicalEnd = new Date(Math.min(new Date(end + 'T23:59:59Z').getTime(), historicalCutoff.getTime()));
+        const historicalEndISO = historicalEnd.toISOString().slice(0, 10);
+        
+        // Query TikTok historical data
+        const { data: ttHistRows } = await supa
+          .from('weekly_historical_data')
+          .select('week_label, start_date, end_date, platform, views, likes, comments, shares, saves')
+          .eq('platform', 'tiktok')
+          .gte('start_date', start)
+          .lt('start_date', historicalCutoffISO);
+        
+        // Query Instagram historical data  
+        const { data: igHistRows } = await supa
+          .from('weekly_historical_data')
+          .select('week_label, start_date, end_date, platform, views, likes, comments')
+          .eq('platform', 'instagram')
+          .gte('start_date', start)
+          .lt('start_date', historicalCutoffISO);
+        
+        // Distribute weekly data across daily keys
+        const distributeWeekly = (rows: any[], platform: 'tiktok'|'instagram') => {
+          for (const r of rows||[]) {
+            const weekStart = String((r as any).start_date);
+            const weekEnd = String((r as any).end_date);
+            const daysInWeek = Math.round((new Date(weekEnd).getTime() - new Date(weekStart).getTime()) / (24*60*60*1000)) + 1;
+            
+            for (let i = 0; i < keys.length; i++) {
+              const k = keys[i];
+              if (k >= weekStart && k <= weekEnd) {
+                const platformKey = platform;
+                if (!historicalMap.has(platformKey)) historicalMap.set(platformKey, new Map());
+                const map = historicalMap.get(platformKey)!;
+                const cur = map.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+                
+                // Distribute evenly across days in week
+                cur.views += (Number((r as any).views)||0) / daysInWeek;
+                cur.likes += (Number((r as any).likes)||0) / daysInWeek;
+                cur.comments += (Number((r as any).comments)||0) / daysInWeek;
+                if (platform === 'tiktok') {
+                  cur.shares += (Number((r as any).shares)||0) / daysInWeek;
+                  cur.saves += (Number((r as any).saves)||0) / daysInWeek;
+                }
+                map.set(k, cur);
+              }
+            }
+          }
+        };
+        
+        distributeWeekly(ttHistRows||[], 'tiktok');
+        distributeWeekly(igHistRows||[], 'instagram');
+      }
 
       // per-campaign breakdown
-      const { data: campaigns } = await supa.from('campaigns').select('id, name, required_hashtags').order('start_date', { ascending: true });
+      const { data: campaigns } = await supa.from('campaigns').select('id, name').order('start_date', { ascending: true });
       if (campaigns && campaigns.length) {
-        const { data: empGroups } = await supa
-          .from('employee_groups')
-          .select('campaign_id, employee_id')
-          .in('campaign_id', campaigns.map((c:any)=> c.id));
-        const byCamp = new Map<string, string[]>();
-        for (const r of empGroups||[]) { const cid=String((r as any).campaign_id); const uid=String((r as any).employee_id); const arr=byCamp.get(cid)||[]; arr.push(uid); byCamp.set(cid, arr); }
-
-        // Helper: if employee_groups is empty for a campaign, derive employee ids from campaign_participants by mapping tiktok usernames to users
-        const resolveIdsFromParticipants = async (campaignId: string): Promise<string[]> => {
-          try {
-            const { data: parts } = await supa
-              .from('campaign_participants')
-              .select('tiktok_username')
-              .eq('campaign_id', campaignId);
-            const handles = Array.from(new Set((parts||[])
-              .map((r:any)=> String((r as any).tiktok_username||'').trim().replace(/^@+/, '').toLowerCase())
-              .filter(Boolean)));
-            if (!handles.length) return [];
-            const set = new Set<string>();
-            // map via user_tiktok_usernames
-            try {
-              const { data: mapRows } = await supa
-                .from('user_tiktok_usernames')
-                .select('user_id, tiktok_username')
-                .in('tiktok_username', handles);
-              for (const r of mapRows||[]) set.add(String((r as any).user_id));
-            } catch {}
-            // map via users.tiktok_username
-            try {
-              const { data: userRows } = await supa
-                .from('users')
-                .select('id, tiktok_username')
-                .in('tiktok_username', handles);
-              for (const r of userRows||[]) set.add(String((r as any).id));
-            } catch {}
-            return Array.from(set);
-          } catch { return []; }
-        };
-
         for (const camp of campaigns) {
-          let ids = byCamp.get(camp.id) || [];
-          if (!ids.length) {
-            ids = await resolveIdsFromParticipants(camp.id);
-          }
-          // History-based (strict snapshots)
-          const series_tiktok_hist = await calcSeriesPlatform(ids, 'tiktok');
-          const series_instagram_hist = await calcSeriesPlatform(ids, 'instagram');
+          // Get TikTok and Instagram usernames from employee_*_participants tables
+          const ttHandles = await deriveTTUsernames(camp.id);
+          const igHandles = await deriveIGUsernames(camp.id);
 
-          // Build quick lookup maps for history values
-          const ttHistMap = new Map(series_tiktok_hist.map(s=>[s.date, s] as const));
-          const igHistMap = new Map(series_instagram_hist.map(s=>[s.date, s] as const));
+          // Calculate realtime series from post_metrics_history using LAG delta
+          const series_tiktok_realtime = await calcSeriesPlatform(ttHandles, 'tiktok');
+          const series_instagram_realtime = await calcSeriesPlatform(igHandles, 'instagram');
+          
+          // Merge historical + realtime data
+          const series_tiktok = keys.map(k => {
+            const realtime = series_tiktok_realtime.find(s => s.date === k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            const historical = historicalMap.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            return {
+              date: k,
+              views: realtime.views + historical.views,
+              likes: realtime.likes + historical.likes,
+              comments: realtime.comments + historical.comments,
+              shares: realtime.shares + historical.shares,
+              saves: realtime.saves + historical.saves,
+            };
+          });
+          
+          const series_instagram = keys.map(k => {
+            const realtime = series_instagram_realtime.find(s => s.date === k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            const historical = historicalMap.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            return {
+              date: k,
+              views: realtime.views + historical.views,
+              likes: realtime.likes + historical.likes,
+              comments: realtime.comments + historical.comments,
+              shares: 0, // Instagram doesn't have shares
+              saves: 0,  // Instagram doesn't have saves in historical
+            };
+          });
 
-          // Optional: augmentation from posts_daily (disabled unless snapshots_only=0)
-          const ttHandles = await deriveTTUsernames(camp.id, ids);
-          const igHandles = await deriveIGUsernamesForCampaign(supa, camp.id);
-
-          const requiredHashtags: string[] = Array.isArray((camp as any)?.required_hashtags) ? (camp as any).required_hashtags : [];
-
-          if (respectHashtags && requiredHashtags.length && ttHandles.length && !snapshotsOnly) {
-            const { data: ttRows } = await supa
-              .from('tiktok_posts_daily')
-              .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count, title')
-              .in('username', ttHandles)
-              .gte('post_date', start)
-              .lte('post_date', end);
-            const tmp = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
-            for (const r of ttRows||[]) {
-              const title = String((r as any).title||'');
-              if (!hasRequiredHashtag(title, requiredHashtags)) continue;
-              const d = String((r as any).post_date);
-              const cur = tmp.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-              cur.views += Number((r as any).play_count)||0;
-              cur.likes += Number((r as any).digg_count)||0;
-              cur.comments += Number((r as any).comment_count)||0;
-              cur.shares += Number((r as any).share_count)||0;
-              cur.saves += Number((r as any).save_count)||0;
-              tmp.set(d, cur);
-            }
-            for (const k of keys) {
-              const pv = tmp.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-              ttHistMap.set(k, { date:k, ...pv });
-            }
-          } else if (!snapshotsOnly && ttHandles.length) {
-            const { data: ttRows } = await supa
-              .from('tiktok_posts_daily')
-              .select('username, post_date, play_count, digg_count, comment_count, share_count, save_count')
-              .in('username', ttHandles)
-              .gte('post_date', start)
-              .lte('post_date', end);
-            const tmp = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
-            for (const r of ttRows||[]) {
-              const d = String((r as any).post_date);
-              const cur = tmp.get(d) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-              cur.views += Number((r as any).play_count)||0;
-              cur.likes += Number((r as any).digg_count)||0;
-              cur.comments += Number((r as any).comment_count)||0;
-              cur.shares += Number((r as any).share_count)||0;
-              cur.saves += Number((r as any).save_count)||0;
-              tmp.set(d, cur);
-            }
-            // merge: use posts_daily when history value is fully zero
-            for (const k of keys) {
-              const hv = ttHistMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-              const pv = tmp.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-              if ((hv.views+hv.likes+hv.comments+hv.shares+hv.saves) === 0 && (pv.views+pv.likes+pv.comments+pv.shares+pv.saves)>0) {
-                ttHistMap.set(k, { date:k, ...pv });
-              }
-            }
-          }
-
-          if (respectHashtags && requiredHashtags.length && igHandles.length && !snapshotsOnly) {
-            const { data: igRows } = await supa
-              .from('instagram_posts_daily')
-              .select('username, post_date, play_count, like_count, comment_count, caption')
-              .in('username', igHandles)
-              .gte('post_date', start)
-              .lte('post_date', end);
-            const tmp = new Map<string,{views:number;likes:number;comments:number}>();
-            for (const r of igRows||[]) {
-              const caption = String((r as any).caption||'');
-              if (!hasRequiredHashtag(caption, requiredHashtags)) continue;
-              const d = String((r as any).post_date);
-              const cur = tmp.get(d) || { views:0, likes:0, comments:0 };
-              cur.views += Number((r as any).play_count)||0;
-              cur.likes += Number((r as any).like_count)||0;
-              cur.comments += Number((r as any).comment_count)||0;
-              tmp.set(d, cur);
-            }
-            for (const k of keys) {
-              const pv = tmp.get(k) || { views:0, likes:0, comments:0 };
-              igHistMap.set(k, { date:k, views: pv.views, likes: pv.likes, comments: pv.comments } as any);
-            }
-          } else if (!snapshotsOnly && igHandles.length) {
-            const { data: igRows } = await supa
-              .from('instagram_posts_daily')
-              .select('username, post_date, play_count, like_count, comment_count')
-              .in('username', igHandles)
-              .gte('post_date', start)
-              .lte('post_date', end);
-            const tmp = new Map<string,{views:number;likes:number;comments:number}>();
-            for (const r of igRows||[]) {
-              const d = String((r as any).post_date);
-              const cur = tmp.get(d) || { views:0, likes:0, comments:0 };
-              cur.views += Number((r as any).play_count)||0;
-              cur.likes += Number((r as any).like_count)||0;
-              cur.comments += Number((r as any).comment_count)||0;
-              tmp.set(d, cur);
-            }
-            for (const k of keys) {
-              const hv = igHistMap.get(k) || { date:k, views:0, likes:0, comments:0 } as any;
-              const pv = tmp.get(k) || { views:0, likes:0, comments:0 };
-              if ((hv.views+hv.likes+hv.comments) === 0 && (pv.views+pv.likes+pv.comments)>0) {
-                igHistMap.set(k, { date:k, views: pv.views, likes: pv.likes, comments: pv.comments } as any);
-              }
-            }
-          }
-
-          // Merge TikTok + IG into total series for this campaign
+          // Merge TikTok + Instagram into total series for this campaign
           const series = keys.map(k => {
-            const tt = ttHistMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-            const ig = igHistMap.get(k) || { date:k, views:0, likes:0, comments:0 } as any;
+            const tt = series_tiktok.find(s => s.date === k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            const ig = series_instagram.find(s => s.date === k) || { views:0, likes:0, comments:0 };
             return {
               date: k,
               views: (tt.views||0) + (ig.views||0),
@@ -473,27 +399,40 @@ export async function GET(req: Request) {
               saves: tt.saves||0,
             };
           });
-          const series_tiktok = keys.map(k => ({ date:k, ...(ttHistMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) }));
-          const series_instagram = keys.map(k => ({ date:k, ...(igHistMap.get(k) || { views:0, likes:0, comments:0 }) } as any));
 
-          groups.push({ id: camp.id, name: camp.name || camp.id, series, series_tiktok, series_instagram });
+          groups.push({ 
+            id: camp.id, 
+            name: camp.name || camp.id, 
+            series, 
+            series_tiktok, 
+            series_instagram 
+          });
 
-          // accumulate totals maps
+          // Accumulate totals
           for (const k of keys) {
-            const tt = ttHistMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-            const ig = igHistMap.get(k) || { date:k, views:0, likes:0, comments:0 } as any;
+            const tt = series_tiktok.find(s => s.date === k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+            const ig = series_instagram.find(s => s.date === k) || { views:0, likes:0, comments:0 };
+            
             const cur = totalMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-            cur.views += (tt.views||0)+(ig.views||0);
-            cur.likes += (tt.likes||0)+(ig.likes||0);
-            cur.comments += (tt.comments||0)+(ig.comments||0);
+            cur.views += (tt.views||0) + (ig.views||0);
+            cur.likes += (tt.likes||0) + (ig.likes||0);
+            cur.comments += (tt.comments||0) + (ig.comments||0);
             cur.shares += tt.shares||0;
             cur.saves += tt.saves||0;
             totalMap.set(k, cur);
+            
             const ttc = totalTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-            ttc.views += tt.views||0; ttc.likes += tt.likes||0; ttc.comments += tt.comments||0; ttc.shares += tt.shares||0; ttc.saves += tt.saves||0;
+            ttc.views += tt.views||0; 
+            ttc.likes += tt.likes||0; 
+            ttc.comments += tt.comments||0; 
+            ttc.shares += tt.shares||0; 
+            ttc.saves += tt.saves||0;
             totalTTMap.set(k, ttc);
+            
             const igc = totalIGMap.get(k) || { views:0, likes:0, comments:0 };
-            igc.views += ig.views||0; igc.likes += ig.likes||0; igc.comments += ig.comments||0;
+            igc.views += ig.views||0; 
+            igc.likes += ig.likes||0; 
+            igc.comments += ig.comments||0;
             totalIGMap.set(k, igc);
           }
         }
@@ -574,6 +513,60 @@ export async function GET(req: Request) {
       return keys;
     };
     const keys = buildKeys(interval, startISO!, endISO!);
+    
+    // HISTORICAL DATA for Post Date mode: Load weekly_historical_data for period < 2026-01-23
+    const historicalCutoffPostdate = new Date('2026-01-23T00:00:00Z');
+    const historicalCutoffISOPostdate = '2026-01-23';
+    const historicalMapPostdate = new Map<string, Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>>();
+    
+    if (new Date(startISO! + 'T00:00:00Z') < historicalCutoffPostdate) {
+      // Query TikTok historical data
+      const { data: ttHistRows } = await supa
+        .from('weekly_historical_data')
+        .select('week_label, start_date, end_date, platform, views, likes, comments, shares, saves')
+        .eq('platform', 'tiktok')
+        .gte('start_date', startISO!)
+        .lt('start_date', historicalCutoffISOPostdate);
+      
+      // Query Instagram historical data  
+      const { data: igHistRows } = await supa
+        .from('weekly_historical_data')
+        .select('week_label, start_date, end_date, platform, views, likes, comments')
+        .eq('platform', 'instagram')
+        .gte('start_date', startISO!)
+        .lt('start_date', historicalCutoffISOPostdate);
+      
+      // Distribute weekly data across daily keys
+      const distributeWeeklyPostdate = (rows: any[], platform: 'tiktok'|'instagram') => {
+        for (const r of rows||[]) {
+          const weekStart = String((r as any).start_date);
+          const weekEnd = String((r as any).end_date);
+          // Weekly totals already aggregated per week
+          
+          for (const k of keys) {
+            if (k >= weekStart && k <= weekEnd) {
+              const platformKey = platform;
+              if (!historicalMapPostdate.has(platformKey)) historicalMapPostdate.set(platformKey, new Map());
+              const map = historicalMapPostdate.get(platformKey)!;
+              const cur = map.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+              
+              // Assign full weekly totals into weekly bucket key
+              cur.views += Number((r as any).views)||0;
+              cur.likes += Number((r as any).likes)||0;
+              cur.comments += Number((r as any).comments)||0;
+              if (platform === 'tiktok') {
+                cur.shares += Number((r as any).shares)||0;
+                cur.saves += Number((r as any).saves)||0;
+              }
+              map.set(k, cur);
+            }
+          }
+        }
+      };
+      
+      distributeWeeklyPostdate(ttHistRows||[], 'tiktok');
+      distributeWeeklyPostdate(igHistRows||[], 'instagram');
+    }
 
     // (moved to deriveIGUsernamesForCampaign above)
 
@@ -581,14 +574,14 @@ export async function GET(req: Request) {
       if (!handles.length) return new Map<string, { views:number; likes:number; comments:number }>();
       const map = new Map<string, { views:number; likes:number; comments:number }>();
       const base = supa.from('instagram_posts_daily')
-        .select('username, post_date, play_count, like_count, comment_count')
+        .select('username, taken_at, play_count, like_count, comment_count')
         .in('username', handles)
-        .gte('post_date', startISO)
-        .lte('post_date', endISO);
+        .gte('taken_at', startISO + 'T00:00:00Z')
+        .lte('taken_at', endISO + 'T23:59:59Z');
       const { data: rows } = await base;
       for (const r of rows||[]) {
         let key: string;
-        const dStr = String((r as any).post_date);
+        const dStr = new Date((r as any).taken_at).toISOString().slice(0,10);
         if (interval === 'monthly') {
           const d = new Date(dStr+'T00:00:00Z');
           key = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10);
@@ -632,27 +625,37 @@ export async function GET(req: Request) {
       const igHandles = await deriveIGUsernamesForCampaign(supa, camp.id);
       const igMap = await aggInstagramSeries(igHandles, startISO!, endISO!, interval);
 
-      // zero-fill per date key and merge TT + IG
+      // zero-fill per date key and merge TT + IG + Historical
       const series = keys.map(k => {
-        const tt = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-        const ig = igMap.get(k) || { views:0, likes:0, comments:0 };
+        const rawTT = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const rawIG = igMap.get(k) || { views:0, likes:0, comments:0 };
+        // Hide realtime before cutoff
+        const tt = (k >= historicalCutoffISOPostdate) ? rawTT : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const ig = (k >= historicalCutoffISOPostdate) ? rawIG : { views:0, likes:0, comments:0 };
+        // Add historical data for dates < 2026-01-23
+        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
+        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
         return {
           date: k,
-          views: tt.views + ig.views,
-          likes: tt.likes + ig.likes,
-          comments: tt.comments + ig.comments,
-          shares: tt.shares, // IG shares not tracked here
-          saves: tt.saves,   // IG saves not tracked here
+          views: tt.views + ig.views + histTT.views + histIG.views,
+          likes: tt.likes + ig.likes + histTT.likes + histIG.likes,
+          comments: tt.comments + ig.comments + histTT.comments + histIG.comments,
+          shares: tt.shares + histTT.shares,
+          saves: tt.saves + histTT.saves,
         };
       });
       // Platform-separated series for this campaign (for consistent UI legends)
       const series_tiktok = keys.map(k => {
-        const tt = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-        return { date: k, views: tt.views, likes: tt.likes, comments: tt.comments, shares: tt.shares, saves: tt.saves };
+        const base = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const tt = (k >= historicalCutoffISOPostdate) ? base : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
+        return { date: k, views: tt.views + histTT.views, likes: tt.likes + histTT.likes, comments: tt.comments + histTT.comments, shares: tt.shares + histTT.shares, saves: tt.saves + histTT.saves };
       });
       const series_instagram = keys.map(k => {
-        const ig = igMap.get(k) || { views:0, likes:0, comments:0 };
-        return { date: k, views: ig.views, likes: ig.likes, comments: ig.comments } as any;
+        const base = igMap.get(k) || { views:0, likes:0, comments:0 };
+        const ig = (k >= historicalCutoffISOPostdate) ? base : { views:0, likes:0, comments:0 };
+        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
+        return { date: k, views: ig.views + histIG.views, likes: ig.likes + histIG.likes, comments: ig.comments + histIG.comments } as any;
       });
 
       groups.push({ id: camp.id, name: camp.name || camp.id, series, series_tiktok, series_instagram });
@@ -661,15 +664,19 @@ export async function GET(req: Request) {
         cur.views += s.views; cur.likes += s.likes; cur.comments += s.comments; cur.shares += s.shares; cur.saves += s.saves;
         totalMap.set(s.date, cur);
       }
-      // accumulate platform-separated totals
+      // accumulate platform-separated totals (include historical)
       for (const k of keys) {
-        const tt = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-        const ig = igMap.get(k) || { views:0, likes:0, comments:0 };
+        const baseTT = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const baseIG = igMap.get(k) || { views:0, likes:0, comments:0 };
+        const tt = (k >= historicalCutoffISOPostdate) ? baseTT : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+        const ig = (k >= historicalCutoffISOPostdate) ? baseIG : { views:0, likes:0, comments:0 };
+        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
+        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
         const ttCur = totalTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-        ttCur.views += tt.views; ttCur.likes += tt.likes; ttCur.comments += tt.comments; ttCur.shares += tt.shares; ttCur.saves += tt.saves;
+        ttCur.views += tt.views + histTT.views; ttCur.likes += tt.likes + histTT.likes; ttCur.comments += tt.comments + histTT.comments; ttCur.shares += tt.shares + histTT.shares; ttCur.saves += tt.saves + histTT.saves;
         totalTTMap.set(k, ttCur);
         const igCur = totalIGMap.get(k) || { views:0, likes:0, comments:0 };
-        igCur.views += ig.views; igCur.likes += ig.likes; igCur.comments += ig.comments;
+        igCur.views += ig.views + histIG.views; igCur.likes += ig.likes + histIG.likes; igCur.comments += ig.comments + histIG.comments;
         totalIGMap.set(k, igCur);
       }
     }
