@@ -25,7 +25,7 @@ export default function AnalyticsPage() {
   const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('weekly');
   const [mode, setMode] = useState<'accrual'|'postdate'>('postdate');
   const [metric, setMetric] = useState<'views'|'likes'|'comments'>('views');
-  const [start, setStart] = useState(()=> { const d=new Date(); const s=new Date(); s.setDate(d.getDate()-7); return s.toISOString().slice(0,10); });
+  const [start, setStart] = useState<string>('2026-01-01');
   const [end, setEnd] = useState(()=> new Date().toISOString().slice(0,10));
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
   const [data, setData] = useState<any|null>(null);
@@ -77,17 +77,23 @@ export default function AnalyticsPage() {
         try {
           if (a.platform === 'tiktok') {
             const u = new URL(`/api/fetch-metrics/${encodeURIComponent(a.username)}`, base);
-            // Batasan: ambil 30 hari ke belakang supaya cepat
-            const s = new Date(); s.setDate(s.getDate()-30); u.searchParams.set('start', s.toISOString().slice(0,10)); u.searchParams.set('end', new Date().toISOString().slice(0,10));
+            // Force window from 2026-01-01 to today for reliability
+            u.searchParams.set('start', '2026-01-01');
+            u.searchParams.set('end', new Date().toISOString().slice(0,10));
             const r = await fetch(u.toString(), { cache:'no-store' }); await r.json().catch(()=>null);
           } else {
             const u = new URL(`/api/fetch-ig/${encodeURIComponent(a.username)}`, base);
-            u.searchParams.set('create','1'); u.searchParams.set('allow_username','0'); u.searchParams.set('max_pages','6'); u.searchParams.set('page_size','40');
+            u.searchParams.set('create','1');
+            u.searchParams.set('allow_username','0');
+            // Tighter window to avoid timeouts
+            u.searchParams.set('max_pages','3');
+            u.searchParams.set('page_size','20');
+            u.searchParams.set('time_budget_ms','60000');
             const r = await fetch(u.toString(), { cache:'no-store' }); await r.json().catch(()=>null);
           }
         } catch {}
         // jeda singkat untuk menghindari rate limit
-        await sleep(1500);
+        await sleep(2500);
       }
       // setelah refresh, muat ulang series
       await loadSeries();

@@ -34,6 +34,18 @@ function admin() {
 async function fetchTakenAt(code: string): Promise<number | null> {
   if (!code) return null;
   try {
+    // Incremental start: get last taken_at we already have for this username
+    let lastTakenAtMs: number | null = null;
+    try {
+      const { data: lastRow } = await admin()
+        .from('instagram_posts_daily')
+        .select('taken_at')
+        .eq('username', norm)
+        .order('taken_at', { ascending: false })
+        .limit(1);
+      const iso = Array.isArray(lastRow) && lastRow[0]?.taken_at ? String((lastRow as any)[0].taken_at) : null;
+      if (iso) lastTakenAtMs = Date.parse(iso);
+    } catch {}
     const j = await rapidApiRequest<any>({
       url: `https://${IG_MEDIA_API}/media/shortcode_reels`,
       method: 'POST',
@@ -99,6 +111,7 @@ export async function GET(req: Request, context: any) {
         const seenIds = new Set<string>();
         let currentCursor: string | null = null;
         let pageNum = 0;
+        let stopEarly = false;
         let consecutiveSameCursor = 0;
         let lastCursor: string | null = null;
 
@@ -149,7 +162,7 @@ export async function GET(req: Request, context: any) {
           }
 
           const aggController = new AbortController();
-          const perPageTimeout = Math.min(30000, Math.max(2500, remaining - 1000));
+          const perPageTimeout = Math.min(50000, Math.max(2500, remaining - 1000));
           const aggTimeout = setTimeout(() => aggController.abort(), perPageTimeout);
           
           const aggResp = await fetch(aggUrl, { 
@@ -174,6 +187,7 @@ export async function GET(req: Request, context: any) {
           
           // Process reels from this page
           let newReelsCount = 0;
+          let olderCount = 0;
           for (const e of edges) {
             const node = e?.node || {};
             const media = node?.media || node;
@@ -194,6 +208,12 @@ export async function GET(req: Request, context: any) {
             if (!ms && code && linksMap.has(code)) ms = linksMap.get(code)!;
             // NO RAPIDAPI! If no timestamp, set NULL - backfill endpoint will fix it later
             const taken_at = ms ? new Date(ms).toISOString() : null; // NULL = backfill later!
+            // Incremental cut: if we already have this or older, count and consider early stop
+            if (lastTakenAtMs && ms && ms <= lastTakenAtMs) {
+              olderCount++;
+              // Skip insert for older content
+              continue;
+            }
             const caption = extractCaption(media, node);
             const play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0;
             const like = Number(media?.like_count ?? 0) || 0;
@@ -212,10 +232,10 @@ export async function GET(req: Request, context: any) {
             });
           }
           
-          console.log(`[IG Fetch] ✓ Page ${pageNum}: +${newReelsCount} new reels (total: ${allReels.length})`);
+          console.log(`[IG Fetch] ✓ Page ${pageNum}: +${newReelsCount} new reels (total: ${allReels.length}) (older=${olderCount})`);
           
           // Check for termination conditions
-          if (!hasNextPage || !nextCursor) {
+          if (!hasNextPage || !nextCursor || olderCount >= Math.max(10, Math.floor(pageSize/2))) {
             console.log(`[IG Fetch] ✅ Completed: No more pages (hasNextPage=${hasNextPage}, cursor=${nextCursor})`);
             break;
           }
