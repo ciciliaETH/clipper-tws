@@ -85,6 +85,9 @@ export default function AnalyticsPage() {
             const u = new URL(`/api/fetch-ig/${encodeURIComponent(a.username)}`, base);
             u.searchParams.set('create','1');
             u.searchParams.set('allow_username','0');
+            // Force window from 2026-01-01 to today for reliability
+            u.searchParams.set('start','2026-01-01');
+            u.searchParams.set('end', new Date().toISOString().slice(0,10));
             // Tighter window to avoid timeouts
             u.searchParams.set('max_pages','3');
             u.searchParams.set('page_size','20');

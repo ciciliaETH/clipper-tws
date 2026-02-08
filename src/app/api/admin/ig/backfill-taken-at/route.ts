@@ -71,11 +71,13 @@ export async function POST(req: Request) {
       batchCount++;
       
       // Get Instagram posts with NULL taken_at (need backfill)
+      // Only backfill posts from 2026-01-01 onwards (match refresh window)
       const { data: posts, error: fetchError } = await supa
         .from('instagram_posts_daily')
-        .select('id, code, username')
+        .select('id, code, username, post_date')
         .is('taken_at', null) // Only posts missing taken_at
         .not('code', 'is', null) // Must have shortcode
+        .gte('post_date', '2026-01-01') // Only recent posts
         .limit(limit);
 
       if (fetchError) {
@@ -185,7 +187,8 @@ export async function GET() {
       .from('instagram_posts_daily')
       .select('id', { count: 'exact', head: true })
       .is('taken_at', null)
-      .not('code', 'is', null);
+      .not('code', 'is', null)
+      .gte('post_date', '2026-01-01'); // Only recent posts
 
     if (error) {
       return NextResponse.json({
