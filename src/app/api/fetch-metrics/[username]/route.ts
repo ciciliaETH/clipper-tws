@@ -485,7 +485,8 @@ export async function GET(request: Request, context: any) {
 
   const normalized = primaryUsername.replace(/^@/, '').toLowerCase().replace(/\s+/g, '').trim();
   const urlObj = new URL(request.url);
-  const startParam = urlObj.searchParams.get('start');
+  // Default start to 2026-01-01 for consistent date window
+  const startParam = urlObj.searchParams.get('start') || '2026-01-01';
   const endParam = urlObj.searchParams.get('end');
   const pagesParam = urlObj.searchParams.get('pages');
   const cursorParam = urlObj.searchParams.get('cursor');

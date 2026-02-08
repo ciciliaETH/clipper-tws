@@ -85,6 +85,9 @@ export async function GET(req: Request, context: any) {
   const cleanup = String(url.searchParams.get('cleanup')||'');
   const debug = url.searchParams.get('debug') === '1';
   const allowUsernameFallback = (process.env.FETCH_IG_ALLOW_USERNAME_FALLBACK === '1') || (url.searchParams.get('allow_username') === '1');
+  // Date window: default start to 2026-01-01 for consistent refresh
+  const startParam = url.searchParams.get('start') || '2026-01-01';
+  const endParam = url.searchParams.get('end') || null;
   // Optional tuning via query params
   const qpMaxPages = Number(url.searchParams.get('max_pages') || '') || undefined;
   const qpPageSize = Number(url.searchParams.get('page_size') || '') || undefined;

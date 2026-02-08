@@ -45,9 +45,9 @@ async function fetchTakenAt(shortcode: string): Promise<number | null> {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const limit = Math.max(1, Math.min(200, Number(body?.limit || 100))); // Process 100 per batch, max 200
-    const delayMs = Math.max(200, Math.min(10000, Number(body?.delay_ms || 800))); // 800ms delay between requests
-    const timeoutMs = Math.min(55000, Number(body?.timeout_ms || 55000)); // Max 55s to stay under 60s Vercel limit
+    const limit = Math.max(1, Math.min(200, Number(body?.limit || 30))); // Process 30 per batch (smaller for reliability)
+    const delayMs = Math.max(200, Math.min(10000, Number(body?.delay_ms || 600))); // 600ms delay between requests
+    const timeoutMs = Math.min(57000, Number(body?.timeout_ms || 57000)); // Max 57s to stay under 60s Vercel limit
 
     const supa = adminClient();
     const startTime = Date.now();
