@@ -536,31 +536,26 @@ export async function GET(req: Request) {
         .gte('start_date', startISO!)
         .lt('start_date', historicalCutoffISOPostdate);
       
-      // Distribute weekly data across daily keys
+      // Distribute weekly data across weekly keys (assign ONCE per week)
       const distributeWeeklyPostdate = (rows: any[], platform: 'tiktok'|'instagram') => {
         for (const r of rows||[]) {
           const weekStart = String((r as any).start_date);
           const weekEnd = String((r as any).end_date);
-          // Weekly totals already aggregated per week
-          
-          for (const k of keys) {
-            if (k >= weekStart && k <= weekEnd) {
-              const platformKey = platform;
-              if (!historicalMapPostdate.has(platformKey)) historicalMapPostdate.set(platformKey, new Map());
-              const map = historicalMapPostdate.get(platformKey)!;
-              const cur = map.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-              
-              // Assign full weekly totals into weekly bucket key
-              cur.views += Number((r as any).views)||0;
-              cur.likes += Number((r as any).likes)||0;
-              cur.comments += Number((r as any).comments)||0;
-              if (platform === 'tiktok') {
-                cur.shares += Number((r as any).shares)||0;
-                cur.saves += Number((r as any).saves)||0;
-              }
-              map.set(k, cur);
-            }
+          // Find the first weekly key falling inside this historical week
+          const targetKey = keys.find(k => k >= weekStart && k <= weekEnd);
+          if (!targetKey) continue;
+          const platformKey = platform;
+          if (!historicalMapPostdate.has(platformKey)) historicalMapPostdate.set(platformKey, new Map());
+          const map = historicalMapPostdate.get(platformKey)!;
+          const cur = map.get(targetKey) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+          cur.views += Number((r as any).views)||0;
+          cur.likes += Number((r as any).likes)||0;
+          cur.comments += Number((r as any).comments)||0;
+          if (platform === 'tiktok') {
+            cur.shares += Number((r as any).shares)||0;
+            cur.saves += Number((r as any).saves)||0;
           }
+          map.set(targetKey, cur);
         }
       };
       
@@ -625,37 +620,32 @@ export async function GET(req: Request) {
       const igHandles = await deriveIGUsernamesForCampaign(supa, camp.id);
       const igMap = await aggInstagramSeries(igHandles, startISO!, endISO!, interval);
 
-      // zero-fill per date key and merge TT + IG + Historical
+      // zero-fill per date key and MERGE ONLY REALTIME per campaign (historical will be added once globally)
       const series = keys.map(k => {
         const rawTT = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
         const rawIG = igMap.get(k) || { views:0, likes:0, comments:0 };
         // Hide realtime before cutoff
         const tt = (k >= historicalCutoffISOPostdate) ? rawTT : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
         const ig = (k >= historicalCutoffISOPostdate) ? rawIG : { views:0, likes:0, comments:0 };
-        // Add historical data for dates < 2026-01-23
-        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
-        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
         return {
           date: k,
-          views: tt.views + ig.views + histTT.views + histIG.views,
-          likes: tt.likes + ig.likes + histTT.likes + histIG.likes,
-          comments: tt.comments + ig.comments + histTT.comments + histIG.comments,
-          shares: tt.shares + histTT.shares,
-          saves: tt.saves + histTT.saves,
+          views: tt.views + ig.views,
+          likes: tt.likes + ig.likes,
+          comments: tt.comments + ig.comments,
+          shares: tt.shares,
+          saves: tt.saves,
         };
       });
       // Platform-separated series for this campaign (for consistent UI legends)
       const series_tiktok = keys.map(k => {
         const base = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
         const tt = (k >= historicalCutoffISOPostdate) ? base : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
-        return { date: k, views: tt.views + histTT.views, likes: tt.likes + histTT.likes, comments: tt.comments + histTT.comments, shares: tt.shares + histTT.shares, saves: tt.saves + histTT.saves };
+        return { date: k, views: tt.views, likes: tt.likes, comments: tt.comments, shares: tt.shares, saves: tt.saves };
       });
       const series_instagram = keys.map(k => {
         const base = igMap.get(k) || { views:0, likes:0, comments:0 };
         const ig = (k >= historicalCutoffISOPostdate) ? base : { views:0, likes:0, comments:0 };
-        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
-        return { date: k, views: ig.views + histIG.views, likes: ig.likes + histIG.likes, comments: ig.comments + histIG.comments } as any;
+        return { date: k, views: ig.views, likes: ig.likes, comments: ig.comments } as any;
       });
 
       groups.push({ id: camp.id, name: camp.name || camp.id, series, series_tiktok, series_instagram });
@@ -664,24 +654,41 @@ export async function GET(req: Request) {
         cur.views += s.views; cur.likes += s.likes; cur.comments += s.comments; cur.shares += s.shares; cur.saves += s.saves;
         totalMap.set(s.date, cur);
       }
-      // accumulate platform-separated totals (include historical)
+      // accumulate platform-separated totals (realtime only here; historical will be added once globally below)
       for (const k of keys) {
         const baseTT = ttMap.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
         const baseIG = igMap.get(k) || { views:0, likes:0, comments:0 };
         const tt = (k >= historicalCutoffISOPostdate) ? baseTT : { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
         const ig = (k >= historicalCutoffISOPostdate) ? baseIG : { views:0, likes:0, comments:0 };
-        const histTT = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
-        const histIG = k < historicalCutoffISOPostdate ? (historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 }) : { views:0, likes:0, comments:0, shares:0, saves:0 };
         const ttCur = totalTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-        ttCur.views += tt.views + histTT.views; ttCur.likes += tt.likes + histTT.likes; ttCur.comments += tt.comments + histTT.comments; ttCur.shares += tt.shares + histTT.shares; ttCur.saves += tt.saves + histTT.saves;
+        ttCur.views += tt.views; ttCur.likes += tt.likes; ttCur.comments += tt.comments; ttCur.shares += tt.shares; ttCur.saves += tt.saves;
         totalTTMap.set(k, ttCur);
         const igCur = totalIGMap.get(k) || { views:0, likes:0, comments:0 };
-        igCur.views += ig.views + histIG.views; igCur.likes += ig.likes + histIG.likes; igCur.comments += ig.comments + histIG.comments;
+        igCur.views += ig.views; igCur.likes += ig.likes; igCur.comments += ig.comments;
         totalIGMap.set(k, igCur);
       }
     }
 
     // Build total series with zero-fill to ensure full range
+    // After processing all groups, add historical ONCE globally to totals
+    for (const k of keys) {
+      const histTT = historicalMapPostdate.get('tiktok')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+      const histIG = historicalMapPostdate.get('instagram')?.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+      const base = totalMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+      base.views += (histTT.views||0) + (histIG.views||0);
+      base.likes += (histTT.likes||0) + (histIG.likes||0);
+      base.comments += (histTT.comments||0) + (histIG.comments||0);
+      base.shares += (histTT.shares||0);
+      base.saves += (histTT.saves||0);
+      totalMap.set(k, base);
+      const ttv = totalTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+      ttv.views += histTT.views||0; ttv.likes += histTT.likes||0; ttv.comments += histTT.comments||0; ttv.shares += histTT.shares||0; ttv.saves += histTT.saves||0;
+      totalTTMap.set(k, ttv);
+      const igv = totalIGMap.get(k) || { views:0, likes:0, comments:0 };
+      igv.views += histIG.views||0; igv.likes += histIG.likes||0; igv.comments += histIG.comments||0;
+      totalIGMap.set(k, igv);
+    }
+
     const totalFilled = keys.map(k => {
       const v = totalMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
       return { date: k, ...v };

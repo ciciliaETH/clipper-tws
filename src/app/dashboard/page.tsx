@@ -21,14 +21,15 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 export default function DashboardTotalPage() {
   const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('weekly');
   const [metric, setMetric] = useState<'views'|'likes'|'comments'>('views');
-  const [start, setStart] = useState<string>(()=>{ const d=new Date(); const s=new Date(); s.setDate(d.getDate()-30); return s.toISOString().slice(0,10)});
+  // Default start: 2026-01-02 to include all realtime (>= 2026-01-23) plus allow backend to merge historical automatically
+  const [start, setStart] = useState<string>('2026-01-02');
   const [end, setEnd] = useState<string>(()=> new Date().toISOString().slice(0,10));
   const [mode, setMode] = useState<'postdate'|'accrual'>('postdate');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
   const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(true); // Changed to true
   const [accrualCustomStart, setAccrualCustomStart] = useState<string>(() => {
-    // Default to Jan 2, 2026 to show recent historical + realtime data
-    return '2026-01-02';
+    // Default to start of August 2025 to show historical data
+    return '2025-08-02';
   });
   const [accrualCustomEnd, setAccrualCustomEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [weeklyView, setWeeklyView] = useState<boolean>(true); // Changed to true
@@ -296,8 +297,8 @@ export default function DashboardTotalPage() {
           }
         }
       } else {
-        // Post date: gunakan endpoint groups/series bawaan
-        const url = new URL('/api/groups/series', window.location.origin);
+        // Post date: gunakan endpoint dashboard/series (alias-aware, historical + realtime)
+        const url = new URL('/api/dashboard/series', window.location.origin);
         url.searchParams.set('start', effStart);
         url.searchParams.set('end', effEnd);
         url.searchParams.set('interval', 'weekly');
@@ -305,20 +306,6 @@ export default function DashboardTotalPage() {
         url.searchParams.set('cutoff', accrualCutoff);
         const res = await fetch(url.toString(), { cache: 'no-store' });
         json = await res.json();
-        
-        // Also load historical data for postdate mode if using custom dates
-        const HISTORICAL_DATA_CUTOFF = '2026-01-23';
-        const HISTORICAL_LAST_DAY = '2026-01-22';
-        if (effStart <= HISTORICAL_LAST_DAY) {
-          console.log('[POSTDATE] Loading historical data from weekly_historical_data...');
-          const histEndISO = (effEnd <= HISTORICAL_LAST_DAY ? effEnd : HISTORICAL_LAST_DAY);
-          const histRes = await fetch(`/api/admin/weekly-historical?start=${effStart}&end=${histEndISO}`, { cache: 'no-store' });
-          if (histRes.ok) {
-            const histData = await histRes.json();
-            setHistoricalData(histData?.data || histData || []);
-            console.log('[POSTDATE] Historical data loaded:', (histData?.data || histData || []).length, 'weeks');
-          }
-        }
       }
       // Ensure platform arrays exist (older API responses might miss them)
       try {
@@ -1290,60 +1277,26 @@ export default function DashboardTotalPage() {
   const chartRef = useRef<any>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   
-  // Calculate grand totals from realtime + historical data
+  // Calculate grand totals strictly from current masked server totals
+  // NOTE: Historical data is already merged into data.total/data.total_tiktok/data.total_instagram
+  // at load time (see lines 291-293), so we DON'T add historicalData again here (no double counting)
   const grandTotals = useMemo(() => {
     if (!data) return { views: 0, likes: 0, comments: 0 };
-    // Base = sum from realtime series (data.total/total_tiktok/total_instagram)
+    // Sum from currently selected platform series (already includes merged historical data)
     const sumArr = (arr:any[] = []) => arr.reduce((a:any,s:any)=>({
       views: (a.views||0) + Number(s.views||0),
       likes: (a.likes||0) + Number(s.likes||0),
       comments: (a.comments||0) + Number(s.comments||0)
     }), { views:0, likes:0, comments:0 });
     
-    let base = { views: 0, likes: 0, comments: 0 };
     if (platformFilter === 'tiktok' && Array.isArray(data.total_tiktok)) {
-      base = sumArr(data.total_tiktok);
+      return sumArr(data.total_tiktok);
     } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram)) {
-      base = sumArr(data.total_instagram);
+      return sumArr(data.total_instagram);
     } else {
-      base = sumArr(data.total || []);
+      return sumArr(data.total || []);
     }
-    
-    // Always add historical data when available
-    if (showHistorical && historicalData.length) {
-      const rs = new Date(accrualCustomStart + 'T00:00:00Z');
-      const re = new Date(accrualCustomEnd + 'T23:59:59Z');
-      let hv = 0, hl = 0, hc = 0;
-      
-      for (const h of historicalData) {
-        const hs = new Date(String(h.start_date).slice(0, 10) + 'T00:00:00Z');
-        const he = new Date(String(h.end_date).slice(0, 10) + 'T23:59:59Z');
-        
-        // Check if historical period overlaps with selected range
-        if (!(he < rs || hs > re)) {
-          // Sum based on platform filter
-          if (platformFilter === 'tiktok') {
-            hv += (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.views || 0) : 0;
-            hl += (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.likes || 0) : 0;
-            hc += (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.comments || 0) : 0;
-          } else if (platformFilter === 'instagram') {
-            hv += (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.views || 0) : 0;
-            hl += (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.likes || 0) : 0;
-            hc += (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.comments || 0) : 0;
-          } else {
-            // 'all' platform - use total
-            hv += Number(h.views || 0);
-            hl += Number(h.likes || 0);
-            hc += Number(h.comments || 0);
-          }
-        }
-      }
-      
-      return { views: base.views + hv, likes: base.likes + hl, comments: base.comments + hc };
-    }
-    
-    return base;
-  }, [data, platformFilter, showHistorical, historicalData, accrualCustomStart, accrualCustomEnd]);
+  }, [data, platformFilter]);
   
   const crosshairPlugin = useMemo(()=>({
     id: 'crosshairPlugin',
