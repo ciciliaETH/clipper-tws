@@ -1304,9 +1304,29 @@ export default function DashboardTotalPage() {
         const he = new Date(String(h.end_date).slice(0,10) + 'T23:59:59Z');
         // Overlap check
         if (!(he < rs || hs > re)) {
-          hv += Number(h.views)||0;
-          hl += Number(h.likes)||0;
-          hc += Number(h.comments)||0;
+          // Filter by platform
+          if (platformFilter === 'tiktok') {
+            // Only TikTok data from historical
+            const ttViews = (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.views || 0) : 0;
+            const ttLikes = (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.likes || 0) : 0;
+            const ttComments = (h.tiktok && typeof h.tiktok === 'object') ? Number(h.tiktok.comments || 0) : 0;
+            hv += ttViews;
+            hl += ttLikes;
+            hc += ttComments;
+          } else if (platformFilter === 'instagram') {
+            // Only Instagram data from historical
+            const igViews = (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.views || 0) : 0;
+            const igLikes = (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.likes || 0) : 0;
+            const igComments = (h.instagram && typeof h.instagram === 'object') ? Number(h.instagram.comments || 0) : 0;
+            hv += igViews;
+            hl += igLikes;
+            hc += igComments;
+          } else {
+            // 'all' - use total values
+            hv += Number(h.views)||0;
+            hl += Number(h.likes)||0;
+            hc += Number(h.comments)||0;
+          }
         }
       }
       return { views: base.views + hv, likes: base.likes + hl, comments: base.comments + hc };
