@@ -88,13 +88,39 @@ export async function GET(req: Request) {
       .select('id, full_name, username, tiktok_username, instagram_username')
       .in('id', employeeIds)
     
+    // Fetch aliases for comprehensive lookup
+    const { data: ttAliases } = await supabase
+      .from('user_tiktok_usernames')
+      .select('user_id, tiktok_username')
+      .in('user_id', employeeIds);
+
+    const { data: igAliases } = await supabase
+      .from('user_instagram_usernames')
+      .select('user_id, instagram_username')
+      .in('user_id', employeeIds);
+    
     const userMap = new Map<string, any>()
     for (const u of users || []) {
       userMap.set(u.id, {
         name: u.full_name || u.username || u.tiktok_username || u.instagram_username || u.id,
-        tiktok_username: u.tiktok_username,
-        instagram_username: u.instagram_username
       })
+    }
+
+    // Build Reverse Maps: username -> user_id
+    const ttUserToId = new Map<string, string>();
+    const igUserToId = new Map<string, string>();
+    
+    // Populate from users table (current)
+    for(const u of users || []) {
+        if(u.tiktok_username) ttUserToId.set(u.tiktok_username.toLowerCase().replace(/^@+/,''), u.id);
+        if(u.instagram_username) igUserToId.set(u.instagram_username.toLowerCase().replace(/^@+/,''), u.id);
+    }
+    // Populate from aliases
+    for(const a of ttAliases || []) {
+        if(a.tiktok_username) ttUserToId.set(a.tiktok_username.toLowerCase().replace(/^@+/,''), a.user_id);
+    }
+    for(const a of igAliases || []) {
+        if(a.instagram_username) igUserToId.set(a.instagram_username.toLowerCase().replace(/^@+/,''), a.user_id);
     }
 
     const videos: any[] = []
@@ -102,12 +128,7 @@ export async function GET(req: Request) {
     // === TIKTOK VIDEOS ===
     if (platform === 'all' || platform === 'tiktok') {
       // Get TikTok usernames for employees
-      const tiktokUsernames = Array.from(new Set(
-        (users || [])
-          .map((u: any) => u.tiktok_username)
-          .filter(Boolean)
-          .map((u: string) => u.toLowerCase().replace(/^@+/, ''))
-      ))
+      const tiktokUsernames = Array.from(ttUserToId.keys());
 
       console.log(`[Top Videos] TikTok: ${tiktokUsernames.length} usernames to query: ${tiktokUsernames.slice(0, 5).join(', ')}${tiktokUsernames.length > 5 ? '...' : ''}`)
       
@@ -169,12 +190,12 @@ export async function GET(req: Request) {
           // Find owner user
           let ownerName = last.username
           let ownerId = null
-          for (const [uid, info] of userMap.entries()) {
-            if (info.tiktok_username?.toLowerCase().replace(/^@+/, '') === last.username.toLowerCase()) {
-              ownerName = info.name
-              ownerId = uid
-              break
-            }
+          const normalized = last.username.toLowerCase().replace(/^@+/,'');
+          if (ttUserToId.has(normalized)) {
+             ownerId = ttUserToId.get(normalized);
+             if (ownerId && userMap.has(ownerId)) {
+                ownerName = userMap.get(ownerId).name;
+             }
           }
 
           // taken_at returned to client uses actual upload date computed above
@@ -204,25 +225,7 @@ export async function GET(req: Request) {
     // === INSTAGRAM VIDEOS ===
     if (platform === 'all' || platform === 'instagram') {
       // Get Instagram usernames for employees
-      const instagramUsernames = Array.from(new Set(
-        (users || [])
-          .map((u: any) => u.instagram_username)
-          .filter(Boolean)
-          .map((u: string) => u.toLowerCase().replace(/^@+/, ''))
-      ))
-
-      // Also get from employee_instagram_participants
-      const { data: igParticipants } = await supabase
-        .from('employee_instagram_participants')
-        .select('instagram_username')
-        .in('employee_id', employeeIds)
-      
-      for (const p of igParticipants || []) {
-        if (p.instagram_username) {
-          instagramUsernames.push(p.instagram_username.toLowerCase().replace(/^@+/, ''))
-        }
-      }
-      const uniqueIgUsernames = Array.from(new Set(instagramUsernames))
+      const uniqueIgUsernames = Array.from(igUserToId.keys());
 
       console.log(`[Top Videos] Instagram: ${uniqueIgUsernames.length} usernames to query: ${uniqueIgUsernames.slice(0, 5).join(', ')}${uniqueIgUsernames.length > 5 ? '...' : ''}`)
 
@@ -280,12 +283,12 @@ export async function GET(req: Request) {
           // Find owner user
           let ownerName = last.username
           let ownerId = null
-          for (const [uid, info] of userMap.entries()) {
-            if (info.instagram_username?.toLowerCase().replace(/^@+/, '') === last.username.toLowerCase()) {
-              ownerName = info.name
-              ownerId = uid
-              break
-            }
+          const normalized = last.username.toLowerCase().replace(/^@+/,'');
+          if (igUserToId.has(normalized)) {
+             ownerId = igUserToId.get(normalized);
+             if (ownerId && userMap.has(ownerId)) {
+                ownerName = userMap.get(ownerId).name;
+             }
           }
 
           videos.push({
