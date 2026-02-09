@@ -1,0 +1,181 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeft, ExternalLink } from 'lucide-react'
+
+export default function ParticipantVideosPage() {
+  const params = useParams()
+  // @ts-ignore
+  const { id: groupId, username } = params 
+  const router = useRouter()
+  
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string|null>(null)
+  
+  // Date filter state
+  const [dateRange, setDateRange] = useState<{start: string, end: string}>({
+    start: '',
+    end: ''
+  })
+
+  // Initialize dates: Current month by default or up to user preference? 
+  // User asked for "custom mau liat tanggal berapa aja" so let's default to empty (all time) or maybe last 30 days?
+  // Let's stick to empty (All Time) initially to show everything, or maybe last 30 days is safer for loading.
+  // Actually, let's default to "All Time" (empty strings) but provide the inputs.
+
+  useEffect(() => {
+    if(!groupId || !username) return
+    
+    setLoading(true)
+    const decodedUsername = decodeURIComponent(username as string);
+    const url = new URL(`/api/groups/${groupId}/participant/${username}/videos`, window.location.origin)
+    if (dateRange.start) url.searchParams.set('start', dateRange.start)
+    if (dateRange.end) url.searchParams.set('end', dateRange.end)
+
+    fetch(url.toString())
+      .then(res => res.json())
+      .then(json => {
+         if(json.error) throw new Error(json.error)
+         setData(json)
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [groupId, username, dateRange]) // Trigger on dateRange change
+
+  const format = (n: number) => new Intl.NumberFormat('id-ID').format(n)
+
+  // Calculate totals for filtered view
+  const totals = data?.videos?.reduce((acc:any, cur:any) => ({
+      views: acc.views + (cur.views||0),
+      likes: acc.likes + (cur.likes||0),
+      comments: acc.comments + (cur.comments||0),
+      shares: acc.shares + (cur.shares||0),
+  }), { views:0, likes:0, comments:0, shares:0 }) || { views:0, likes:0, comments:0, shares:0 };
+
+
+  if (loading) return (
+      <div className="min-h-screen p-8 flex items-center justify-center">
+          <div className="text-white/60 animate-pulse">Memuat data video {username}...</div>
+      </div>
+  )
+  if (error) return (
+      <div className="min-h-screen p-8">
+           <div className="p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-200">
+               Error: {error}
+           </div>
+           <button onClick={() => router.back()} className="mt-4 text-white/60 hover:text-white flex items-center gap-2">
+               <ArrowLeft className="w-4 h-4" /> Kembali
+           </button>
+      </div>
+  )
+  if (!data) return null;
+
+  return (
+    <div className="min-h-screen p-4 md:p-8">
+      <div className="mb-8">
+        <button onClick={() => router.back()} className="flex items-center gap-2 text-white/60 hover:text-white mb-4 transition-colors">
+          <ArrowLeft className="w-4 h-4" /> Kembali ke Leaderboard
+        </button>
+        
+        <div className="glass p-6 rounded-2xl border border-white/10 flex flex-col md:flex-row justify-between items-end md:items-center gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-2">
+              {data.fullName || decodeURIComponent(username as string)}
+              </h1>
+              <div className="flex flex-wrap gap-4 text-sm text-white/60">
+                  <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                      Videos: <span className="text-white font-medium">{data.count}</span>
+                  </div>
+                  <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                      Total Views: <span className="text-white font-medium">{format(totals.views)}</span>
+                  </div>
+                  {data.userId && (
+                      <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 opacity-60">
+                          ID: {data.userId.slice(0,8)}...
+                      </div>
+                  )}
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 bg-white/5 p-2 rounded-xl border border-white/10">
+              <div>
+                <label className="text-[10px] text-white/40 uppercase font-bold tracking-wider ml-1 mb-1 block">Dari Tanggal</label>
+                <input 
+                  type="date" 
+                  value={dateRange.start}
+                  onChange={(e) => setDateRange(prev => ({...prev, start: e.target.value}))}
+                  className="bg-black/20 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 uppercase font-bold tracking-wider ml-1 mb-1 block">Sampai Tanggal</label>
+                <input 
+                  type="date" 
+                  value={dateRange.end}
+                  onChange={(e) => setDateRange(prev => ({...prev, end: e.target.value}))}
+                  className="bg-black/20 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+              <div className="flex items-end">
+                 <button 
+                   onClick={() => setDateRange({start: '', end: ''})}
+                   className="px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 hover:text-white transition-colors h-[34px]"
+                   title="Reset Filter"
+                 >
+                   Reset
+                 </button>
+              </div>
+            </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {data.videos.map((v: any, i:number) => (
+          <div key={`${v.platform}-${v.id}-${i}`} className="glass p-4 rounded-xl border border-white/10 hover:border-white/30 transition-all hover:-translate-y-1">
+            <div className="flex justify-between items-start mb-3">
+               <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${v.platform==='tiktok' ? 'bg-black text-white border border-white/20' : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'}`}>
+                 {v.platform}
+               </span>
+               <span className="text-xs text-white/40 font-mono">
+                   {v.taken_at ? new Date(v.taken_at).toLocaleDateString('id-ID', {day:'numeric', month:'short', year:'2-digit'}) : '-'}
+               </span>
+            </div>
+            
+            <a href={v.link} target="_blank" rel="noopener noreferrer" className="block mb-4 group">
+               <div className="text-white/90 font-medium line-clamp-2 min-h-[2.5rem] text-sm group-hover:text-blue-400 transition-colors" title={v.title || v.caption}>
+                  {v.title || v.caption || '(No description)'}
+               </div>
+               <div className="mt-2 text-xs text-blue-400/80 group-hover:text-blue-400 flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> Buka di {v.platform === 'tiktok' ? 'TikTok' : 'Instagram'}
+               </div>
+            </a>
+            
+            <div className="grid grid-cols-3 gap-2 text-center text-sm border-t border-white/10 pt-3 bg-white/[0.02] rounded-lg pb-1 -mx-2 px-2">
+               <div className="flex flex-col">
+                 <span className="text-white font-semibold">{format(v.views)}</span>
+                 <span className="text-white/40 text-[10px] uppercase tracking-wider">Views</span>
+               </div>
+               <div className="flex flex-col">
+                 <span className="text-white font-semibold">{format(v.likes)}</span>
+                 <span className="text-white/40 text-[10px] uppercase tracking-wider">Likes</span>
+               </div>
+                <div className="flex flex-col">
+                 <span className="text-white font-semibold">{format(v.comments)}</span>
+                 <span className="text-white/40 text-[10px] uppercase tracking-wider">Comms</span>
+               </div>
+            </div>
+          </div>
+        ))}
+        {data.videos.length === 0 && (
+           <div className="col-span-full flex flex-col items-center justify-center py-20 text-white/40 glass rounded-2xl border border-white/5">
+              <div className="text-lg">Tidak ada video ditemukan</div>
+              <div className="text-sm mt-2 opacity-60">Pastikan username benar atau data telah tersinkronisasi.</div>
+           </div>
+        )}
+      </div>
+    </div>
+  )
+}

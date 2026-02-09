@@ -318,15 +318,8 @@ export async function GET(req: Request, context: any) {
           });
         }
       } catch (aggErr: any) {
-        console.error(`[IG Fetch] ✗ Aggregator error (NO RAPIDAPI FALLBACK):`, aggErr.message);
-        // NO RAPIDAPI FALLBACK! Return error
-        return NextResponse.json({
-          error: 'Aggregator failed',
-          source: 'aggregator',
-          message: aggErr.message,
-          username: norm,
-          success: false
-        }, { status: 500 });
+        // Fallback to RapidAPI instead of failing
+        console.warn(`[IG Fetch] ⚠️ Aggregator error, falling back to RapidAPI:`, aggErr.message);
       }
     }
 

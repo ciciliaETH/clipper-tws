@@ -85,6 +85,8 @@ export async function GET(req: Request, context: any) {
       .select('employee_id')
       .eq('campaign_id', id);
     const employeeRows: any[] = employees || [];
+    // const headMap = new Map<string, boolean>();
+    // employeeRows.forEach(e => headMap.set(e.employee_id, !!e.is_head));
     
     // Preload all assignments for this campaign (TikTok)
     const { data: allAssign } = await supabase
@@ -118,7 +120,7 @@ export async function GET(req: Request, context: any) {
     const results: any[] = [];
     const assignmentByUsername: Record<string, { employee_id: string, name: string }> = {};
     const empIds = employeeRows.map(e => e.employee_id);
-    const { data: usersMeta } = await supabase.from('users').select('id, email, full_name, tiktok_username, instagram_username, profile_picture_url').in('id', empIds);
+    const { data: usersMeta } = await supabase.from('users').select('id, email, full_name, tiktok_username, instagram_username, profile_picture_url, role').in('id', empIds);
     const metaMap = new Map<string, any>();
     for (const u of usersMeta || []) metaMap.set(u.id, u);
 
@@ -669,6 +671,8 @@ export async function GET(req: Request, context: any) {
         name: user.full_name || user.email || user.tiktok_username, 
         tiktok_username: user.tiktok_username, 
         profile_picture_url: user.profile_picture_url || null,
+        is_head: user.role === 'leader',
+        role: user.role,
         accounts: displayTT, 
         accounts_ig: displayIG, 
         totals 
@@ -843,6 +847,34 @@ export async function DELETE(req: Request, context: any) {
         .eq('campaign_id', id)
         .eq('employee_id', employee_id);
       if (e2) throw e2;
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (e:any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// PATCH: update employee's status in group (e.g. is_head)
+export async function PATCH(req: Request, context: any) {
+  try {
+    const isAdmin = await ensureAdmin();
+    if (!isAdmin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const supabase = adminClient();
+    const { id } = await context.params as { id: string }; // campaign id
+    const body = await req.json().catch(()=>({}));
+    const { employee_id, is_head } = body || {};
+
+    if (!employee_id) return NextResponse.json({ error: 'employee_id required' }, { status: 400 });
+
+    if (typeof is_head !== 'undefined') {
+      const { error } = await supabase
+        .from('employee_groups')
+        .update({ is_head })
+        .eq('campaign_id', id)
+        .eq('employee_id', employee_id);
+      if (error) throw error;
     }
 
     return NextResponse.json({ success: true });

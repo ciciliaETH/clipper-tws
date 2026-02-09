@@ -104,12 +104,12 @@ async function refreshHandler(req: Request) {
   // GUARANTEED ZERO RATE LIMITS: 5 seconds delay (5x slower than limit)
   // Pro plan: 1 req/sec, with 5s delay = safe with faster processing
   const delayMs = Math.max(0, Math.min(30000, Number(body?.delay_ms || 2000))); // Default 2 seconds (FASTER)
-  const limit = Math.max(1, Math.min(10000, Number(body?.limit || 1000)));
+  const limit = Math.max(1, Math.min(10000, Number(body?.limit || 2000)));
   const onlyWithUserId = body?.only_with_user_id === true; // default FALSE - fetch all usernames
   const accountsPerBatch = 1; // Process 1 account per batch (FIT within 60s Vercel limit!)
   const autoContinue = body?.auto_continue === true; // default FALSE - manual batch to prevent timeout
   const offset = Math.max(0, Number(body?.offset || 0)); // Track which batch we're on
-  const fetchTimeout = 20000; // 20s timeout (max 2 attempts = 20s + 5s + 20s = 45s < 60s Vercel limit)
+  const fetchTimeout = 25000; // 25s timeout (single attempt only now)
   
   // Get base URL for fetch-ig endpoint
   const protocol = req.headers.get('x-forwarded-proto') || 'http';
@@ -170,7 +170,7 @@ async function refreshHandler(req: Request) {
     ...((userMap||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
     ...((campParticipants.data||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
     ...((empParticipants.data||[]).map((r: any) => String(r.instagram_username || '').trim().replace(/^@/, '').toLowerCase())),
-  ].filter(Boolean)));
+  ].filter(Boolean))).sort(); // Explicitly sort to ensure consistent order across paginated requests
   
   console.log(`[Instagram Refresh] Found ${allUsernames.length} unique Instagram usernames across all sources`);
   
@@ -220,7 +220,7 @@ async function refreshHandler(req: Request) {
   
   let totalSuccess = 0;
   let totalFailed = 0;
-  const maxRetries = 1; // Retry 1x only (fit within 60s Vercel timeout)
+  const maxRetries = 0; // Disable retries to prevent Vercel 60s timeout (rely on persistent queue)
   const failedAccountsQueue: string[] = []; // Track failed accounts to retry in next batch
   
   // CRITICAL: ALWAYS process ONLY 1 batch per request to avoid timeout

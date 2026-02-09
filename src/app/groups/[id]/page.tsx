@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 
 type Participant = { id: string; tiktok_username: string; created_at: string }
-type Row = { username: string; followers: number; views: number; likes: number; comments: number; shares: number; saves: number; posts: number; total: number; last_refreshed?: string }
+type Row = { username: string; isHead?: boolean; role?: string; followers: number; views: number; likes: number; comments: number; shares: number; saves: number; posts: number; total: number; last_refreshed?: string }
 
 export default function GroupDetailPage() {
   const params = useParams<{ id: string }>()
@@ -166,7 +167,23 @@ export default function GroupDetailPage() {
                 leaderboard.map((r, i) => (
                   <tr key={r.username} className="border-t border-white/10 hover:bg-white/5">
                     <td className="py-2 px-4 text-white/60">{i+1}</td>
-                    <td className="py-2 px-4 text-white/90">@{r.username}</td>
+                    <td className="py-2 px-4 text-white/90">
+                      <div className="flex items-center gap-2">
+                        <Link href={`/groups/${id}/participant/${r.username}`} className="hover:text-blue-400 hover:underline">
+                          @{r.username}
+                        </Link>
+                        {(r.isHead || r.role === 'leader') && (
+                          <span className="px-1.5 py-0.5 rounded flex items-center bg-purple-500/20 border border-purple-500/40 text-[10px] text-purple-300 font-bold uppercase tracking-wider">
+                            Head
+                          </span>
+                        )}
+                        {r.role === 'admin' && (
+                          <span className="px-1.5 py-0.5 rounded flex items-center bg-red-500/20 border border-red-500/40 text-[10px] text-red-300 font-bold uppercase tracking-wider">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-2 px-4 text-white/80">{format(r.followers)}</td>
                     <td className="py-2 px-4 text-white/80">{format(r.views)}</td>
                     <td className="py-2 px-4 text-white/80">{format(r.likes)}</td>

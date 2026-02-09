@@ -52,31 +52,71 @@ export async function GET(req: Request) {
     }
 
     // Legacy campaigns act as groups
+    let campaigns: any[] = []
     if (role && (role === 'admin' || role === 'super_admin')) {
       const { data, error } = await supabaseAdmin
         .from('campaigns')
         .select('*')
         .order('created_at', { ascending: false })
       if (error) throw error
-      return NextResponse.json(data)
+      campaigns = data || []
+    } else if (userId) {
+      // Non-admin: return only campaigns the user is assigned to via employee_groups
+      const { data: eg, error: egErr } = await supabaseAdmin
+        .from('employee_groups')
+        .select('campaign_id')
+        .eq('employee_id', userId)
+      if (egErr) throw egErr
+      const ids = Array.from(new Set((eg || []).map((x: any) => x.campaign_id)))
+      if (ids.length === 0) return NextResponse.json([])
+      const { data, error } = await supabaseAdmin
+        .from('campaigns')
+        .select('*')
+        .in('id', ids)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      campaigns = data || []
+    } else {
+       return NextResponse.json([], { status: 200 })
     }
 
-    // Non-admin: return only campaigns the user is assigned to via employee_groups
-    if (!userId) return NextResponse.json([], { status: 200 })
-    const { data: eg, error: egErr } = await supabaseAdmin
-      .from('employee_groups')
-      .select('campaign_id')
-      .eq('employee_id', userId)
-    if (egErr) throw egErr
-    const ids = Array.from(new Set((eg || []).map((x: any) => x.campaign_id)))
-    if (ids.length === 0) return NextResponse.json([])
-    const { data, error } = await supabaseAdmin
-      .from('campaigns')
-      .select('*')
-      .in('id', ids)
-      .order('created_at', { ascending: false })
-    if (error) throw error
-    return NextResponse.json(data)
+    // Attach Head info
+    if (campaigns.length > 0) {
+       const cIds = campaigns.map(c => c.id);
+       const { data: heads } = await supabaseAdmin
+         .from('employee_groups')
+         .select('campaign_id, employee_id, is_head')
+         .in('campaign_id', cIds)
+         .eq('is_head', true);
+       
+       if (heads && heads.length > 0) {
+          const eIds = heads.map(h => h.employee_id);
+          const { data: users } = await supabaseAdmin
+            .from('users')
+            .select('id, full_name, username')
+            .in('id', eIds);
+            
+          const userMap = new Map<string, string>();
+          users?.forEach(u => userMap.set(u.id, u.full_name || u.username || 'Unknown'));
+          
+          const headMap = new Map<string, string[]>();
+          heads.forEach(h => {
+             const name = userMap.get(h.employee_id);
+             if (name) {
+                const list = headMap.get(h.campaign_id) || [];
+                list.push(name);
+                headMap.set(h.campaign_id, list);
+             }
+          });
+          
+          campaigns = campaigns.map(c => ({
+             ...c,
+             heads: headMap.get(c.id) || []
+          }));
+       }
+    }
+    
+    return NextResponse.json(campaigns)
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }

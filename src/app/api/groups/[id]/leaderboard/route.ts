@@ -38,23 +38,77 @@ export async function GET(req: Request, context: any) {
     const url = new URL(req.url)
     const top = Math.max(1, Math.min(100, Number(url.searchParams.get('top')) || 20))
     const supabaseAdmin = adminClient()
+
+    // Fetch Heads (is_head=true) for this group - REMOVED strictly to use Global Users Role
+    /*
+    const { data: heads } = await supabaseAdmin
+      .from('employee_groups')
+      .select('employee_id')
+      .eq('campaign_id', id)
+      .eq('is_head', true);
+      
+    const headUsernames = new Set<string>();
+    if (heads && heads.length > 0) {
+       const userIds = heads.map(h => h.employee_id);
+       // Get usernames from users table
+       const { data: u1 } = await supabaseAdmin.from('users').select('tiktok_username').in('id', userIds);
+       u1?.forEach(u => u.tiktok_username && headUsernames.add(u.tiktok_username.toLowerCase().replace(/^@/,'')));
+       
+       // Get usernames from aliases
+       const { data: u2 } = await supabaseAdmin.from('user_tiktok_usernames').select('tiktok_username').in('user_id', userIds);
+       u2?.forEach(u => u.tiktok_username && headUsernames.add(u.tiktok_username.toLowerCase().replace(/^@/,'')));
+    }
+    */
+    
     const { data, error } = await supabaseAdmin
       .from('group_participant_snapshots')
       .select('tiktok_username, followers, views, likes, comments, shares, saves, posts_total, last_refreshed')
       .eq('group_id', id)
+      
     if (error) throw error
-    const rows = (data || []).map(r => ({
-      username: r.tiktok_username,
-      followers: Number(r.followers) || 0,
-      views: Number(r.views) || 0,
-      likes: Number(r.likes) || 0,
-      comments: Number(r.comments) || 0,
-      shares: Number(r.shares) || 0,
-      saves: Number(r.saves) || 0,
-      posts: Number(r.posts_total) || 0,
-      total: (Number(r.views)||0)+(Number(r.likes)||0)+(Number(r.comments)||0)+(Number(r.shares)||0)+(Number(r.saves)||0),
-      last_refreshed: r.last_refreshed,
-    }))
+
+    // Fetch user roles
+    // We need to resolve usernames to roles.
+    // fetch all users with role 'leader' or 'admin'
+    const { data: keyUsers } = await supabaseAdmin
+       .from('users')
+       .select('id, tiktok_username, role')
+       .in('role', ['leader','admin','super_admin'])
+       
+    // Also fetch aliases for these key users
+    const keyUserIds = (keyUsers||[]).map(u => u.id);
+    const { data: keyAliases } = await supabaseAdmin
+       .from('user_tiktok_usernames')
+       .select('user_id, tiktok_username')
+       .in('user_id', keyUserIds)
+       
+    const roleMap = new Map<string, string>();
+    for (const u of keyUsers || []) {
+       if (u.tiktok_username) roleMap.set(u.tiktok_username.toLowerCase().replace(/^@/,''), u.role);
+    }
+    for (const a of keyAliases || []) {
+       // find role
+       const role = keyUsers?.find(u => u.id === a.user_id)?.role;
+       if (role && a.tiktok_username) roleMap.set(a.tiktok_username.toLowerCase().replace(/^@/,''), role);
+    }
+
+    const rows = (data || []).map(r => {
+      const role = roleMap.get(r.tiktok_username.toLowerCase().replace(/^@/,'')) || 'member';
+      return {
+        username: r.tiktok_username,
+        isHead: role === 'leader',
+        role: role,
+        followers: Number(r.followers) || 0,
+        views: Number(r.views) || 0,
+        likes: Number(r.likes) || 0,
+        comments: Number(r.comments) || 0,
+        shares: Number(r.shares) || 0,
+        saves: Number(r.saves) || 0,
+        posts: Number(r.posts_total) || 0,
+        total: (Number(r.views)||0)+(Number(r.likes)||0)+(Number(r.comments)||0)+(Number(r.shares)||0)+(Number(r.saves)||0),
+        last_refreshed: r.last_refreshed,
+      }
+    })
     const sorted = rows.sort((a,b)=> b.total - a.total).slice(0, top)
     return NextResponse.json({ groupId: id, top, data: sorted })
   } catch (e: any) {

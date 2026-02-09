@@ -47,6 +47,7 @@ export interface DashboardMetrics {
 export interface Campaign {
   id: string;
   name: string;
+  heads?: string[]; // Head user names
   start_date: string; // ISO
   end_date?: string | null; // ISO
   created_at: string;

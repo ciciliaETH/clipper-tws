@@ -21,8 +21,8 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 export default function DashboardTotalPage() {
   const [interval, setIntervalVal] = useState<'daily'|'weekly'|'monthly'>('weekly');
   const [metric, setMetric] = useState<'views'|'likes'|'comments'>('views');
-  // Default start: 2026-01-02 to include all realtime (>= 2026-01-23) plus allow backend to merge historical automatically
-  const [start, setStart] = useState<string>('2026-01-02');
+  // Default start: 2025-08-02 to include historical data
+  const [start, setStart] = useState<string>('2025-08-02');
   const [end, setEnd] = useState<string>(()=> new Date().toISOString().slice(0,10));
   const [mode, setMode] = useState<'postdate'|'accrual'>('postdate');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);

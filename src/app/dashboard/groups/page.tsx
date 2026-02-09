@@ -16,7 +16,8 @@ import {
 } from 'chart.js';
 import { format, parseISO } from 'date-fns';
 import { id as localeID } from 'date-fns/locale';
-import { FaPlus } from 'react-icons/fa';
+import { FaPlus, FaExternalLinkAlt } from 'react-icons/fa';
+import Link from 'next/link';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
@@ -709,12 +710,18 @@ export default function CampaignsPage() {
               return (
                 <button key={c.id} onClick={() => setSelected(c)}
                   className={`w-full text-left px-3 py-2 rounded-lg border ${selected?.id === c.id ? 'border-blue-500/40 bg-blue-500/10 text-white' : 'border-white/10 text-white/80 hover:bg-white/5'} ${isEnded ? 'opacity-80' : ''}`}>
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-medium">{c.name}</div>
-                    {isEnded && <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-500/20 text-gray-200 border border-gray-400/30">Selesai</span>}
-                    {isScheduled && <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-200 border border-blue-400/30">Terjadwal</span>}
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-medium">{c.name}</div>
+                      {isEnded && <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-500/20 text-gray-200 border border-gray-400/30">Selesai</span>}
+                      {isScheduled && <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-200 border border-blue-400/30">Terjadwal</span>}
+                    </div>
+                    {c.heads && c.heads.length > 0 && (
+                      <div className="text-[10px] text-purple-300 flex items-center gap-1">
+                        <span className="opacity-70">Head:</span> {c.heads.join(', ')}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs text-white/50">{format(parseISO(c.start_date), 'd MMM yyyy', { locale: localeID })}{c.end_date ? ` — ${format(parseISO(c.end_date), 'd MMM yyyy', { locale: localeID })}` : ''}</div>
                 </button>
               )
             })}
@@ -884,7 +891,12 @@ export default function CampaignsPage() {
                 <tbody>
                   {filteredSortedParticipants.map((p:any)=> (
                     <tr key={p.id} className="hover:bg-white/5 cursor-pointer" onClick={()=> { setSelectedUser(String(p.id)); setSelectedUserName(String(p.name || p.tiktok_username || '')); }}>
-                      <td className="px-2 py-2 text-white">{p.name || `@${p.tiktok_username || ''}`}</td>
+                      <td className="px-2 py-2 text-white">
+                        <div className="flex items-center gap-2">
+                          {p.name || `@${p.tiktok_username || ''}`}
+                          {p.is_head && <span className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-400/10 border border-yellow-400/20">HEAD</span>}
+                        </div>
+                      </td>
                       <td className="px-2 py-2 text-right">{Number(p.totals?.views||0).toLocaleString('id-ID')}</td>
                       <td className="px-2 py-2 text-right">{Number(p.totals?.likes||0).toLocaleString('id-ID')}</td>
                       <td className="px-2 py-2 text-right">{Number(p.totals?.comments||0).toLocaleString('id-ID')}</td>
@@ -1112,16 +1124,28 @@ export default function CampaignsPage() {
                 <h4 className="text-sm text-white/80 mb-2">Karyawan Saat Ini</h4>
                 <div className="space-y-2 max-h-64 overflow-auto pr-1">
                   {participants.map(p => (
-                    <div key={p.id} className="relative px-3 py-2 rounded-lg border border-white/10 bg-white/5">
-                      <button
-                        aria-label={`Hapus ${p.name || p.tiktok_username || 'karyawan'}`}
-                        className="absolute top-2 right-2 w-6 h-6 rounded-full border border-white/10 text-white/70 hover:text-white hover:bg-red-500/20 hover:border-red-500/40"
-                        onClick={() => removeEmployeeFromGroupQuick(String(p.id), String(p.name || p.tiktok_username || ''))}
-                        title="Hapus dari Group"
-                      >
-                        ×
-                      </button>
-                      <div className="text-white">{p.name || `@${p.tiktok_username || ''}`}</div>
+                    <div key={p.id} className="relative px-3 py-2 rounded-lg border border-white/10 bg-white/5 transition-colors hover:bg-white/8 group">
+                      <div className="absolute top-2 right-2 flex items-center gap-2">
+                        {p.is_head && (
+                          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border bg-yellow-500/10 border-yellow-500/30">
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.3)]">
+                              ★ HEAD
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          aria-label={`Hapus ${p.name || p.tiktok_username || 'karyawan'}`}
+                          className="w-6 h-6 rounded-full border border-white/10 text-white/40 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30 flex items-center justify-center transition-colors shadow-sm"
+                          onClick={() => removeEmployeeFromGroupQuick(String(p.id), String(p.name || p.tiktok_username || ''))}
+                          title="Hapus dari Group"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="text-white text-sm font-medium pr-24 flex items-center gap-2">
+                        {p.name || `@${p.tiktok_username || ''}`}
+                        {p.is_head && <span className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-400/10 border border-yellow-400/20">HEAD</span>}
+                      </div>
                       {/* TikTok accounts assigned in this group */}
                       <div className="text-xs text-white/60">Akun TikTok:
                         {Array.isArray(p.accounts) && p.accounts.length>0 ? (
@@ -1301,11 +1325,28 @@ export default function CampaignsPage() {
                 effEnd = groupEnd;
               }
               return (
-                <div className="mb-3 text-xs text-white/60">
-                  Periode: {format(parseISO(effStart), 'd MMM yyyy', { locale: localeID })} — {format(parseISO(effEnd), 'd MMM yyyy', { locale: localeID })}
-                  <span className="ml-2 text-white/40">
-                    ({chartMode === 'accrual' ? 'Accrual' : 'Post Date'}{chartMode === 'accrual' && useCustomAccrualDates ? ' - Custom' : chartMode === 'accrual' ? ` - ${accrualWindow} hari` : ''}{chartMode !== 'accrual' ? ` - ${chartInterval === 'daily' ? 'Harian' : chartInterval === 'weekly' ? 'Mingguan' : 'Bulanan'}` : ''})
-                  </span>
+                <div className="mb-3">
+                  <div className="text-xs text-white/60 mb-2">
+                    Periode: {format(parseISO(effStart), 'd MMM yyyy', { locale: localeID })} — {format(parseISO(effEnd), 'd MMM yyyy', { locale: localeID })}
+                    <span className="ml-2 text-white/40">
+                      ({chartMode === 'accrual' ? 'Accrual' : 'Post Date'}{chartMode === 'accrual' && useCustomAccrualDates ? ' - Custom' : chartMode === 'accrual' ? ` - ${accrualWindow} hari` : ''}{chartMode !== 'accrual' ? ` - ${chartInterval === 'daily' ? 'Harian' : chartInterval === 'weekly' ? 'Mingguan' : 'Bulanan'}` : ''})
+                    </span>
+                  </div>
+                  
+                  {(() => {
+                    const p = (participants||[]).find((x:any)=> String(x.id)===String(selectedUser));
+                    const uLink = p?.tiktok_username || p?.username || p?.name || 'unknown';
+                    return (
+                       <Link 
+                          href={`/groups/${selected!.id}/participant/${encodeURIComponent(uLink)}`}
+                          target="_blank"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs transition-colors border border-white/10"
+                       >
+                          <FaExternalLinkAlt className="w-3 h-3" />
+                          Lihat Detail Video
+                       </Link>
+                    )
+                  })()}
                 </div>
               );
             })()}

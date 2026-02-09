@@ -45,128 +45,121 @@ async function fetchTakenAt(shortcode: string): Promise<number | null> {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const limit = Math.max(1, Math.min(200, Number(body?.limit || 30))); // Process 30 per batch (smaller for reliability)
-    const delayMs = Math.max(200, Math.min(10000, Number(body?.delay_ms || 600))); // 600ms delay between requests
-    const timeoutMs = Math.min(57000, Number(body?.timeout_ms || 57000)); // Max 57s to stay under 60s Vercel limit
+    // Batch processing params
+    const batchSize = Math.max(1, Math.min(50, Number(body?.limit || 20))); // Process 20 by default per inner batch
+    const delayMs = Math.max(100, Math.min(10000, Number(body?.delay_ms || 200))); // 200ms delay between requests
+    const timeoutThreshold = 55000; // Stop after 55s (Vercel limit 60s)
 
     const supa = adminClient();
     const startTime = Date.now();
     
-    // AUTO-LOOP: Keep processing until no more posts or timeout
+    // Server-side loop: Keep processing small batches until time runs out
     let totalUpdated = 0;
     let totalFailed = 0;
-    let totalProcessed = 0;
-    let batchCount = 0;
     const allFailedDetails: Array<{ id: string; username: string; error: string }> = [];
-
-    console.log(`[Backfill] Starting auto-loop backfill (limit=${limit} per batch, timeout=${timeoutMs}ms)...`);
+    
+    console.log(`[Backfill] Starting time-boxed loop (batchSize=${batchSize}, stop at 55s)...`);
 
     while (true) {
-      // Check timeout
-      if (Date.now() - startTime > timeoutMs) {
-        console.log(`[Backfill] ⚠️ Timeout reached (${timeoutMs}ms), stopping...`);
+      // 1. Check time budget
+      if (Date.now() - startTime > timeoutThreshold) {
+        console.log(`[Backfill] ⏱️ 55s time limit reached, stopping safely.`);
         break;
       }
 
-      batchCount++;
-      
-      // Get Instagram posts with NULL taken_at (need backfill)
-      // Only backfill posts from 2026-01-01 onwards (match refresh window)
+      // 2. Fetch one batch
       const { data: posts, error: fetchError } = await supa
         .from('instagram_posts_daily')
         .select('id, code, username, post_date')
-        .is('taken_at', null) // Only posts missing taken_at
-        .not('code', 'is', null) // Must have shortcode
+        .is('taken_at', null)      // Only posts missing taken_at
+        .not('code', 'is', null)   // Must have shortcode
         .gte('post_date', '2026-01-01') // Only recent posts
-        .limit(limit);
+        .limit(batchSize);
 
       if (fetchError) {
         console.error('[Backfill] Database error:', fetchError);
-        return NextResponse.json({
-          error: 'Database error',
-          message: fetchError.message
-        }, { status: 500 });
+        // Break instead of returning to return partial progress
+        break;
       }
-
-      // No more posts to process - SUCCESS!
+      
+      // If no data, we are done
       if (!posts || posts.length === 0) {
-        console.log(`[Backfill] ✅ All posts backfilled! No more posts with NULL taken_at.`);
+        console.log(`[Backfill] ✅ No more posts to process.`);
         break;
       }
 
-      console.log(`[Backfill] Batch ${batchCount}: Found ${posts.length} posts missing taken_at, processing...`);
+      console.log(`[Backfill] Processing batch of ${posts.length} posts...`);
+      let batchUpdated = 0;
 
-      let updated = 0;
-      let failed = 0;
-
+      // 3. Process items in batch
       for (const post of posts) {
+        // Inner loop time check (granularity per item)
+        if (Date.now() - startTime > timeoutThreshold) {
+          console.log(`[Backfill] ⏱️ Timeout mid-batch, stopping.`);
+          break;
+        }
+
         const { id, code, username } = post;
-        
         try {
           const ms = await fetchTakenAt(code);
-          
           if (!ms) {
-            console.warn(`[Backfill] ⚠️ Could not fetch taken_at for ${code}`);
-            failed++;
+            totalFailed++;
             allFailedDetails.push({ id, username, error: 'RapidAPI returned no timestamp' });
-            continue;
+            continue; // Move to next
           }
 
           const takenAt = new Date(ms).toISOString();
-          
-          // Update the post with taken_at
           const { error: updateError } = await supa
             .from('instagram_posts_daily')
             .update({ taken_at: takenAt })
             .eq('id', id);
 
           if (updateError) {
-            console.error(`[Backfill] ❌ Failed to update ${id}:`, updateError.message);
-            failed++;
+            console.error(`[Backfill] ❌ update failed ${id}:`, updateError.message);
+            totalFailed++;
             allFailedDetails.push({ id, username, error: updateError.message });
           } else {
-            updated++;
-            if (updated % 10 === 0) { // Log every 10 successes
-              console.log(`[Backfill] Batch ${batchCount}: ${updated} updated so far...`);
-            }
+            totalUpdated++;
+            batchUpdated++;
           }
-
-          // Delay between requests to avoid rate limits
+           // Delay between API calls
           await new Promise(resolve => setTimeout(resolve, delayMs));
 
         } catch (error: any) {
-          console.error(`[Backfill] ❌ Error processing ${id}:`, error.message);
-          failed++;
+          console.error(`[Backfill] ❌ Error ${id}:`, error.message);
+          totalFailed++;
           allFailedDetails.push({ id, username, error: error.message });
         }
       }
-
-      totalUpdated += updated;
-      totalFailed += failed;
-      totalProcessed += posts.length;
-
-      console.log(`[Backfill] Batch ${batchCount} complete: ✅ ${updated} updated, ❌ ${failed} failed out of ${posts.length} total`);
       
-      // If we processed less than limit, we're done (no more posts)
-      if (posts.length < limit) {
-        console.log(`[Backfill] ✅ Processed ${posts.length} < ${limit}, all done!`);
+      // If we fetched fewer than batch limit, we are done with all data
+      if (posts.length < batchSize) {
         break;
       }
+      
+      // Loop continues... fetching next batch
     }
 
     const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[Backfill] AUTO-LOOP COMPLETE: ✅ ${totalUpdated} updated, ❌ ${totalFailed} failed out of ${totalProcessed} total across ${batchCount} batches in ${elapsedSec}s`);
+    
+    // Check remaining count for frontend loop
+    const { count: remainingCount } = await supa
+      .from('instagram_posts_daily')
+      .select('id', { count: 'exact', head: true })
+      .is('taken_at', null)
+      .not('code', 'is', null)
+      .gte('post_date', '2026-01-01');
 
     return NextResponse.json({
       success: true,
-      message: `Auto-loop backfill complete: ${totalUpdated} updated, ${totalFailed} failed across ${batchCount} batches`,
-      batches: batchCount,
-      processed: totalProcessed,
-      updated: totalUpdated,
-      failed: totalFailed,
-      elapsedSeconds: parseFloat(elapsedSec),
-      failedDetails: totalFailed > 0 ? allFailedDetails.slice(0, 50) : undefined, // Only return first 50 failures
-      note: totalFailed > 0 ? 'Some posts failed - may need manual retry' : 'All posts processed successfully'
+      batch_processed: totalUpdated + totalFailed,
+      batch_updated: totalUpdated,
+      batch_failed: totalFailed,
+      remaining: remainingCount || 0,
+      completed: (remainingCount || 0) === 0,
+      elapsed_seconds: parseFloat(elapsedSec),
+      message: `Processed ${totalUpdated+totalFailed} posts (${totalUpdated} OK, ${totalFailed} failed) in ${elapsedSec}s. Remaining: ${remainingCount}`,
+      failed_details: allFailedDetails
     });
 
   } catch (error: any) {

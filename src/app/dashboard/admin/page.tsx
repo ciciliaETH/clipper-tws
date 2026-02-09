@@ -405,27 +405,43 @@ export default function AdminPage() {
   const [takenAtPlatform, setTakenAtPlatform] = useState<'instagram' | 'tiktok' | 'all'>('instagram');
   
   const runTakenAtBackfill = async () => {
-    if (!confirm(`Backfill taken_at untuk ${takenAtPlatform === 'all' ? 'Instagram & TikTok' : takenAtPlatform}?\nProses bisa memakan waktu 5-10 menit.`)) return;
+    if (!confirm(`Backfill taken_at untuk ${takenAtPlatform === 'all' ? 'Instagram & TikTok' : takenAtPlatform}?\nProses akan diloop per 20 items sampai selesai.`)) return;
     
     setRunningTakenAt(true);
     setTakenAtResult(null);
-    
-    try {
-      const res = await fetch(`/api/backfill/taken-at?platform=${takenAtPlatform}&limit=200`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j?.error || 'Gagal backfill taken_at');
-      
-      setTakenAtResult(j);
-      alert(`✅ Backfill taken_at selesai!\n\nPlatform: ${j.platform || takenAtPlatform}\nUpdated: ${j.updated || 0}\nFailed: ${j.failed || 0}`);
-    } catch (e: any) {
-      alert('Error: ' + (e?.message || 'Gagal backfill taken_at'));
-    } finally {
-      setRunningTakenAt(false);
-    }
+
+    let totalUp = 0;
+    let totalFail = 0;
+
+    const processBatch = async () => {
+      try {
+        const res = await fetch(`/api/backfill/taken-at?platform=${takenAtPlatform}&limit=20`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j?.error || 'Gagal backfill taken_at');
+        
+        totalUp += (j.updated || 0);
+        totalFail += (j.failed || 0);
+
+        setTakenAtResult({ platform: takenAtPlatform, updated: totalUp, failed: totalFail });
+        
+        if (j.remaining && j.remaining > 0) {
+            console.log(`[Backfill] Batch done. ${j.remaining} remaining. Looping...`);
+            setTimeout(processBatch, 1000); 
+        } else {
+            setRunningTakenAt(false);
+            alert(`✅ Backfill taken_at selesai!\n\nPlatform: ${j.platform || takenAtPlatform}\nTotal Updated: ${totalUp}\nTotal Failed: ${totalFail}`);
+        }
+      } catch (e: any) {
+        setRunningTakenAt(false);
+        alert('Error: ' + (e?.message || 'Gagal backfill taken_at'));
+      }
+    };
+
+    processBatch();
   };
 
   const runTikTokBatch = async (continueSession = false, customOffset?: number) => {
@@ -819,9 +835,9 @@ export default function AdminPage() {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[((user as any).instagram_username), ...(((user as any).extra_instagram_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
-                    user.role === 'admin' ? 'border-red-500/30 text-red-300 bg-red-500/10' : user.role === 'leader' ? 'border-yellow-400/30 text-yellow-300 bg-yellow-400/10' : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
+                    user.role === 'admin' ? 'border-red-500/30 text-red-300 bg-red-500/10' : user.role === 'leader' ? 'border-purple-400/30 text-purple-300 bg-purple-400/10' : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
                   }`}>
-                    {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'Leader' : user.role}
+                    {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'Head' : user.role}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -893,11 +909,12 @@ export default function AdminPage() {
                     <label className="block text-sm font-medium text-white/80 mb-1">Peran</label>
                     <select
                       name="role"
-                      value={(currentUser?.role === 'admin') ? 'admin' : 'karyawan'}
+                      value={currentUser?.role || 'karyawan'}
                       onChange={handleInputChange}
                       className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white"
                     >
                       <option value="karyawan">Karyawan</option>
+                      <option value="leader">Head</option>
                       <option value="admin">Admin</option>
                     </select>
                   </div>

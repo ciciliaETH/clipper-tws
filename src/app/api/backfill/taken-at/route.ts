@@ -52,11 +52,13 @@ export async function POST(req: Request) {
 
     const url = new URL(req.url);
     const body = await req.json().catch(() => ({}));
-    const limitParam = Number(url.searchParams.get('limit') || body.limit || 100);
+    const limitParam = Number(url.searchParams.get('limit') || body.limit || 20);
     const platformParam = url.searchParams.get('platform') || body.platform || 'all'; // 'instagram', 'tiktok', 'all'
     const usernameFilter = url.searchParams.get('username') || body.username || null;
 
     const supa = admin();
+    const startTime = Date.now();
+    const TIMEOUT_LIMIT = 55000;
     let totalUpdated = 0;
     let totalFailed = 0;
     const allResults: any[] = [];
@@ -78,6 +80,7 @@ export async function POST(req: Request) {
       if (error) throw error;
 
       for (const post of igPosts || []) {
+        if (Date.now() - startTime > TIMEOUT_LIMIT) break;
         const code = post.code;
         if (!code) {
           totalFailed++;
@@ -172,6 +175,7 @@ export async function POST(req: Request) {
       if (error) throw error;
 
       for (const post of ttPosts || []) {
+        if (Date.now() - startTime > TIMEOUT_LIMIT) break;
         const videoId = post.video_id;
         if (!videoId) {
           totalFailed++;
@@ -222,10 +226,23 @@ export async function POST(req: Request) {
       }
     }
 
+    let remaining = 0;
+    if (platformParam === 'all' || platformParam === 'instagram') {
+      const { count } = await supa.from('instagram_posts_daily').select('id', { count: 'exact', head: true }).is('taken_at', null);
+      remaining += count || 0;
+    }
+    if (platformParam === 'all' || platformParam === 'tiktok') {
+      const { count } = await supa.from('tiktok_posts_daily').select('video_id', { count: 'exact', head: true }).is('taken_at', null);
+      remaining += count || 0;
+    }
+
     return NextResponse.json({
+      success: true,
       updated: totalUpdated,
       failed: totalFailed,
       platform: platformParam,
+      remaining,
+      completed: remaining === 0,
       results: allResults.slice(0, 20)
     });
   } catch (e: any) {
