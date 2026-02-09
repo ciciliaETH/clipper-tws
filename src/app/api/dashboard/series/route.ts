@@ -47,21 +47,32 @@ export async function GET(req: Request) {
     // 1) Build alias sets for employees (karyawan)
     const handlesTT = new Set<string>();
     const handlesIG = new Set<string>();
+    const handlesYT = new Set<string>(); // YouTube Channel IDs
     try {
       const { data: empUsers } = await supa
         .from('users')
         .select('id, tiktok_username, instagram_username')
         .eq('role','karyawan');
+      
       const empIds = (empUsers||[]).map((u:any)=> String((u as any).id));
+      
+      // Collect main usernames
       for (const u of empUsers||[]) {
         const tt = String((u as any).tiktok_username||'').trim().replace(/^@+/,'').toLowerCase(); if (tt) handlesTT.add(tt);
         const ig = String((u as any).instagram_username||'').trim().replace(/^@+/,'').toLowerCase(); if (ig) handlesIG.add(ig);
+        // Note: youtube_channel_id usually accessed via separate table or updated column, ensuring coverage below
       }
+
       if (empIds.length) {
         const { data: exT } = await supa.from('user_tiktok_usernames').select('tiktok_username, user_id').in('user_id', empIds);
         for (const r of exT||[]) { const u = String((r as any).tiktok_username||'').trim().replace(/^@+/,'').toLowerCase(); if (u) handlesTT.add(u); }
+        
         const { data: exI } = await supa.from('user_instagram_usernames').select('instagram_username, user_id').in('user_id', empIds);
         for (const r of exI||[]) { const u = String((r as any).instagram_username||'').trim().replace(/^@+/,'').toLowerCase(); if (u) handlesIG.add(u); }
+        
+        // Fetch YouTube Channels
+        const { data: exY } = await supa.from('user_youtube_channels').select('youtube_channel_id, user_id').in('user_id', empIds);
+        for (const r of exY||[]) { const cid = String((r as any).youtube_channel_id||'').trim(); if (cid) handlesYT.add(cid); }
       }
     } catch {}
 
@@ -77,6 +88,8 @@ export async function GET(req: Request) {
     // 2) Historical: weekly_historical_data (< cutoff)
     const histMapTT = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
     const histMapIG = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
+    const histMapYT = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
+    
     if (new Date(startISO+'T00:00:00Z') < cutoffDate) {
       const histEndISO = new Date(Math.min(new Date(endISO+'T23:59:59Z').getTime(), cutoffDate.getTime())).toISOString().slice(0,10);
       const { data: ttHist } = await supa
@@ -91,6 +104,13 @@ export async function GET(req: Request) {
         .eq('platform','instagram')
         .gte('start_date', startISO)
         .lt('start_date', historicalCutoffISO);
+      const { data: ytHist } = await supa
+        .from('weekly_historical_data')
+        .select('start_date, end_date, views, likes, comments')
+        .ilike('platform','youtube')
+        .gte('start_date', startISO)
+        .lt('start_date', historicalCutoffISO);
+
       const addWeekly = (wk:any, map:Map<string,any>, isTT:boolean)=>{
         const ws = String(wk.start_date); const we=String(wk.end_date);
         for (const k of keys) {
@@ -102,13 +122,17 @@ export async function GET(req: Request) {
           }
         }
       };
+      
       for (const r of ttHist||[]) addWeekly(r, histMapTT, true);
       for (const r of igHist||[]) addWeekly(r, histMapIG, false);
+      for (const r of ytHist||[]) addWeekly(r, histMapYT, false);
     }
 
     // 3) Realtime: posts_daily (>= cutoff) aggregate by alias sets
     const rtMapTT = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
     const rtMapIG = new Map<string,{views:number;likes:number;comments:number}>();
+    const rtMapYT = new Map<string,{views:number;likes:number;comments:number}>();
+
     if (new Date(endISO+'T23:59:59Z') >= cutoffDate) {
       const rtStartISO = (new Date(startISO+'T00:00:00Z') < cutoffDate) ? historicalCutoffISO : startISO;
       if (handlesTT.size) {
@@ -139,16 +163,32 @@ export async function GET(req: Request) {
           rtMapIG.set(k, cur);
         }
       }
+      if (handlesYT.size) {
+        const { data: rows } = await supa
+          .from('youtube_posts_daily')
+          .select('channel_id, post_date, views, likes, comments')
+          .in('channel_id', Array.from(handlesYT))
+          .gte('post_date', rtStartISO)
+          .lte('post_date', endISO);
+        for (const r of rows||[]) {
+          const k = keyFor(String((r as any).post_date).slice(0,10));
+          const cur = rtMapYT.get(k) || { views:0, likes:0, comments:0 };
+          cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
+          rtMapYT.set(k, cur);
+        }
+      }
     }
 
     // 4) Build totals combining historical + realtime
-    const total: any[] = []; const total_tiktok:any[]=[]; const total_instagram:any[]=[];
+    const total: any[] = []; const total_tiktok:any[]=[]; const total_instagram:any[]=[]; const total_youtube:any[]=[];
     for (const k of keys) {
       const date = k;
       const htt = histMapTT.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
       const hig = histMapIG.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+      const hyt = histMapYT.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
       const rtt = rtMapTT.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
       const rig = rtMapIG.get(k) || { views:0, likes:0, comments:0 };
+      const ryt = rtMapYT.get(k) || { views:0, likes:0, comments:0 };
 
       const tt = {
         views: htt.views + rtt.views,
@@ -164,21 +204,28 @@ export async function GET(req: Request) {
         comments: hig.comments + rig.comments
       };
 
+      const yt = {
+        views: hyt.views + ryt.views,
+        likes: hyt.likes + ryt.likes,
+        comments: hyt.comments + ryt.comments
+      };
+
       total_tiktok.push({ date, ...tt });
       total_instagram.push({ date, ...ig });
+      total_youtube.push({ date, ...yt });
       total.push({ 
         date, 
-        views: tt.views + ig.views,
-        likes: tt.likes + ig.likes,
-        comments: tt.comments + ig.comments,
-        shares: tt.shares, // IG has no shares in historical/aggregation usually
+        views: tt.views + ig.views + yt.views,
+        likes: tt.likes + ig.likes + yt.likes,
+        comments: tt.comments + ig.comments + yt.comments,
+        shares: tt.shares, // Only TikTok has shares
         saves: tt.saves
       });
     }
 
     const totals = total.reduce((a:any,s:any)=>({ views:a.views+s.views, likes:a.likes+s.likes, comments:a.comments+s.comments, shares:a.shares+s.shares, saves:a.saves+s.saves }), { views:0, likes:0, comments:0, shares:0, saves:0 });
 
-    return NextResponse.json({ interval, start: startISO, end: endISO, total, total_tiktok, total_instagram, totals, groups: [] });
+    return NextResponse.json({ interval, start: startISO, end: endISO, total, total_tiktok, total_instagram, total_youtube, totals, groups: [] });
   } catch (e:any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

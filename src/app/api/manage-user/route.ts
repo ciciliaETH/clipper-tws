@@ -137,6 +137,16 @@ export async function POST(request: Request) {
       const igNormalized = Array.from(new Set(igList.map((u: string) => u.replace(/^@/, '').toLowerCase())));
       const igPrimary = igNormalized[0] || null;
 
+      // Normalize multi YouTube channel IDs
+      const ytList: string[] = Array.isArray((userData as any).youtube_channel_ids)
+        ? (userData as any).youtube_channel_ids
+        : String((userData as any).youtube_channel_id || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      const ytNormalized = Array.from(new Set(ytList)); 
+      const ytPrimary = ytNormalized[0] || null;
+
       // 1. Update profile in public.users
       const { error: profileError } = await supabaseAdmin
         .from('users')
@@ -146,6 +156,7 @@ export async function POST(request: Request) {
           role: userData.role,
           tiktok_username: primary,
           instagram_username: igPrimary,
+          youtube_channel_id: ytPrimary,
         })
         .eq('id', userData.id);
       if (profileError) throw profileError;
@@ -187,7 +198,24 @@ export async function POST(request: Request) {
         }
       } catch {}
 
-      // 1c. Sync employee_participants across all campaigns to mirror updated username list
+      // 1d. Upsert YouTube channel IDs mapping
+      try {
+        const { data: existingYT } = await supabaseAdmin
+          .from('user_youtube_channels')
+          .select('youtube_channel_id')
+          .eq('user_id', userData.id);
+        const existingSetYT = new Set((existingYT || []).map((r: any) => String(r.youtube_channel_id)));
+        const toAddYT = ytNormalized.filter(u => !existingSetYT.has(u)).map(u => ({ user_id: userData.id, youtube_channel_id: u }));
+        if (toAddYT.length) {
+          await supabaseAdmin.from('user_youtube_channels').upsert(toAddYT, { onConflict: 'user_id,youtube_channel_id', ignoreDuplicates: true });
+        }
+        const toRemoveYT = Array.from(existingSetYT).filter(u => !ytNormalized.includes(u));
+        if (toRemoveYT.length) {
+          await supabaseAdmin.from('user_youtube_channels').delete().eq('user_id', userData.id).in('youtube_channel_id', toRemoveYT);
+        }
+      } catch {}
+
+      // 1e. Sync employee_participants across all campaigns to mirror updated username list
       try {
         // campaigns where this employee is present
         const { data: eg } = await supabaseAdmin
@@ -197,6 +225,7 @@ export async function POST(request: Request) {
         const campaigns = (eg || []).map((r:any)=> r.campaign_id);
         if (campaigns.length) {
           for (const cid of campaigns) {
+            // TikTok (Existing)
             const { data: ep } = await supabaseAdmin
               .from('employee_participants')
               .select('tiktok_username')
@@ -208,10 +237,26 @@ export async function POST(request: Request) {
             const toRemove = Array.from(currentSet).filter(u => !desiredSet.has(u));
             if (toAdd.length) await supabaseAdmin.from('employee_participants').upsert(toAdd, { onConflict: 'employee_id,campaign_id,tiktok_username', ignoreDuplicates: true });
             if (toRemove.length) await supabaseAdmin.from('employee_participants').delete().eq('employee_id', userData.id).eq('campaign_id', cid).in('tiktok_username', toRemove);
-            // ensure participants exist on the campaign for added usernames (idempotent)
             if (toAdd.length) {
               const cpRows = toAdd.map(r => ({ campaign_id: cid, tiktok_username: r.tiktok_username }));
               await supabaseAdmin.from('campaign_participants').upsert(cpRows, { onConflict: 'campaign_id,tiktok_username', ignoreDuplicates: true });
+            }
+
+            // YouTube (New)
+            const { data: epYT } = await supabaseAdmin
+              .from('employee_youtube_participants')
+              .select('youtube_channel_id')
+              .eq('employee_id', userData.id)
+              .eq('campaign_id', cid);
+            const currentSetYT = new Set((epYT||[]).map((r:any)=> String(r.youtube_channel_id)));
+            const desiredSetYT = new Set(ytNormalized);
+            const toAddYT = ytNormalized.filter(u => !currentSetYT.has(u)).map(u => ({ employee_id: userData.id, campaign_id: cid, youtube_channel_id: u }));
+            const toRemoveYT = Array.from(currentSetYT).filter(u => !desiredSetYT.has(u));
+            if (toAddYT.length) await supabaseAdmin.from('employee_youtube_participants').upsert(toAddYT, { onConflict: 'employee_id,campaign_id,youtube_channel_id', ignoreDuplicates: true });
+            if (toRemoveYT.length) await supabaseAdmin.from('employee_youtube_participants').delete().eq('employee_id', userData.id).eq('campaign_id', cid).in('youtube_channel_id', toRemoveYT);
+            if (toAddYT.length) {
+              const cpRowsYT = toAddYT.map(r => ({ campaign_id: cid, youtube_channel_id: r.youtube_channel_id }));
+              await supabaseAdmin.from('campaign_youtube_participants').upsert(cpRowsYT, { onConflict: 'campaign_id,youtube_channel_id', ignoreDuplicates: true });
             }
           }
         }
@@ -262,6 +307,8 @@ export async function POST(request: Request) {
             username: userData.username || emailStr.split('@')[0],
             role: userData.role,
             tiktok_username: userData.tiktok_username,
+            instagram_username: userData.instagram_username,
+            youtube_channel_id: userData.youtube_channel_id,
           }, { onConflict: 'id' });
         if (upErr) throw upErr;
 
@@ -339,6 +386,16 @@ export async function POST(request: Request) {
       const igNormalized = Array.from(new Set(igList.map((u: string) => u.replace(/^@/, '').toLowerCase())));
       const igPrimary = igNormalized[0] || null;
 
+      // Normalize multi YouTube channel IDs
+      const ytList: string[] = Array.isArray((userData as any).youtube_channel_ids)
+        ? (userData as any).youtube_channel_ids
+        : String((userData as any).youtube_channel_id || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      const ytNormalized = Array.from(new Set(ytList)); 
+      const ytPrimary = ytNormalized[0] || null;
+
       // 2. Create profile in public.users
       const safeUsername = await ensureUniqueUsername(userData.username || emailStr.split('@')[0], newUserId);
       let profileError: any = null;
@@ -353,6 +410,7 @@ export async function POST(request: Request) {
             role: userData.role,
             tiktok_username: primary,
             instagram_username: igPrimary,
+            youtube_channel_id: ytPrimary,
           }, { onConflict: 'id' });
         profileError = error;
       } catch (e: any) {
@@ -370,7 +428,7 @@ export async function POST(request: Request) {
             // Update PK id to the new auth id and merge fields
             const { error: updErr } = await supabaseAdmin
               .from('users')
-              .update({ id: newUserId, full_name: userData.full_name, username: safeUsername, role: userData.role, tiktok_username: primary })
+              .update({ id: newUserId, full_name: userData.full_name, username: safeUsername, role: userData.role, tiktok_username: primary, instagram_username: igPrimary, youtube_channel_id: ytPrimary })
               .eq('email', emailStr);
             if (!updErr) profileError = null;
           }
@@ -393,6 +451,14 @@ export async function POST(request: Request) {
         const toAddIG = igNormalized.map(u => ({ user_id: newUserId!, instagram_username: u }));
         if (toAddIG.length) {
           await supabaseAdmin.from('user_instagram_usernames').upsert(toAddIG, { onConflict: 'user_id,instagram_username', ignoreDuplicates: true });
+        }
+      } catch {}
+
+      // 2d. Upsert YouTube channel IDs mapping
+      try {
+        const toAddYT = ytNormalized.map(u => ({ user_id: newUserId!, youtube_channel_id: u }));
+        if (toAddYT.length) {
+          await supabaseAdmin.from('user_youtube_channels').upsert(toAddYT, { onConflict: 'user_id,youtube_channel_id', ignoreDuplicates: true });
         }
       } catch {}
 

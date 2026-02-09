@@ -44,9 +44,23 @@ export async function GET(req: Request) {
       console.error('[weekly-historical] Instagram query error:', igErr);
     }
     
+    // Query YouTube historical data
+    const { data: ytRows, error: ytErr } = await supa
+      .from('weekly_historical_data')
+      .select('week_label, start_date, end_date, platform, views, likes, comments')
+      .ilike('platform', 'youtube')
+      .gte('start_date', startISO)
+      .lte('start_date', endISO)
+      .order('start_date', { ascending: true });
+    
+    if (ytErr) {
+      console.error('[weekly-historical] YouTube query error:', ytErr);
+    }
+    
     return NextResponse.json({
       tiktok: ttRows || [],
       instagram: igRows || [],
+      youtube: ytRows || [],
       start: startISO,
       end: endISO
     });

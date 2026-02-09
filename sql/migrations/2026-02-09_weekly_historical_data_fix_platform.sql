@@ -1,0 +1,2 @@
+ALTER TABLE weekly_historical_data DROP CONSTRAINT IF EXISTS weekly_historical_data_platform_check;
+ALTER TABLE weekly_historical_data ADD CONSTRAINT weekly_historical_data_platform_check CHECK (platform IN ('TIKTOK', 'INSTAGRAM', 'YOUTUBE', 'tiktok', 'instagram', 'youtube', 'all', 'ALL'));

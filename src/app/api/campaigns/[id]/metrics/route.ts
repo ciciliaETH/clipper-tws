@@ -386,6 +386,63 @@ export async function GET(req: Request, context: any) {
       }
     } catch(e) { console.warn('instagram series error', e); }
 
+    // ============ YOUTUBE AGGREGATION ============
+    let seriesYouTube: any[] = [];
+    try {
+      let ytChannels: string[] = [];
+      try {
+        const { data: ytParts } = await supabaseAdmin
+          .from('campaign_youtube_participants')
+          .select('youtube_channel_id')
+          .eq('campaign_id', id);
+        ytChannels = (ytParts || []).map((r:any) => String(r.youtube_channel_id)).filter(Boolean);
+      } catch {}
+
+      // Fallback: Employee participants
+      if (!ytChannels.length) {
+        try {
+          const { data: empYt } = await supabaseAdmin
+            .from('employee_youtube_participants')
+            .select('youtube_channel_id')
+            .eq('campaign_id', id);
+          ytChannels = (empYt || []).map((r:any) => String(r.youtube_channel_id)).filter(Boolean);
+        } catch {}
+      }
+
+      if (ytChannels.length > 0) {
+          const { data: rows } = await supabaseAdmin
+            .from('youtube_posts_daily')
+            .select('post_date, views, likes, comments')
+            .in('channel_id', ytChannels)
+            .gte('post_date', startISO)
+            .lte('post_date', endISO);
+          
+          const map = new Map<string,{views:number;likes:number;comments:number}>();
+          for (const r of rows||[]) {
+             let key = String(r.post_date);
+
+             if (interval === 'monthly') {
+                const d = new Date(String(r.post_date)+'T00:00:00Z');
+                key = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10);
+             } else if (interval === 'weekly') {
+                const d = new Date(String(r.post_date)+'T00:00:00Z');
+                const day = d.getUTCDay();
+                const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - ((day+6)%7));
+                key = monday.toISOString().slice(0,10);
+             }
+             
+             const cur = map.get(key) || { views:0, likes:0, comments:0 };
+             cur.views += Number(r.views)||0;
+             cur.likes += Number(r.likes)||0;
+             cur.comments += Number(r.comments)||0;
+             map.set(key, cur);
+          }
+          
+          seriesYouTube = Array.from(map.entries()).map(([date,v])=>({ date, views:v.views, likes:v.likes, comments:v.comments, shares:0, saves:0 })).sort((a,b)=> a.date.localeCompare(b.date));
+      }
+    } catch(e) { console.warn('youtube aggregation error', e); }
+    // ============ END YOUTUBE AGGREGATION ============
+    
     // Fallback when RPC returns kosong/semua nol: hitung langsung dari tiktok_posts_daily
     try {
       const allZero = seriesTikTok.length === 0 || seriesTikTok.every(s => (s.views+s.likes+s.comments+s.shares+s.saves) === 0);
@@ -476,9 +533,10 @@ export async function GET(req: Request, context: any) {
 
       seriesTikTok = fill(seriesTikTok, interval);
       seriesInstagram = fill(seriesInstagram, interval);
+      seriesYouTube = fill(seriesYouTube, interval);
     } catch {}
 
-    // Build total series = TikTok + Instagram on same bucket
+    // Build total series = TikTok + Instagram + YouTube on same bucket
     const mergeMap = new Map<string, { date:string; views:number; likes:number; comments:number; shares:number; saves:number }>();
     const pushSeries = (arr:any[]) => {
       for (const s of arr||[]) {
@@ -487,7 +545,7 @@ export async function GET(req: Request, context: any) {
         mergeMap.set(s.date, cur);
       }
     };
-    pushSeries(seriesTikTok); pushSeries(seriesInstagram);
+    pushSeries(seriesTikTok); pushSeries(seriesInstagram); pushSeries(seriesYouTube);
     const seriesTotal = Array.from(mergeMap.values()).sort((a,b)=> a.date.localeCompare(b.date));
 
     // Recalculate totals from series to ensure consistency with chart values
@@ -510,7 +568,8 @@ export async function GET(req: Request, context: any) {
       totals, 
       series_total: seriesTotal, 
       series_tiktok: seriesTikTok, 
-      series_instagram: seriesInstagram, 
+      series_instagram: seriesInstagram,
+      series_youtube: seriesYouTube,
       participants,
       required_hashtags: requiredHashtags,
       filtered_by_hashtag: requiredHashtags && requiredHashtags.length > 0

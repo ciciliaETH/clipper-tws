@@ -153,18 +153,29 @@ export default function DashboardTotalPage() {
             return fetch(url, { cache: 'no-store' });
           }));        
           const accs = await Promise.all(resps.map(r=> r.ok ? r.json() : Promise.resolve(null)));
-          const ttAll: any[][] = []; const igAll: any[][] = []; const totalAll: any[][] = [];
+          const ttAll: any[][] = []; const igAll: any[][] = []; const ytAll: any[][] = []; const totalAll: any[][] = [];
           accs.forEach((acc:any, idx:number)=>{
             if (!acc) return;
             console.log('[ACCRUAL] Campaign', campaigns[idx]?.name, 'returned', acc?.series_total?.length || 0, 'days of data');
             const gid = campaigns[idx]?.id;
             const gname = campaigns[idx]?.name || gid;
-            groups.push({ id: gid, name: gname, series: acc?.series_total||[], series_tiktok: acc?.series_tiktok||[], series_instagram: acc?.series_instagram||[] });
-            ttAll.push(acc?.series_tiktok||[]); igAll.push(acc?.series_instagram||[]); totalAll.push(acc?.series_total||[]);
+            groups.push({ 
+              id: gid, 
+              name: gname, 
+              series: acc?.series_total||[], 
+              series_tiktok: acc?.series_tiktok||[], 
+              series_instagram: acc?.series_instagram||[],
+              series_youtube: acc?.series_youtube||[]
+            });
+            ttAll.push(acc?.series_tiktok||[]); 
+            igAll.push(acc?.series_instagram||[]); 
+            ytAll.push(acc?.series_youtube||[]);
+            totalAll.push(acc?.series_total||[]);
           });
           let total = sumByDate(totalAll);
           let total_tiktok = sumByDate(ttAll);
           let total_instagram = sumByDate(igAll);
+          let total_youtube = sumByDate(ytAll);
           
           // IMPORTANT: Filter to only include data within user-selected range
           // This ensures range Jan 10-16 shows same values regardless of historical range selection
@@ -177,21 +188,23 @@ export default function DashboardTotalPage() {
           total = filterByRange(total);
           total_tiktok = filterByRange(total_tiktok);
           total_instagram = filterByRange(total_instagram);
+          total_youtube = filterByRange(total_youtube);
           
           // Also filter group series
           groups.forEach((g: any) => {
             if (g.series) g.series = filterByRange(g.series);
             if (g.series_tiktok) g.series_tiktok = filterByRange(g.series_tiktok);
             if (g.series_instagram) g.series_instagram = filterByRange(g.series_instagram);
+            if (g.series_youtube) g.series_youtube = filterByRange(g.series_youtube);
           });
           
           console.log('[ACCRUAL] Real-time total entries (after range filter):', total.length);
           console.log('[ACCRUAL] Real-time total views (after range filter):', total.reduce((s: number, d: any) => s + (Number(d.views) || 0), 0));
-          json = { interval:'daily', start: effStart, end: effEnd, groups, total, total_tiktok, total_instagram };
+          json = { interval:'daily', start: effStart, end: effEnd, groups, total, total_tiktok, total_instagram, total_youtube };
         } else {
           // All dates are in historical period, no real-time needed
           console.log('[ACCRUAL] All dates in historical period, no real-time fetch needed');
-          json = { interval:'daily', start: effStart, end: effEnd, groups: [], total: [], total_tiktok: [], total_instagram: [] };
+          json = { interval:'daily', start: effStart, end: effEnd, groups: [], total: [], total_tiktok: [], total_instagram: [], total_youtube: [] };
         }
         
         // LOAD HISTORICAL DATA for Accrual mode (dates < 2026-01-23)
@@ -216,6 +229,7 @@ export default function DashboardTotalPage() {
             // Process historical weekly data and distribute across days
             const histTTMap = new Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>();
             const histIGMap = new Map<string, {views:number;likes:number;comments:number}>();
+            const histYTMap = new Map<string, {views:number;likes:number;comments:number}>();
             
             for (const row of histData.tiktok || []) {
               const weekStart = String(row.start_date);
@@ -250,9 +264,25 @@ export default function DashboardTotalPage() {
                 }
               }
             }
+
+            for (const row of histData.youtube || []) {
+              const weekStart = String(row.start_date);
+              const weekEnd = String(row.end_date);
+              const daysInWeek = Math.round((new Date(weekEnd).getTime() - new Date(weekStart).getTime()) / (24*60*60*1000)) + 1;
+              
+              for (const k of allKeys) {
+                if (k >= weekStart && k <= weekEnd && k < HISTORICAL_DATA_CUTOFF) {
+                  const cur = histYTMap.get(k) || { views:0, likes:0, comments:0 };
+                  cur.views += Math.round((Number(row.views) || 0) / daysInWeek);
+                  cur.likes += Math.round((Number(row.likes) || 0) / daysInWeek);
+                  cur.comments += Math.round((Number(row.comments) || 0) / daysInWeek);
+                  histYTMap.set(k, cur);
+                }
+              }
+            }
             
             // Merge historical data with realtime data
-            const mergeHistorical = (arr: any[], histMap: Map<string, any>, platform: 'tiktok'|'instagram'|'total') => {
+            const mergeHistorical = (arr: any[], histMap: Map<string, any>, platform: 'tiktok'|'instagram'|'youtube'|'total') => {
               const resultMap = new Map<string, any>();
               // First add realtime data
               for (const item of arr) {
@@ -265,11 +295,14 @@ export default function DashboardTotalPage() {
                   if (platform === 'total') {
                     const tt = histTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
                     const ig = histIGMap.get(k) || { views:0, likes:0, comments:0 };
-                    histValue = { views: tt.views + ig.views, likes: tt.likes + ig.likes, comments: tt.comments + ig.comments, shares: tt.shares, saves: tt.saves };
+                    const yt = histYTMap.get(k) || { views:0, likes:0, comments:0 };
+                    histValue = { views: tt.views + ig.views + yt.views, likes: tt.likes + ig.likes + yt.likes, comments: tt.comments + ig.comments + yt.comments, shares: tt.shares, saves: tt.saves };
                   } else if (platform === 'tiktok') {
                     histValue = histTTMap.get(k) || { views:0, likes:0, comments:0, shares:0, saves:0 };
-                  } else {
+                  } else if (platform === 'instagram') {
                     histValue = histIGMap.get(k) || { views:0, likes:0, comments:0 };
+                  } else {
+                    histValue = histYTMap.get(k) || { views:0, likes:0, comments:0 };
                   }
                   const existing = resultMap.get(k);
                   if (existing) {
@@ -277,7 +310,7 @@ export default function DashboardTotalPage() {
                     existing.views = (existing.views || 0) + (histValue.views || 0);
                     existing.likes = (existing.likes || 0) + (histValue.likes || 0);
                     existing.comments = (existing.comments || 0) + (histValue.comments || 0);
-                    if (platform !== 'instagram') {
+                    if (platform === 'tiktok') {
                       existing.shares = (existing.shares || 0) + (histValue.shares || 0);
                       existing.saves = (existing.saves || 0) + (histValue.saves || 0);
                     }
@@ -292,6 +325,7 @@ export default function DashboardTotalPage() {
             json.total = mergeHistorical(json.total || [], histTTMap, 'total');
             json.total_tiktok = mergeHistorical(json.total_tiktok || [], histTTMap, 'tiktok');
             json.total_instagram = mergeHistorical(json.total_instagram || [], histIGMap, 'instagram');
+            json.total_youtube = mergeHistorical(json.total_youtube || [], histYTMap, 'youtube');
             
             console.log('[ACCRUAL] After merging historical, total entries:', json.total.length);
           }
@@ -313,7 +347,8 @@ export default function DashboardTotalPage() {
           // Derive platform totals if missing or empty
           const needTT = !Array.isArray(json?.total_tiktok) || json.total_tiktok.length === 0;
           const needIG = !Array.isArray(json?.total_instagram) || json.total_instagram.length === 0;
-          if (needTT || needIG) {
+          const needYT = !Array.isArray(json?.total_youtube) || json.total_youtube.length === 0;
+          if (needTT || needIG || needYT) {
             const sumByDate = (arrs: any[][], pick: (s:any)=>{views:number;likes:number;comments:number;shares?:number;saves?:number}) => {
               const map = new Map<string, any>();
               for (const g of arrs) {
@@ -336,6 +371,10 @@ export default function DashboardTotalPage() {
             if (needIG) {
               const igArrays = json.groups.map((g:any)=> g.series_instagram || []);
               json.total_instagram = sumByDate(igArrays, (s:any)=>({views:s.views||0, likes:s.likes||0, comments:s.comments||0}));
+            }
+            if (needYT) {
+              const ytArrays = json.groups.map((g:any)=> g.series_youtube || []);
+              json.total_youtube = sumByDate(ytArrays, (s:any)=>({views:s.views||0, likes:s.likes||0, comments:s.comments||0}));
             }
           }
         }
@@ -381,19 +420,37 @@ export default function DashboardTotalPage() {
         if (!res.ok) throw new Error(json?.error || 'Failed historical');
         const tt = Array.isArray(json.tiktok)? json.tiktok: [];
         const ig = Array.isArray(json.instagram)? json.instagram: [];
+        const yt = Array.isArray(json.youtube)? json.youtube: [];
         const map = new Map<string, any>();
         const keyOf = (r:any)=> `${String(r.start_date)}|${String(r.end_date)}`;
+        
+        // Helper to init object
+        const initObj = (r:any) => ({ 
+          start_date: r.start_date, end_date: r.end_date, 
+          views:0, likes:0, comments:0, 
+          tiktok:0, tiktok_likes:0, tiktok_comments:0, 
+          instagram:0, instagram_likes:0, instagram_comments:0,
+          youtube:0, youtube_likes:0, youtube_comments:0
+        });
+
         for (const r of tt) {
           const k = keyOf(r);
-          const cur = map.get(k) || { start_date: r.start_date, end_date: r.end_date, views:0, likes:0, comments:0, tiktok:0, tiktok_likes:0, tiktok_comments:0, instagram:0, instagram_likes:0, instagram_comments:0 };
+          const cur = map.get(k) || initObj(r);
           cur.tiktok += Number((r as any).views)||0; cur.tiktok_likes += Number((r as any).likes)||0; cur.tiktok_comments += Number((r as any).comments)||0;
           cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
           map.set(k, cur);
         }
         for (const r of ig) {
           const k = keyOf(r);
-          const cur = map.get(k) || { start_date: r.start_date, end_date: r.end_date, views:0, likes:0, comments:0, tiktok:0, tiktok_likes:0, tiktok_comments:0, instagram:0, instagram_likes:0, instagram_comments:0 };
+          const cur = map.get(k) || initObj(r);
           cur.instagram += Number((r as any).views)||0; cur.instagram_likes += Number((r as any).likes)||0; cur.instagram_comments += Number((r as any).comments)||0;
+          cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
+          map.set(k, cur);
+        }
+        for (const r of yt) {
+          const k = keyOf(r);
+          const cur = map.get(k) || initObj(r);
+          cur.youtube += Number((r as any).views)||0; cur.youtube_likes += Number((r as any).likes)||0; cur.youtube_comments += Number((r as any).comments)||0;
           cur.views += Number((r as any).views)||0; cur.likes += Number((r as any).likes)||0; cur.comments += Number((r as any).comments)||0;
           map.set(k, cur);
         }
@@ -1126,12 +1183,14 @@ export default function DashboardTotalPage() {
       // Datasets (totals + platform breakdown)
       const pick = (p:any)=> metric==='likes'? p.likes : metric==='comments'? p.comments : p.views;
       const totalVals = allPeriods.map(p=> pick(p));
-      const datasets:any[] = [ { label: platformFilter==='all'?'Total': platformFilter==='tiktok'?'TikTok':'Instagram', data: totalVals, borderColor: palette[0], backgroundColor: palette[0]+'33', fill:true, tension:0.35, yAxisID:'y' } ];
+      const datasets:any[] = [ { label: platformFilter==='all'?'Total': platformFilter==='tiktok'?'TikTok': platformFilter==='instagram'?'Instagram':'YouTube', data: totalVals, borderColor: palette[0], backgroundColor: palette[0]+'33', fill:true, tension:0.35, yAxisID:'y' } ];
       if (platformFilter==='all') {
         const ttVals = allPeriods.map((p:any)=> metric==='likes'? (p.tiktok_likes||0) : metric==='comments'? (p.tiktok_comments||0) : (p.tiktok||0));
         const igVals = allPeriods.map((p:any)=> metric==='likes'? (p.instagram_likes||0) : metric==='comments'? (p.instagram_comments||0) : (p.instagram||0));
+        const ytVals = allPeriods.map((p:any)=> metric==='likes'? (p.youtube_likes||0) : metric==='comments'? (p.youtube_comments||0) : (p.youtube||0));
         datasets.push({ label:'TikTok', data: ttVals, borderColor:'#38bdf8', backgroundColor:'rgba(56,189,248,0.15)', fill:false, tension:0.35, yAxisID:'y' });
         datasets.push({ label:'Instagram', data: igVals, borderColor:'#f43f5e', backgroundColor:'rgba(244,63,94,0.15)', fill:false, tension:0.35, yAxisID:'y' });
+        datasets.push({ label:'YouTube', data: ytVals, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.15)', fill:false, tension:0.35, yAxisID:'y' });
       }
 
       // Per-group lines (realtime only; historical buckets remain zero)
@@ -1145,6 +1204,7 @@ export default function DashboardTotalPage() {
           let series: any[] = (g.series||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
           if (platformFilter==='tiktok' && g.series_tiktok) series = (g.series_tiktok||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
           else if (platformFilter==='instagram' && g.series_instagram) series = (g.series_instagram||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
+          else if (platformFilter==='youtube' && g.series_youtube) series = (g.series_youtube||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
           if (!series.length) continue;
           const weekly = groupByWeek(series, REALTIME_START);
           const weekMap = new Map<number, any>();
@@ -1201,11 +1261,13 @@ export default function DashboardTotalPage() {
       totalSeries = data.total_tiktok;
     } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram) && data.total_instagram.length) {
       totalSeries = data.total_instagram;
+    } else if (platformFilter === 'youtube' && Array.isArray(data.total_youtube) && data.total_youtube.length) {
+      totalSeries = data.total_youtube;
     }
     
     const totalVals = totalSeries.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
     datasets.push({ 
-      label: platformFilter === 'all' ? 'Total' : platformFilter === 'tiktok' ? 'TikTok' : 'Instagram',
+      label: platformFilter === 'all' ? 'Total' : platformFilter === 'tiktok' ? 'TikTok' : platformFilter === 'instagram' ? 'Instagram' : 'YouTube',
       data: totalVals, 
       borderColor: palette[0], 
       backgroundColor: palette[0]+'33', 
@@ -1224,6 +1286,10 @@ export default function DashboardTotalPage() {
         const igVals = data.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
         datasets.push({ label:'Instagram', data: igVals, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
+      if (Array.isArray(data.total_youtube) && data.total_youtube.length) {
+        const ytVals = data.total_youtube.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+        datasets.push({ label:'YouTube', data: ytVals, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
+      }
     }
     
     // Per group lines (filter by platform)
@@ -1235,6 +1301,8 @@ export default function DashboardTotalPage() {
         seriesToUse = g.series_tiktok;
       } else if (platformFilter === 'instagram' && g.series_instagram) {
         seriesToUse = g.series_instagram;
+      } else if (platformFilter === 'youtube' && g.series_youtube) {
+        seriesToUse = g.series_youtube;
       }
       
       const map:Record<string,any> = {}; 
@@ -1417,6 +1485,9 @@ export default function DashboardTotalPage() {
         </button>
         <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='instagram'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('instagram')}>
           <span className="text-[#f43f5e]">●</span> Instagram
+        </button>
+        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='youtube'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('youtube')}>
+          <span className="text-[#ef4444]">●</span> YouTube
         </button>
         
         <span className="text-white/30 mx-2">|</span>

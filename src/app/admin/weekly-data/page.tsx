@@ -250,6 +250,7 @@ export default function WeeklyDataInput() {
               >
                 <option value="TIKTOK">TikTok</option>
                 <option value="INSTAGRAM">Instagram</option>
+                <option value="YOUTUBE">YouTube</option>
               </select>
             </div>
 
@@ -373,6 +374,7 @@ export default function WeeklyDataInput() {
                       <td className="py-3 px-2">
                         <span className={`px-2 py-1 rounded text-xs ${
                           item.platform === 'TIKTOK' ? 'bg-cyan-500/20 text-cyan-300' :
+                          item.platform === 'YOUTUBE' ? 'bg-red-500/20 text-red-300' :
                           'bg-pink-500/20 text-pink-300'
                         }`}>
                           {item.platform}

@@ -64,6 +64,7 @@ export default function CampaignsPage() {
   const [userSeries, setUserSeries] = useState<any[] | null>(null);
   const [userSeriesTT, setUserSeriesTT] = useState<any[] | null>(null);
   const [userSeriesIG, setUserSeriesIG] = useState<any[] | null>(null);
+  const [userSeriesYT, setUserSeriesYT] = useState<any[] | null>(null);
   const [userTotals, setUserTotals] = useState<any | null>(null);
   const [userSeriesLoading, setUserSeriesLoading] = useState(false);
   // User modal settings now directly inherit from parent page
@@ -71,6 +72,7 @@ export default function CampaignsPage() {
   const [showTotal, setShowTotal] = useState(true);
   const [showTikTok, setShowTikTok] = useState(true);
   const [showInstagram, setShowInstagram] = useState(true);
+  const [showYouTube, setShowYouTube] = useState(true);
   const userChartRef = useRef<any>(null);
   const [userActiveIndex, setUserActiveIndex] = useState<number | null>(null);
   // Manage members state
@@ -271,22 +273,24 @@ export default function CampaignsPage() {
         let effEnd: string;
         let apiUrl = `/api/employees/${encodeURIComponent(selectedUser)}/metrics?campaign_id=${selected.id}`;
         
-        // Post date mode - use group dates, weekly
+        // Post date mode - use group dates, but respect the requested interval (default daily)
         effStart = groupStart;
         effEnd = groupEnd;
-        apiUrl += `&start=${effStart}&end=${effEnd}&interval=weekly`;
+        apiUrl += `&start=${effStart}&end=${effEnd}&interval=${chartInterval}`;
         
         const res = await fetch(apiUrl, { cache: 'no-store' });
         const data = await res.json();
         if (res.ok) {
           const maskedTT = data.series_tiktok || [];
           const maskedIG = data.series_instagram || [];
+          const maskedYT = data.series_youtube || [];
           setUserSeriesTT(maskedTT);
           setUserSeriesIG(maskedIG);
-          // Rebuild combined series from masked TT + masked IG
+          setUserSeriesYT(maskedYT);
+          // Rebuild combined series from masked TT + masked IG + masked YT
           const map = new Map<string, any>();
           const add = (arr:any[] = []) => { for (const s of arr) { const key=String(s.date); const cur = map.get(key) || { date:key, views:0, likes:0, comments:0, shares:0, saves:0 }; cur.views += Number(s.views)||0; cur.likes += Number(s.likes)||0; cur.comments += Number(s.comments)||0; cur.shares += Number(s.shares)||0; cur.saves += Number(s.saves)||0; map.set(key, cur); } };
-          add(maskedTT); add(maskedIG);
+          add(maskedTT); add(maskedIG); add(maskedYT);
           setUserSeries(Array.from(map.values()).sort((a:any,b:any)=> String(a.date).localeCompare(String(b.date))));
           setUserTotals(data.totals || null);
         }
@@ -342,10 +346,13 @@ export default function CampaignsPage() {
     const dataTotal = (metrics.series_total || base).map((s:any)=> pick(s));
     const dataTikTok = (metrics.series_tiktok || []).map((s:any)=> pick(s));
     const dataInstagram = (metrics.series_instagram || []).map((s:any)=> pick(s));
+    const dataYouTube = (metrics.series_youtube || []).map((s:any)=> pick(s));
+
     const datasets: any[] = [
-      { label: 'Total', data: dataTotal, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.2)', fill: true, tension: 0.35 },
-      { label: 'TikTok', data: dataTikTok, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35 },
-      { label: 'Instagram', data: dataInstagram, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35 },
+      { label: 'Total', data: dataTotal, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.2)', fill: true, tension: 0.35, hidden: !showTotal },
+      { label: 'TikTok', data: dataTikTok, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35, hidden: !showTikTok },
+      { label: 'Instagram', data: dataInstagram, borderColor: '#e1306c', backgroundColor: 'rgba(225,48,108,0.15)', fill: false, tension: 0.35, hidden: !showInstagram },
+      { label: 'YouTube', data: dataYouTube, borderColor: '#FF0000', backgroundColor: 'rgba(255,0,0,0.15)', fill: false, tension: 0.35, hidden: !showYouTube },
     ];
 
     // Add overlay datasets for selected employees
@@ -782,6 +789,9 @@ export default function CampaignsPage() {
               {/* Left: Mode removed - always Post Date weekly */}
               <div className="flex items-center gap-2 justify-start flex-wrap">
                 <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
+                <button onClick={()=>setShowTikTok(!showTikTok)} className={`px-2 py-1 rounded border border-white/10 ${showTikTok?'bg-[#38bdf8]/20 text-[#38bdf8]':'text-white/40'}`}>TikTok</button>
+                <button onClick={()=>setShowInstagram(!showInstagram)} className={`px-2 py-1 rounded border border-white/10 ${showInstagram?'bg-[#e1306c]/20 text-[#e1306c]':'text-white/40'}`}>IG</button>
+                <button onClick={()=>setShowYouTube(!showYouTube)} className={`px-2 py-1 rounded border border-white/10 ${showYouTube?'bg-[#ff0000]/20 text-[#ff0000]':'text-white/40'}`}>YT</button>
               </div>
 
               {/* Center: Interval removed - historical data is weekly only */}
@@ -1353,12 +1363,13 @@ export default function CampaignsPage() {
             {/* Settings inherited from parent page - no separate controls needed */}
             {userSeriesLoading && <p className="text-white/60">Memuat…</p>}
             {/* Toggle sumber data seperti grafik lain */}
-            {!userSeriesLoading && (userSeries || userSeriesTT || userSeriesIG) && (
+            {!userSeriesLoading && (userSeries || userSeriesTT || userSeriesIG || userSeriesYT) && (
               <div className="mb-2 flex items-center gap-2 text-xs">
                 <span className="text-white/60">Sumber:</span>
                 <button onClick={()=>setShowTotal(v=>!v)} className={`px-2 py-1 rounded border ${showTotal?'bg-white/20 text-white border-white/20':'text-white/70 border-white/10 hover:bg-white/10'}`}>Total</button>
                 <button onClick={()=>setShowTikTok(v=>!v)} className={`px-2 py-1 rounded border ${showTikTok?'bg-white/20 text-white border-white/20':'text-white/70 border-white/10 hover:bg-white/10'}`}>TikTok</button>
                 <button onClick={()=>setShowInstagram(v=>!v)} className={`px-2 py-1 rounded border ${showInstagram?'bg-white/20 text-white border-white/20':'text-white/70 border-white/10 hover:bg-white/10'}`}>Instagram</button>
+                <button onClick={()=>setShowYouTube(v=>!v)} className={`px-2 py-1 rounded border ${showYouTube?'bg-white/20 text-white border-white/20':'text-white/70 border-white/10 hover:bg-white/10'}`}>YouTube</button>
               </div>
             )}
             {!userSeriesLoading && userTotals && (
@@ -1380,6 +1391,7 @@ export default function CampaignsPage() {
                     if (showTotal) arr.push({ label: 'Total', data: userSeries.map((s:any)=> pick(s)), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.12)', fill: true, tension: 0.35, pointRadius: 0, pointHoverRadius: 6 });
                     if (showTikTok) arr.push({ label: 'TikTok', data: (userSeriesTT||[]).map((s:any)=> pick(s)), borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.06)', fill: false, tension: 0.35, pointRadius: 0, pointHoverRadius: 6 });
                     if (showInstagram) arr.push({ label: 'Instagram', data: (userSeriesIG||[]).map((s:any)=> pick(s)), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.06)', fill: false, tension: 0.35, pointRadius: 0, pointHoverRadius: 6 });
+                    if (showYouTube) arr.push({ label: 'YouTube', data: (userSeriesYT||[]).map((s:any)=> pick(s)), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.06)', fill: false, tension: 0.35, pointRadius: 0, pointHoverRadius: 6 });
                     return arr;
                   })()
                 }} options={{

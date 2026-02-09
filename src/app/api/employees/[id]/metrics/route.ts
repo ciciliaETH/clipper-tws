@@ -71,6 +71,7 @@ export async function GET(req: Request, context: any) {
     // resolve usernames for this employee
     let usernames: string[] = [];
     let igUsernames: string[] = [];
+    let ytChannels: string[] = [];
     if (campaignId) {
       // prefer per-campaign assignment using employee_participants
       const { data: ep } = await supabase
@@ -91,6 +92,17 @@ export async function GET(req: Request, context: any) {
         const { data: aus } = await supabase.from('users').select('tiktok_username').in('id', accountIds);
         usernames = (aus || []).map((x:any)=>x.tiktok_username).filter(Boolean);
       }
+    }
+    
+    // Fallback: if still no specific assignment, use entire campaign_participants (consistent with group members logic)
+    if (campaignId && usernames.length === 0) {
+      try {
+        const { data: campTT } = await supabase
+          .from('campaign_participants')
+          .select('tiktok_username')
+          .eq('campaign_id', campaignId);
+        usernames = (campTT || []).map((x:any)=> String(x.tiktok_username)).filter(Boolean);
+      } catch {}
     }
 
     // Resolve Instagram usernames for this employee
@@ -158,22 +170,65 @@ export async function GET(req: Request, context: any) {
         }
       }
     } catch {}
+
+    // Fallback: if still no specific IG assignment, use entire campaign_instagram_participants
+    if (campaignId && igUsernames.length === 0) {
+      try {
+        const { data: campIG } = await supabase
+          .from('campaign_instagram_participants')
+          .select('instagram_username')
+          .eq('campaign_id', campaignId);
+        igUsernames = (campIG || []).map((x:any)=> String(x.instagram_username)).filter(Boolean);
+      } catch {}
+    }
+
+    // Resolve YouTube channels for this employee
+    try {
+      if (campaignId) {
+        const { data: ytEp } = await supabase
+          .from('employee_youtube_participants')
+          .select('youtube_channel_id')
+          .eq('employee_id', id)
+          .eq('campaign_id', campaignId);
+        ytChannels = (ytEp || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean);
+      }
+      if (!ytChannels.length) {
+        const { data: ytMap } = await supabase.from('user_youtube_channels').select('youtube_channel_id').eq('user_id', id);
+        ytChannels = (ytMap || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean);
+      }
+      if (!ytChannels.length) {
+        const { data: ytProfile } = await supabase.from('users').select('youtube_channel_id').eq('id', id).maybeSingle();
+        if (ytProfile?.youtube_channel_id) ytChannels.push(String(ytProfile.youtube_channel_id));
+      }
+      
+      // Fallback: if still no specific YT assignment and campaign exists, use campaign_youtube_participants
+      if (campaignId && ytChannels.length === 0) {
+        const { data: campYT } = await supabase
+          .from('campaign_youtube_participants')
+          .select('youtube_channel_id')
+          .eq('campaign_id', campaignId);
+        if (campYT && campYT.length > 0) {
+          ytChannels = campYT.map((x:any)=> String(x.youtube_channel_id)).filter(Boolean);
+        }
+      }
+    } catch {}
+    
     // As an ultimate fallback, mirror TikTok usernames to try query IG dataset.
     if (!igUsernames.length) igUsernames = [...usernames];
     // Normalize & dedupe early
     igUsernames = Array.from(new Set(igUsernames.map((u)=> String(u).replace(/^@+/, '').toLowerCase()).filter(Boolean)));
 
-    // Ensure campaign mapping exists so future queries don't miss
-    if (campaignId && igUsernames.length) {
+    // Use campaign mapping if possible for YouTube
+    if (campaignId && ytChannels.length) {
       try {
-        const campRows = igUsernames.map(u => ({ campaign_id: campaignId, instagram_username: u }));
-        const empRows = igUsernames.map(u => ({ employee_id: id, campaign_id: campaignId, instagram_username: u }));
-        await supabase.from('campaign_instagram_participants').upsert(campRows, { onConflict: 'campaign_id,instagram_username', ignoreDuplicates: true });
-        await supabase.from('employee_instagram_participants').upsert(empRows, { onConflict: 'employee_id,campaign_id,instagram_username', ignoreDuplicates: true });
+        const campRows = ytChannels.map(u => ({ campaign_id: campaignId, youtube_channel_id: u }));
+        const empRows = ytChannels.map(u => ({ employee_id: id, campaign_id: campaignId, youtube_channel_id: u }));
+        await supabase.from('campaign_youtube_participants').upsert(campRows, { onConflict: 'campaign_id,youtube_channel_id', ignoreDuplicates: true });
+        await supabase.from('employee_youtube_participants').upsert(empRows, { onConflict: 'employee_id,campaign_id,youtube_channel_id', ignoreDuplicates: true });
       } catch {}
     }
 
-    if (usernames.length === 0 && igUsernames.length === 0) return NextResponse.json({ series: [], totals: {}, interval });
+    if (usernames.length === 0 && igUsernames.length === 0 && ytChannels.length === 0) return NextResponse.json({ series: [], totals: {}, interval });
 
     // Fetch campaign hashtags for filtering
     let requiredHashtags: string[] | null = null;
@@ -370,8 +425,12 @@ export async function GET(req: Request, context: any) {
     // Fall back to campaign_participants snapshots only if start/end are not available.
     const normUsernames = Array.from(new Set(usernames.map((u:string)=> String(u).replace(/^@/, '').toLowerCase()).filter(Boolean)));
     const normIG = Array.from(new Set(igUsernames.map((u:string)=> String(u).replace(/^@/, '').toLowerCase()).filter(Boolean)));
+    const normYT = Array.from(new Set(ytChannels.map((u:string)=> String(u).trim()).filter(Boolean)));
+
     let totalsTikTok = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 } as any;
     let totalsInstagram = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 } as any;
+    let totalsYouTube = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 } as any;
+
     if (start && end) {
       const { data: rows, error: aggErr } = await supabase
         .from('tiktok_posts_daily')
@@ -404,6 +463,21 @@ export async function GET(req: Request, context: any) {
         totalsInstagram.likes += Number((r as any).like_count)||0;
         totalsInstagram.comments += Number((r as any).comment_count)||0;
         totalsInstagram.posts += 1;
+      }
+
+      if (normYT.length) {
+        const { data: ytRows } = await supabase
+          .from('youtube_posts_daily')
+          .select('views, likes, comments')
+          .in('channel_id', normYT)
+          .gte('post_date', start)
+          .lte('post_date', end);
+        for (const r of ytRows || []) {
+          totalsYouTube.views += Number((r as any).views)||0;
+          totalsYouTube.likes += Number((r as any).likes)||0;
+          totalsYouTube.comments += Number((r as any).comments)||0;
+          totalsYouTube.posts += 1;
+        }
       }
     }
     // If IG still zero and campaignId provided, fallback to snapshots campaign_instagram_participants
@@ -442,6 +516,7 @@ export async function GET(req: Request, context: any) {
     let series: any[] = [];
     let seriesTikTok: any[] = [];
     let seriesInstagram: any[] = [];
+    let seriesYouTube: any[] = [];
     try {
       const { data: rows, error: rpcErr } = await supabase.rpc('campaign_series_usernames', {
         start_date: start || null,
@@ -501,6 +576,49 @@ export async function GET(req: Request, context: any) {
       seriesInstagram = Array.from(buck.values()).sort((a,b)=> a.date.localeCompare(b.date));
     } catch {}
 
+    // YouTube series
+    try {
+      if (normYT.length) {
+        const { data: rows } = await supabase
+          .from('youtube_posts_daily')
+          .select('post_date, views, likes, comments')
+          .in('channel_id', normYT)
+          .gte('post_date', start || '1970-01-01')
+          .lte('post_date', end || new Date().toISOString().slice(0,10));
+        
+        const map = new Map<string,{views:number;likes:number;comments:number}>();
+        for (const r of rows||[]) {
+          const key = String(r.post_date).slice(0,10);
+          const cur = map.get(key) || { views:0, likes:0, comments:0 };
+          cur.views += Number(r.views)||0;
+          cur.likes += Number(r.likes)||0;
+          cur.comments += Number(r.comments)||0;
+          map.set(key, cur);
+        }
+        // Bucket YT
+        const bucketKey = (dStr:string) => {
+          if (interval === 'weekly') {
+            const d = new Date(dStr+'T00:00:00Z');
+            const day = d.getUTCDay();
+            const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - ((day+6)%7));
+            return monday.toISOString().slice(0,10);
+          }
+          if (interval === 'monthly') {
+            const d = new Date(dStr+'T00:00:00Z');
+            return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10);
+          }
+          return dStr;
+        };
+        const buck = new Map<string,{date:string;views:number;likes:number;comments:number;shares:number;saves:number}>();
+        for (const [d,v] of Array.from(map.entries())) {
+          const k = bucketKey(d);
+          const cur = buck.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+          cur.views += v.views; cur.likes += v.likes; cur.comments += v.comments; buck.set(k, cur);
+        }
+        seriesYouTube = Array.from(buck.values()).sort((a,b)=> a.date.localeCompare(b.date));
+      }
+    } catch {}
+
     // Build canonical key range across start..end with requested interval to align TT and IG arrays
     const buildKeys = (s?:string|null, e?:string|null): string[] => {
       const s0 = s || new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
@@ -525,14 +643,23 @@ export async function GET(req: Request, context: any) {
     const keys = buildKeys(start, end);
     const mapTT = new Map(seriesTikTok.map((s:any)=>[s.date, s]));
     const mapIG = new Map(seriesInstagram.map((s:any)=>[s.date, s]));
-    const alignedTT:any[] = []; const alignedIG:any[] = []; const merged:any[] = [];
+    const mapYT = new Map(seriesYouTube.map((s:any)=>[s.date, s]));
+    const alignedTT:any[] = []; const alignedIG:any[] = []; const alignedYT:any[] = []; const merged:any[] = [];
     for (const k of keys) {
       const t = mapTT.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
       const ig = mapIG.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
-      alignedTT.push(t); alignedIG.push(ig);
-      merged.push({ date:k, views:(t.views||0)+(ig.views||0), likes:(t.likes||0)+(ig.likes||0), comments:(t.comments||0)+(ig.comments||0), shares:(t.shares||0)+(ig.shares||0), saves:(t.saves||0)+(ig.saves||0) });
+      const yt = mapYT.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+      alignedTT.push(t); alignedIG.push(ig); alignedYT.push(yt);
+      merged.push({ 
+        date:k, 
+        views:(t.views||0)+(ig.views||0)+(yt.views||0), 
+        likes:(t.likes||0)+(ig.likes||0)+(yt.likes||0), 
+        comments:(t.comments||0)+(ig.comments||0)+(yt.comments||0), 
+        shares:(t.shares||0)+(ig.shares||0), 
+        saves:(t.saves||0)+(ig.saves||0) 
+      });
     }
-    seriesTikTok = alignedTT; seriesInstagram = alignedIG; series = merged;
+    seriesTikTok = alignedTT; seriesInstagram = alignedIG; seriesYouTube = alignedYT; series = merged;
 
     // Load historical metrics if available
     let historical: any[] = [];
@@ -571,23 +698,25 @@ export async function GET(req: Request, context: any) {
     }
 
     const totals = {
-      views: (totalsTikTok.views||0)+(totalsInstagram.views||0),
-      likes: (totalsTikTok.likes||0)+(totalsInstagram.likes||0),
-      comments: (totalsTikTok.comments||0)+(totalsInstagram.comments||0),
-      shares: (totalsTikTok.shares||0)+(totalsInstagram.shares||0),
-      saves: (totalsTikTok.saves||0)+(totalsInstagram.saves||0),
-      posts: (totalsTikTok.posts||0)+(totalsInstagram.posts||0),
+      views: (totalsTikTok.views||0)+(totalsInstagram.views||0)+(totalsYouTube.views||0),
+      likes: (totalsTikTok.likes||0)+(totalsInstagram.likes||0)+(totalsYouTube.likes||0),
+      comments: (totalsTikTok.comments||0)+(totalsInstagram.comments||0)+(totalsYouTube.comments||0),
+      shares: (totalsTikTok.shares||0)+(totalsInstagram.shares||0)+(totalsYouTube.shares||0),
+      saves: (totalsTikTok.saves||0)+(totalsInstagram.saves||0)+(totalsYouTube.saves||0),
+      posts: (totalsTikTok.posts||0)+(totalsInstagram.posts||0)+(totalsYouTube.posts||0),
     };
     return NextResponse.json({ 
       series, 
       series_tiktok: seriesTikTok, 
       series_instagram: seriesInstagram, 
+      series_youtube: seriesYouTube,
       historical,
       totals, 
       totals_tiktok: totalsTikTok, 
       totals_instagram: totalsInstagram, 
+      totals_youtube: totalsYouTube,
       interval, 
-      resolved_usernames: { tiktok: normUsernames, instagram: normIG }, 
+      resolved_usernames: { tiktok: normUsernames, instagram: normIG, youtube: normYT }, 
       window: { start, end } 
     });
   } catch (e: any) {

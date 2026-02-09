@@ -10,12 +10,16 @@ export interface User {
   updated_at: string;
   tiktok_username?: string | null;
   instagram_username?: string | null;
+  youtube_channel_id?: string | null;
+  extra_tiktok_usernames?: string[];
+  extra_instagram_usernames?: string[];
+  extra_youtube_channel_ids?: string[];
 }
 
 export interface SocialMetrics {
   id: string;
   user_id: string;
-  platform: 'tiktok';
+  platform: 'tiktok' | 'instagram' | 'youtube';
   username: string;
   likes: number;
   views: number;

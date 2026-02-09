@@ -24,8 +24,10 @@ export default function AdminPage() {
   // Tag inputs for TikTok & Instagram
   const [tikTags, setTikTags] = useState<string[]>([]);
   const [igTags, setIgTags] = useState<string[]>([]);
+  const [ytTags, setYtTags] = useState<string[]>([]);
   const [tikInput, setTikInput] = useState('');
   const [igInput, setIgInput] = useState('');
+  const [ytInput, setYtInput] = useState('');
   const [searchName, setSearchName] = useState('');
 
   const loadUsers = useCallback(async () => {
@@ -101,7 +103,7 @@ export default function AdminPage() {
     setCurrentUser({ role: 'karyawan' });
     setPassword('');
     setShowPasswordField(true); // create needs password
-    setTikTags([]); setIgTags([]); setTikInput(''); setIgInput('');
+    setTikTags([]); setIgTags([]); setYtTags([]); setTikInput(''); setIgInput(''); setYtInput('');
     setShowModal(true);
   };
 
@@ -119,7 +121,14 @@ export default function AdminPage() {
     const igPrim = (user as any).instagram_username ? [String((user as any).instagram_username)] : [];
     const allIG = [...igPrim, ...igExtras].map((u:string)=> String(u).replace(/^@/, '').toLowerCase()).filter(Boolean);
     setIgTags(Array.from(new Set(allIG)));
-    setTikInput(''); setIgInput('');
+    
+    // YouTube
+    const ytExtras: string[] = (user as any).extra_youtube_channel_ids || [];
+    const ytPrim = (user as any).youtube_channel_id ? [String((user as any).youtube_channel_id)] : [];
+    const allYT = [...ytPrim, ...ytExtras].map((u:string)=> String(u).trim()).filter(Boolean);
+    setYtTags(Array.from(new Set(allYT)));
+    
+    setTikInput(''); setIgInput(''); setYtInput('');
     setShowModal(true);
   };
 
@@ -150,6 +159,8 @@ export default function AdminPage() {
             tiktok_usernames: tikTags,
             instagram_username: igTags[0] || '',
             instagram_usernames: igTags,
+            youtube_channel_id: ytTags[0] || '',
+            youtube_channel_ids: ytTags,
           },
           password: password || null,
         }),
@@ -546,6 +557,108 @@ export default function AdminPage() {
     }
   };
 
+  // Smart batch refresh for YouTube with offset tracking
+  const [refreshingYouTube, setRefreshingYouTube] = useState(false);
+  const [youTubeProgress, setYouTubeProgress] = useState<{current: number; total: number; success: number; failed: number} | null>(null);
+  const [youTubeResults, setYouTubeResults] = useState<any>(null);
+  const [showYouTubeContinueDialog, setShowYouTubeContinueDialog] = useState(false);
+  const [youTubeOffset, setYouTubeOffset] = useState(0); // Track batch offset
+  const [youTubeBatchSession, setYouTubeBatchSession] = useState({
+    totalSuccess: 0,
+    totalFailed: 0,
+    processed: new Set<string>()
+  });
+  const [autoYouTubeMode, setAutoYouTubeMode] = useState(false); // AUTO-CONTINUE MODE
+
+  const runYouTubeBatch = async (continueSession = false, customOffset?: number) => {
+    
+    setRefreshingYouTube(true);
+    setShowYouTubeContinueDialog(false);
+    
+    if (!continueSession) {
+      setYouTubeOffset(0);
+      setYouTubeResults(null);
+      setYouTubeProgress(null);
+      setYouTubeBatchSession({ totalSuccess: 0, totalFailed: 0, processed: new Set<string>() });
+    }
+
+    try {
+      // CRITICAL: Use customOffset from auto-continue to avoid React state async issue
+      const currentOffset = customOffset !== undefined ? customOffset : (continueSession ? youTubeOffset : 0);
+      console.log('[YouTube Refresh] Starting refresh');
+      console.log('[YouTube Refresh] Using offset:', currentOffset);
+      console.log('[YouTube Refresh] Auto mode:', autoYouTubeMode ? 'ENABLED (will process ALL batches)' : 'DISABLED (single batch)');
+      
+      const res = await fetch('/api/admin/youtube/refresh-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          offset: currentOffset,
+          include_details: true,
+          auto_continue: autoYouTubeMode // Enable unlimited batch processing in Auto mode
+        })
+      });
+      
+      console.log('[YouTube Refresh] Response status:', res.status);
+      
+      // Handle non-JSON responses (errors)
+      const contentType = res.headers.get('content-type');
+      let j: any;
+      if (contentType && contentType.includes('application/json')) {
+        j = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(`Server error (${res.status}): ${text.substring(0, 200)}`);
+      }
+      
+      if (!res.ok) throw new Error(j?.error || 'Gagal refresh YouTube');
+
+      // Update offset for next batch
+      const nextOffset = j.next_offset || youTubeOffset;
+      if (j.next_offset) {
+        setYouTubeOffset(j.next_offset);
+      }
+      
+      setYouTubeResults(j);
+      setYouTubeProgress({
+        current: j.total_processed || 0, 
+        total: j.total_channels || 0, 
+        success: j.success || 0, 
+        failed: j.failed || 0
+      });
+
+      // Update batch session stats
+      setYouTubeBatchSession(prev => ({
+        totalSuccess: prev.totalSuccess + (j.success || 0),
+        totalFailed: prev.totalFailed + (j.failed || 0),
+        processed: new Set([...prev.processed, ...(j.processed_channels || [])])
+      }));
+
+      // AUTO-CONTINUE MODE: Automatically continue to next batch
+      if (j.remaining > 0) {
+        if (autoYouTubeMode) {
+          console.log(`[AUTO MODE YT] ${j.remaining} channels remaining, continuing in 2 seconds with offset=${nextOffset}...`);
+          setTimeout(() => {
+            setYouTubeOffset(nextOffset); // Update state for UI display
+            runYouTubeBatch(true, nextOffset); // Pass offset directly to avoid stale closure
+          }, 2000);
+        } else {
+          setShowYouTubeContinueDialog(true);
+        }
+      } else {
+        setAutoYouTubeMode(false); // Reset auto mode
+        alert(`✅ Semua ${j.total_channels} channel YouTube berhasil di-refresh!\n\nSuccess: ${youTubeBatchSession.totalSuccess + (j.success || 0)}\nFailed: ${youTubeBatchSession.totalFailed + (j.failed || 0)}`);
+        setYouTubeOffset(0); // Reset for next full refresh
+      }
+    } catch (e: any) {
+      console.error('[YouTube Refresh] Error caught:', e);
+      setAutoYouTubeMode(false); // Stop auto mode on error
+      alert('Error: ' + (e?.message || 'Gagal refresh YouTube'));
+    } finally {
+      setRefreshingYouTube(false);
+    }
+  };
+
   return (
     <div className="p-8 min-h-screen">
       <div className="flex justify-between items-center mb-8">
@@ -595,6 +708,18 @@ export default function AdminPage() {
           >
             <span className="text-lg">🚀</span>
             <span className="font-medium">{autoIGMode ? '⚡ AUTO RUNNING...' : '⚡ AUTO ALL IG'}</span>
+          </button>
+          <button 
+            onClick={() => {
+              setAutoYouTubeMode(true); // AUTO MODE - NO STOP!
+              runYouTubeBatch(false);
+            }} 
+            disabled={refreshingYouTube}
+            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse"
+            title="AUTO MODE: Refresh semua channel YouTube tanpa henti sampai selesai!"
+          >
+            <span className="text-lg">▶️</span>
+            <span className="font-medium">{autoYouTubeMode ? '⚡ AUTO RUNNING...' : '⚡ AUTO ALL YT'}</span>
           </button>
           <button 
             onClick={runResolveIG} 
@@ -653,6 +778,20 @@ export default function AdminPage() {
                   <h3 className="font-semibold text-white">TikTok Progress</h3>
                 </div>
                 <span className="text-lg font-bold text-green-400">✅ {tikTokProgress.success} akun</span>
+              </div>
+            </div>
+          )}
+          {youTubeProgress && youTubeProgress.current > 0 && (
+            <div className="glass rounded-xl border border-red-500/30 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">▶️</span>
+                  <h3 className="font-semibold text-white">YouTube Progress</h3>
+                </div>
+                <div className="text-right">
+                   <div className="text-lg font-bold text-green-400">✅ {youTubeProgress.success}</div>
+                   <div className="text-xs text-white/60">Total: {youTubeProgress.total}</div>
+                </div>
               </div>
             </div>
           )}
@@ -766,6 +905,55 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* YouTube Continue Dialog */}
+      {showYouTubeContinueDialog && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="glass border border-red-500/30 p-8 rounded-2xl max-w-lg w-full glow-border">
+            <div className="text-center mb-6">
+              <div className="text-6xl mb-4">▶️</div>
+              <h2 className="text-2xl font-bold text-white mb-2">Batch YouTube Selesai!</h2>
+              <p className="text-white/70">Ada channel YouTube yang belum ter-fetch.</p>
+            </div>
+            
+            <div className="bg-white/5 rounded-xl p-4 mb-6 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Berhasil:</span>
+                <span className="text-green-400 font-bold">{youTubeBatchSession.totalSuccess} channel</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Gagal:</span>
+                <span className="text-red-400 font-bold">{youTubeBatchSession.totalFailed} channel</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Sudah Diproses:</span>
+                <span className="text-blue-400 font-bold">{youTubeBatchSession.processed.size} channel</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-white/60">Total Channel:</span>
+                <span className="text-white font-bold">{youTubeResults?.total_channels || 0} channel</span>
+              </div>
+            </div>
+
+            <p className="text-center text-white/80 mb-6">Lanjut fetch batch berikutnya?</p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowYouTubeContinueDialog(false)}
+                className="flex-1 px-6 py-3 rounded-xl border border-white/20 text-white hover:bg-white/5 transition-all"
+              >
+                Selesai
+              </button>
+              <button
+                onClick={() => runYouTubeBatch(true)}
+                className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 text-white font-semibold shadow-lg hover:shadow-xl transition-all"
+              >
+                Ya, Lanjutkan! 🚀
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {backfillMsg && (
         <div className="mb-4 text-sm text-white/80">
           <div>{backfillMsg}</div>
@@ -822,6 +1010,7 @@ export default function AdminPage() {
               <th className="px-6 py-3">Username</th>
               <th className="px-6 py-3">TikTok Usernames</th>
               <th className="px-6 py-3">Instagram Usernames</th>
+              <th className="px-6 py-3">YouTube Channels</th>
               <th className="px-6 py-3">Peran</th>
               <th className="px-6 py-3">Aksi</th>
             </tr>
@@ -833,6 +1022,7 @@ export default function AdminPage() {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{user.username}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.tiktok_username, ...(((user as any).extra_tiktok_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[((user as any).instagram_username), ...(((user as any).extra_instagram_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.youtube_channel_id, ...(user.extra_youtube_channel_ids||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
                     user.role === 'admin' ? 'border-red-500/30 text-red-300 bg-red-500/10' : user.role === 'leader' ? 'border-purple-400/30 text-purple-300 bg-purple-400/10' : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
@@ -976,6 +1166,34 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="text-xs text-white/50">Tekan Enter untuk menambah. Yang pertama dianggap utama.</div>
+
+                  <h3 className="font-semibold text-lg mb-2 border-b border-white/10 pb-2 text-white/80 mt-4">Info YouTube</h3>
+                  <div className="mb-1 flex flex-wrap gap-2">
+                    {ytTags.map((t,idx)=> (
+                      <span key={`${t}-${idx}`} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-white/10 text-white/90 text-xs">
+                        {t}
+                        <button type="button" onClick={()=> setYtTags(ytTags.filter((x,i)=>i!==idx))} className="text-white/70 hover:text-white">×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mb-4 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ytInput}
+                      onChange={(e)=> setYtInput(e.target.value)}
+                      onKeyDown={(e)=>{
+                        if (e.key==='Enter' || e.key===',') {
+                          e.preventDefault();
+                          const val = ytInput.trim().replace(/^@/, '');
+                          if (val) setYtTags(prev=> Array.from(new Set([...prev, val])));
+                          setYtInput('');
+                        }
+                      }}
+                      placeholder="Ketik Username YouTube (@...) lalu Enter"
+                      className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white"
+                    />
+                  </div>
+                  <div className="text-xs text-white/50">Tekan Enter untuk menambah. Masukkan Username (contoh: @jokowi).</div>
                 </div>
               </div>
               <div className="mt-8 flex justify-end gap-3">

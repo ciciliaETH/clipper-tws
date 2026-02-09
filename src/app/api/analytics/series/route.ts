@@ -37,6 +37,7 @@ export async function GET(req: Request) {
     // Get accounts from existing tables
     const { data: ttRows } = await supa.from('user_tiktok_usernames').select('tiktok_username');
     const { data: igRows } = await supa.from('user_instagram_usernames').select('instagram_username');
+    const { data: ytRows } = await supa.from('user_youtube_channels').select('youtube_channel_id');
     
     const accounts: { platform: string; username: string; label: string | null }[] = [];
     for (const r of ttRows || []) {
@@ -44,6 +45,9 @@ export async function GET(req: Request) {
     }
     for (const r of igRows || []) {
       if (r.instagram_username) accounts.push({ platform: 'instagram', username: String(r.instagram_username).trim().toLowerCase(), label: null });
+    }
+    for (const r of ytRows || []) {
+      if (r.youtube_channel_id) accounts.push({ platform: 'youtube', username: String(r.youtube_channel_id).trim(), label: null });
     }
     
     if (!accounts.length) return NextResponse.json({ accounts: [], series: [], start: startISO, end: endISO, interval, mode });
@@ -68,6 +72,7 @@ export async function GET(req: Request) {
       
       const ttHandles = accounts.filter(a=>a.platform==='tiktok').map(a=>a.username);
       const igHandles = accounts.filter(a=>a.platform==='instagram').map(a=>a.username);
+      const ytHandles = accounts.filter(a=>a.platform==='youtube').map(a=>a.username);
       
       // PART 1: Query weekly_historical_data for dates < 2026-01-23
       const historicalStart = new Date(startISO + 'T00:00:00Z');
@@ -118,6 +123,52 @@ export async function GET(req: Request) {
                   arr[i].comments += dailyComments;
                   arr[i].shares = (arr[i].shares||0) + dailyShares;
                   arr[i].saves = (arr[i].saves||0) + dailySaves;
+                }
+              }
+            }
+          }
+        }
+        
+        // Query YouTube historical data
+        if (ytHandles.length) {
+          const { data: rows } = await supa
+            .from('weekly_historical_data')
+            .select('week_label, start_date, end_date, platform, views, likes, comments')
+            .ilike('platform', 'youtube')
+            .gte('start_date', startISO)
+            .lt('start_date', '2026-01-23');
+          
+          for (const a of accounts.filter(a=>a.platform==='youtube')) {
+            const key = `youtube:${a.username}`;
+            if (!byAccount[key]) byAccount[key] = fillZeros();
+          }
+          
+          for (const r of rows||[]) {
+            const weekStart = String((r as any).start_date);
+            const weekEnd = String((r as any).end_date);
+            
+            // Calculate number of days in this week range
+            const dStart = new Date(weekStart);
+            const dEnd = new Date(weekEnd);
+            const daysInWeek = Math.round((dEnd.getTime() - dStart.getTime()) / (1000*60*60*24)) + 1;
+            
+            for (let i = 0; i < keys.length; i++) {
+              const k = keys[i];
+              if (k >= weekStart && k <= weekEnd) {
+                // Distribute weekly total across all days (divide by days)
+                const dailyViews = Math.round(Number((r as any).views) / daysInWeek);
+                const dailyLikes = Math.round(Number((r as any).likes) / daysInWeek);
+                const dailyComments = Math.round(Number((r as any).comments) / daysInWeek);
+                
+                // Assign to each user account (historical data: NO cutoff filter)
+                for (const a of accounts.filter(a=>a.platform==='youtube')) {
+                  const key = `youtube:${a.username}`;
+                  const arr = byAccount[key];
+                  if (!arr) continue;
+                  
+                  arr[i].views += dailyViews;
+                  arr[i].likes += dailyLikes;
+                  arr[i].comments += dailyComments;
                 }
               }
             }
@@ -246,6 +297,42 @@ export async function GET(req: Request) {
             }
           }
         }
+        
+        // Query YouTube posts_daily
+        if (ytHandles.length) {
+          const { data: rows } = await supa
+            .from('youtube_posts_daily')
+            .select('channel_id, post_date, views, likes, comments')
+            .in('channel_id', ytHandles)
+            .gte('post_date', realtimeStartISO)
+            .lte('post_date', endISO);
+          
+          for (const a of accounts.filter(a=>a.platform==='youtube')) {
+            const key = `youtube:${a.username}`;
+            if (!byAccount[key]) byAccount[key] = fillZeros();
+          }
+           
+          for (const r of rows||[]) {
+            const channelId = String((r as any).channel_id); // This is the username in our system
+            const postDate = new Date((r as any).post_date); // It's just a date YYYY-MM-DD
+            const k = postDate.toISOString().slice(0,10);
+            
+            // Channel ID in youtube_posts_daily should match username if we refreshed correctly
+            const key = `youtube:${channelId}`;
+            const arr = byAccount[key];
+            if (!arr) continue;
+            
+            const keyIdx = keys.indexOf(k);
+            if (keyIdx === -1) continue;
+            
+            // Only count if post_date >= cutoff
+            if (postDate >= cutoffDate) {
+              arr[keyIdx].views += Number((r as any).views)||0;
+              arr[keyIdx].likes += Number((r as any).likes)||0;
+              arr[keyIdx].comments += Number((r as any).comments)||0;
+            }
+          }
+        }
       }
     } else {
       // Mode accrual: Daily growth/deltas per post
@@ -257,6 +344,7 @@ export async function GET(req: Request) {
       
       const ttHandles = accounts.filter(a=>a.platform==='tiktok').map(a=>a.username);
       const igHandles = accounts.filter(a=>a.platform==='instagram').map(a=>a.username);
+      const ytHandles = accounts.filter(a=>a.platform==='youtube').map(a=>a.username);
       
       // PART 1: Query weekly_historical_data for dates < 2026-01-23 (SAME AS POSTDATE)
       const historicalStart = new Date(startISO + 'T00:00:00Z');
@@ -307,6 +395,47 @@ export async function GET(req: Request) {
                   arr[i].comments += dailyComments;
                   arr[i].shares = (arr[i].shares||0) + dailyShares;
                   arr[i].saves = (arr[i].saves||0) + dailySaves;
+                }
+              }
+            }
+          }
+        }
+        
+        // Query YouTube historical data
+        if (ytHandles.length) {
+          const { data: rows } = await supa
+            .from('weekly_historical_data')
+            .select('week_label, start_date, end_date, platform, views, likes, comments')
+            .ilike('platform', 'youtube')
+            .gte('start_date', startISO)
+            .lt('start_date', '2026-01-23');
+          
+          for (const a of accounts.filter(a=>a.platform==='youtube')) {
+            const key = `youtube:${a.username}`;
+            if (!byAccount[key]) byAccount[key] = fillZeros();
+          }
+          
+          for (const r of rows||[]) {
+            const weekStart = String((r as any).start_date);
+            const weekEnd = String((r as any).end_date);
+            const dStart = new Date(weekStart);
+            const dEnd = new Date(weekEnd);
+            const daysInWeek = Math.round((dEnd.getTime() - dStart.getTime()) / (1000*60*60*24)) + 1;
+            
+            for (let i = 0; i < keys.length; i++) {
+              const k = keys[i];
+              if (k >= weekStart && k <= weekEnd) {
+                const dailyViews = Math.round(Number((r as any).views) / daysInWeek);
+                const dailyLikes = Math.round(Number((r as any).likes) / daysInWeek);
+                const dailyComments = Math.round(Number((r as any).comments) / daysInWeek);
+                
+                for (const a of accounts.filter(a=>a.platform==='youtube')) {
+                  const key = `youtube:${a.username}`;
+                  const arr = byAccount[key];
+                  if (!arr) continue;
+                  arr[i].views += dailyViews;
+                  arr[i].likes += dailyLikes;
+                  arr[i].comments += dailyComments;
                 }
               }
             }
