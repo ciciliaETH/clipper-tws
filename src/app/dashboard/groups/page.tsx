@@ -29,7 +29,7 @@ export default function CampaignsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [selected, setSelected] = useState<Campaign | null>(null);
   const [metrics, setMetrics] = useState<any | null>(null);
-  const [chartInterval, setChartInterval] = useState<'daily'|'weekly'|'monthly'>('weekly');
+  const [chartInterval, setChartInterval] = useState<'daily'|'weekly'|'monthly'>('daily');
   const [chartMode, setChartMode] = useState<'postdate'|'accrual'>('postdate');
   const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
   const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(false);
@@ -51,7 +51,7 @@ export default function CampaignsPage() {
   const [hashtagInput, setHashtagInput] = useState('');
   // Global date filter for group (affects chart + members)
   const [groupStart, setGroupStart] = useState<string>(()=>{
-    const d = new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10);
+    const d = new Date(); d.setDate(d.getDate()-7); return d.toISOString().slice(0,10);
   });
   const [groupEnd, setGroupEnd] = useState<string>(()=> new Date().toISOString().slice(0,10));
   // Group members (employees)
@@ -166,8 +166,8 @@ export default function CampaignsPage() {
       try {
         const effStart = groupStart; // ignored by accrual server
         const effEnd = groupEnd;
-        // Always load group metrics in Post Date weekly mode
-        const groupUrl = `/api/campaigns/${selected.id}/metrics?start=${effStart}&end=${effEnd}&interval=weekly`;
+        // Load group metrics using selected interval
+        const groupUrl = `/api/campaigns/${selected.id}/metrics?start=${effStart}&end=${effEnd}&interval=${chartInterval}`;
         const gRes = await fetch(groupUrl, { cache: 'no-store' });
         let gData = await gRes.json();
         console.log('[DEBUG] API Response:', { 
@@ -196,7 +196,7 @@ export default function CampaignsPage() {
           const reqs = ids.map(async (eid) => {
             const url = new URL(`/api/employees/${encodeURIComponent(eid)}/metrics`, window.location.origin);
             url.searchParams.set('campaign_id', selected.id);
-            url.searchParams.set('interval', 'weekly');
+            url.searchParams.set('interval', chartInterval);
             url.searchParams.set('start', effStart);
             url.searchParams.set('end', effEnd);
             
