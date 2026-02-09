@@ -211,12 +211,7 @@ export async function GET(req: Request, context: any) {
             if (!ms && code && linksMap.has(code)) ms = linksMap.get(code)!;
             // NO RAPIDAPI! If no timestamp, set NULL - backfill endpoint will fix it later
             const taken_at = ms ? new Date(ms).toISOString() : null; // NULL = backfill later!
-            // Incremental cut: if we already have this or older, count and consider early stop
-            if (lastTakenAtMs && ms && ms <= lastTakenAtMs) {
-              olderCount++;
-              // Skip insert for older content
-              continue;
-            }
+            
             const caption = extractCaption(media, node);
             const play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0;
             const like = Number(media?.like_count ?? 0) || 0;

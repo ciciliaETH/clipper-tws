@@ -76,7 +76,7 @@ export default function ParticipantVideosPage() {
   return (
     <div className="min-h-screen p-4 md:p-8">
       <div className="mb-8">
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-white/60 hover:text-white mb-4 transition-colors">
+        <button onClick={() => router.push('/dashboard/groups')} className="flex items-center gap-2 text-white/60 hover:text-white mb-4 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Kembali ke Leaderboard
         </button>
         
