@@ -58,7 +58,7 @@ export async function POST(req: Request) {
 
     const supa = admin();
     const startTime = Date.now();
-    const TIMEOUT_LIMIT = 55000;
+    const TIMEOUT_LIMIT = 50000; // Reduced to 50s to avoid Vercel hard limit (60s)
     let totalUpdated = 0;
     let totalFailed = 0;
     const allResults: any[] = [];
@@ -94,8 +94,8 @@ export async function POST(req: Request) {
           try {
             const aggBase = 'http://202.10.44.90:5000/api/v1';
             const controller = new AbortController();
-            // Timeout dipercepat supaya tidak blocking lama (4s)
-            const timeoutId = setTimeout(() => controller.abort(), 4000); 
+            // Timeout Aggressive: 2.5s. If slow, we skip to RapidAPI immediately.
+            const timeoutId = setTimeout(() => controller.abort(), 2500);
             
             console.log(`[Backfill] Fetching Aggregator: ${code}`);
             const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
@@ -137,8 +137,7 @@ export async function POST(req: Request) {
               console.log(`[Backfill] Aggregator Status: ${aggRes.status}`);
             }
           } catch (err: any) {
-            console.error(`[Backfill] Aggregator Error for ${code}:`, err.message);
-            // Aggregator failed, silently fall through to RapidAPI
+            console.warn(`[Backfill] Aggregator failed/timeout (${err.message}). Switching to RapidAPI...`);
           }
 
           // PRIMARY RAPIDAPI: Use instagram-media-api.p.rapidapi.com/media/shortcode_reels endpoint (POST)
