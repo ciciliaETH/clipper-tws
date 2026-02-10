@@ -94,47 +94,49 @@ export async function POST(req: Request) {
           try {
             const aggBase = 'http://202.10.44.90:5000/api/v1';
             const controller = new AbortController();
-            // Timeout Aggressive: 2.5s. If slow, we skip to RapidAPI immediately.
             const timeoutId = setTimeout(() => controller.abort(), 2500);
             
-            console.log(`[Backfill] Fetching Aggregator: ${code}`);
-            const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
-              signal: controller.signal,
-              cache: 'no-store',
-              headers: {
-                'Content-Type': 'application/json',
-                'Connection': 'close',
-                'User-Agent': 'Mozilla/5.0 (Vercel-Worker-Client)'
-              }
-            });
-            clearTimeout(timeoutId);
-
-            if (aggRes.ok) {
-              const text = await aggRes.text();
-              let json;
-              try {
-                json = JSON.parse(text);
-              } catch (e) {
-                console.error(`[Backfill] Failed to parse JSON for ${code}: ${text.substring(0, 100)}`);
-              }
-
-              if (json && json.status === 'success' && json.data) {
-                console.log(`[Backfill] Aggregator Success for ${code}`);
-                // Determine timestamp logic: explicit timestamp string > taken_at number (seconds)
-                let ts = null;
-                if (json.data.taken_at_timestamp) {
-                  ts = Date.parse(json.data.taken_at_timestamp);
-                } else if (json.data.taken_at) {
-                  ts = Number(json.data.taken_at) * 1000;
+            try {
+              console.log(`[Backfill] Fetching Aggregator: ${code}`);
+              const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
+                signal: controller.signal,
+                cache: 'no-store',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Connection': 'close',
+                  'User-Agent': 'Mozilla/5.0 (Vercel-Worker-Client)'
                 }
-                
-                if (ts && !isNaN(ts)) {
-                  takenAt = new Date(ts).toISOString();
-                  console.log(`[Backfill] Found takenAt: ${takenAt}`);
+              });
+
+              if (aggRes.ok) {
+                const text = await aggRes.text();
+                let json;
+                try {
+                  json = JSON.parse(text);
+                } catch (e) {
+                  console.error(`[Backfill] Failed to parse JSON for ${code}: ${text.substring(0, 100)}`);
                 }
+
+                if (json && json.status === 'success' && json.data) {
+                  console.log(`[Backfill] Aggregator Success for ${code}`);
+                  // Determine timestamp logic: explicit timestamp string > taken_at number (seconds)
+                  let ts = null;
+                  if (json.data.taken_at_timestamp) {
+                    ts = Date.parse(json.data.taken_at_timestamp);
+                  } else if (json.data.taken_at) {
+                    ts = Number(json.data.taken_at) * 1000;
+                  }
+                  
+                  if (ts && !isNaN(ts)) {
+                    takenAt = new Date(ts).toISOString();
+                    console.log(`[Backfill] Found takenAt: ${takenAt}`);
+                  }
+                }
+              } else {
+                console.log(`[Backfill] Aggregator Status: ${aggRes.status}`);
               }
-            } else {
-              console.log(`[Backfill] Aggregator Status: ${aggRes.status}`);
+            } finally {
+              clearTimeout(timeoutId);
             }
           } catch (err: any) {
             console.warn(`[Backfill] Aggregator failed/timeout (${err.message}). Switching to RapidAPI...`);
