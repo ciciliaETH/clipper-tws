@@ -148,18 +148,37 @@ export async function POST(request: Request) {
       const ytPrimary = ytNormalized[0] || null;
 
       // 1. Update profile in public.users
+      const profileUpdates: any = {
+        full_name: userData.full_name,
+        username: userData.username,
+        role: userData.role,
+        tiktok_username: primary,
+        instagram_username: igPrimary,
+      };
+      // Only attempt to update youtube_channel_id if value exists (avoid schema error if column missing)
+      if (ytPrimary) {
+        profileUpdates.youtube_channel_id = ytPrimary;
+      }
+
+      // Try update with youtube_channel_id
       const { error: profileError } = await supabaseAdmin
         .from('users')
-        .update({
-          full_name: userData.full_name,
-          username: userData.username,
-          role: userData.role,
-          tiktok_username: primary,
-          instagram_username: igPrimary,
-          youtube_channel_id: ytPrimary,
-        })
+        .update(profileUpdates)
         .eq('id', userData.id);
-      if (profileError) throw profileError;
+
+      // If error is about missing column, retry without youtube_channel_id
+      if (profileError) {
+        if (profileError.message?.includes('youtube_channel_id') || profileError.code === 'PGRST204') {
+          delete profileUpdates.youtube_channel_id;
+          const { error: retryError } = await supabaseAdmin
+            .from('users')
+            .update(profileUpdates)
+            .eq('id', userData.id);
+          if (retryError) throw retryError;
+        } else {
+           throw profileError;
+        }
+      }
 
       // 1b. Upsert extra usernames mapping
       try {
