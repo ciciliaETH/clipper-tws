@@ -68,13 +68,16 @@ export async function POST(req: Request) {
       let query = supa
         .from('instagram_posts_daily')
         .select('id, code, username, post_date')
-        .is('taken_at', null)
-        .order('play_count', { ascending: false })
-        .limit(limitParam);
+        .is('taken_at', null);
 
       if (usernameFilter) {
         query = query.eq('username', usernameFilter.toLowerCase().replace(/^@/, ''));
       }
+      
+      // Apply ordering and limit AFTER filters
+      query = query
+        .order('play_count', { ascending: false })
+        .limit(limitParam);
 
       const { data: igPosts, error } = await query;
       if (error) throw error;
@@ -217,13 +220,15 @@ export async function POST(req: Request) {
       let query = supa
         .from('tiktok_posts_daily')
         .select('video_id, username, post_date')
-        .is('taken_at', null)
-        .order('play_count', { ascending: false })
-        .limit(limitParam);
+        .is('taken_at', null);
 
       if (usernameFilter) {
         query = query.eq('username', usernameFilter.toLowerCase().replace(/^@/, ''));
       }
+      
+      query = query
+        .order('play_count', { ascending: false })
+        .limit(limitParam);
 
       const { data: ttPosts, error } = await query;
       if (error) throw error;
