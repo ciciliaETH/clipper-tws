@@ -89,16 +89,48 @@ export async function POST(req: Request) {
 
         try {
           let takenAt: string | null = null;
-
-          // PRIMARY: Use instagram-media-api.p.rapidapi.com/media/shortcode_reels endpoint (POST)
+          
+          // 0. AGGREGATOR (First Priority) - Port 5000
           try {
-            const j = await rapidApiRequest<any>({
-              url: `https://${IG_MEDIA_API}/media/shortcode_reels`,
-              method: 'POST',
-              rapidApiHost: IG_MEDIA_API,
-              body: { shortcode: code, proxy: '' },
-              timeoutMs: 12000
+            const aggBase = 'http://202.10.44.90:5000/api/v1';
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            
+            const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
+              signal: controller.signal
             });
+            clearTimeout(timeoutId);
+
+            if (aggRes.ok) {
+              const json = await aggRes.json();
+              if (json.status === 'success' && json.data) {
+                // Determine timestamp logic: explicit timestamp string > taken_at number (seconds)
+                let ts = null;
+                if (json.data.taken_at_timestamp) {
+                  ts = Date.parse(json.data.taken_at_timestamp);
+                } else if (json.data.taken_at) {
+                  ts = Number(json.data.taken_at) * 1000;
+                }
+                
+                if (ts && !isNaN(ts)) {
+                  takenAt = new Date(ts).toISOString();
+                }
+              }
+            }
+          } catch (err) {
+            // Aggregator failed, silently fall through to RapidAPI
+          }
+
+          // PRIMARY RAPIDAPI: Use instagram-media-api.p.rapidapi.com/media/shortcode_reels endpoint (POST)
+          if (!takenAt) {
+            try {
+              const j = await rapidApiRequest<any>({
+                url: `https://${IG_MEDIA_API}/media/shortcode_reels`,
+                method: 'POST',
+                rapidApiHost: IG_MEDIA_API,
+                body: { shortcode: code, proxy: '' },
+                timeoutMs: 12000
+              });
             // Response: data.xdt_api__v1__media__shortcode__web_info.items[0].taken_at
             const items = j?.data?.xdt_api__v1__media__shortcode__web_info?.items || j?.items || [];
             const item = items[0] || j;

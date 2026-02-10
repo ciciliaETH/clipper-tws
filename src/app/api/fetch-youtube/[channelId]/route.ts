@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Vercel limit
 
 const AGGREGATOR_BASE = process.env.AGGREGATOR_BASE || 'http://202.10.44.90/api/v1';
+const AGGREGATOR_V2_BASE = 'http://202.10.44.90/api/v2';
 
 function adminClient() {
   return createClient(
@@ -15,10 +16,11 @@ function adminClient() {
   );
 }
 
-// Convert Unix timestamp (seconds) to YYYY-MM-DD
-function formatPostDate(ts: number | undefined): string {
-  if (!ts) return new Date().toISOString().split('T')[0];
-  return new Date(ts * 1000).toISOString().split('T')[0];
+// Convert Unix timestamp (seconds) or date string to YYYY-MM-DD
+function formatPostDate(val: any): string {
+  if (!val) return new Date().toISOString().split('T')[0];
+  const d = new Date(typeof val === 'number' ? val * 1000 : val);
+  return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
 }
 
 export async function GET(req: Request, context: any) {
@@ -26,11 +28,69 @@ export async function GET(req: Request, context: any) {
     const { channelId } = await context.params;
     const supa = adminClient();
     
-    // The user instruction implies "username" query param can be the identifier
-    // We pass `type=short` as requested.
-    // Clean identifier.
+    // Identifier: could be channel ID (UC...) or handle (@...)
+    // Aggregator V2 expects 'channel' param
+    const channelParam = decodeURIComponent(String(channelId));
+
+    // 1. Try V2 Aggregator (Priority)
+    // http://202.10.44.90/api/v2/youtube/video?channel=@MrBeast&limit=30&shorts_only=true
+    const v2Url = `${AGGREGATOR_V2_BASE}/youtube/video?channel=${encodeURIComponent(channelParam)}&limit=30&shorts_only=true`;
+    console.log(`[YouTube Fetch] Requesting V2: ${v2Url}`);
+
+    try {
+      const res = await fetch(v2Url, { signal: AbortSignal.timeout(30000) });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.status === 'success' && json.data) {
+          // Normalize result: support both single 'latest_video' and array 'videos'
+          let list = [];
+          if (Array.isArray(json.data.videos)) {
+            list = json.data.videos;
+          } else if (json.data.latest_video) {
+            list = [json.data.latest_video];
+          }
+
+          if (list.length > 0) {
+            console.log(`[YouTube Fetch] V2 Found ${list.length} videos`);
+            
+            const upserts = [];
+            for (const v of list) {
+              const videoId = v.video_id || v.id;
+              if (!videoId) continue;
+              
+              // Derive post_date from timestamp or string
+              const pDate = formatPostDate(v.taken_at_timestamp || v.published_at);
+              
+              upserts.push({
+                id: videoId,
+                channel_id: channelParam,
+                title: (v.title || '').substring(0, 255),
+                post_date: pDate,
+                views: Number(v.views || 0),
+                likes: Number(v.likes || 0),
+                comments: Number(v.comments || 0),
+                updated_at: new Date().toISOString()
+              });
+            }
+            
+            if (upserts.length > 0) {
+              await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id' });
+              return NextResponse.json({ 
+                success: true, 
+                processed: upserts.length, 
+                videos_found: list.length,
+                source: 'aggregator_v2'
+              });
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[YouTube Fetch] V2 failed: ${err.message}`);
+    }
+
+    // 2. Fallback to V1 (Old logic)
     const apiUsername = String(channelId || '').trim(); 
-    
     const url = `${AGGREGATOR_BASE}/user/posts?username=${encodeURIComponent(apiUsername)}&type=short`;
     console.log(`[YouTube Fetch] Requesting: ${url}`);
 

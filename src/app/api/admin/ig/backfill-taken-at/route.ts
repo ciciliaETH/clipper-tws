@@ -16,9 +16,31 @@ function adminClient() {
 // RapidAPI host for media details
 const IG_MEDIA_API = 'instagram-media-api.p.rapidapi.com';
 
-// Helper to fetch taken_at from RapidAPI
+// Helper to fetch taken_at using Aggregator (Priority) then RapidAPI (Fallback)
 async function fetchTakenAt(shortcode: string): Promise<number | null> {
   if (!shortcode) return null;
+
+  // 1. Try Aggregator
+  try {
+    const aggBase = 'http://202.10.44.90:5000/api/v1';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${aggBase}/instagram/reels/info?shortcode=${shortcode}`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    if (res.ok) {
+        const json = await res.json();
+        if (json.status === 'success' && json.data) {
+            let ts = null;
+            if (json.data.taken_at_timestamp) ts = Date.parse(json.data.taken_at_timestamp);
+            else if (json.data.taken_at) ts = Number(json.data.taken_at) * 1000;
+            
+            if (ts && !isNaN(ts)) return ts;
+        }
+    }
+  } catch {}
+
+  // 2. Fallback to RapidAPI
   try {
     const j = await rapidApiRequest<any>({
       url: `https://${IG_MEDIA_API}/media/shortcode_reels`,
