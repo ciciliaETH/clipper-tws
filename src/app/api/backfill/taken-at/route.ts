@@ -90,20 +90,34 @@ export async function POST(req: Request) {
         try {
           let takenAt: string | null = null;
           
-          // 0. AGGREGATOR (First Priority) - Port 5000
+            // 0. AGGREGATOR (First Priority) - Port 5000
           try {
             const aggBase = 'http://202.10.44.90:5000/api/v1';
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
             
+            console.log(`[Backfill] Fetching Aggregator: ${code}`);
             const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
-              signal: controller.signal
+              signal: controller.signal,
+              cache: 'no-store',
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              }
             });
             clearTimeout(timeoutId);
 
             if (aggRes.ok) {
-              const json = await aggRes.json();
-              if (json.status === 'success' && json.data) {
+              const text = await aggRes.text();
+              let json;
+              try {
+                json = JSON.parse(text);
+              } catch (e) {
+                console.error(`[Backfill] Failed to parse JSON for ${code}: ${text.substring(0, 100)}`);
+              }
+
+              if (json && json.status === 'success' && json.data) {
+                console.log(`[Backfill] Aggregator Success for ${code}`);
                 // Determine timestamp logic: explicit timestamp string > taken_at number (seconds)
                 let ts = null;
                 if (json.data.taken_at_timestamp) {
@@ -114,10 +128,14 @@ export async function POST(req: Request) {
                 
                 if (ts && !isNaN(ts)) {
                   takenAt = new Date(ts).toISOString();
+                  console.log(`[Backfill] Found takenAt: ${takenAt}`);
                 }
               }
+            } else {
+              console.log(`[Backfill] Aggregator Status: ${aggRes.status}`);
             }
-          } catch (err) {
+          } catch (err: any) {
+            console.error(`[Backfill] Aggregator Error for ${code}:`, err.message);
             // Aggregator failed, silently fall through to RapidAPI
           }
 
