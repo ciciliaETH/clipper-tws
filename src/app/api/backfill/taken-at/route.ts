@@ -139,6 +139,7 @@ export async function POST(req: Request) {
               takenAt = new Date(ts).toISOString();
             }
           } catch {}
+          }
 
           // FALLBACK: Try older endpoints
           if (!takenAt) {
