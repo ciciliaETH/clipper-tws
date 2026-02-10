@@ -94,7 +94,8 @@ export async function POST(req: Request) {
           try {
             const aggBase = 'http://202.10.44.90:5000/api/v1';
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+            // Timeout dipercepat supaya tidak blocking lama (4s)
+            const timeoutId = setTimeout(() => controller.abort(), 4000); 
             
             console.log(`[Backfill] Fetching Aggregator: ${code}`);
             const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
@@ -102,7 +103,8 @@ export async function POST(req: Request) {
               cache: 'no-store',
               headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'Connection': 'close',
+                'User-Agent': 'Mozilla/5.0 (Vercel-Worker-Client)'
               }
             });
             clearTimeout(timeoutId);
