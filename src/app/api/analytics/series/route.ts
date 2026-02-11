@@ -64,17 +64,17 @@ export async function GET(req: Request) {
 
     if (mode === 'postdate') {
       // Mode postdate combines:
-      // 1. HISTORICAL DATA (2025-08-02 to 2026-01-23): From weekly_historical_data table
-      // 2. REALTIME DATA (after 2026-01-23): From posts_daily aggregated by taken_at
+      // 1. HISTORICAL DATA (2025-08-02 to 2026-02-04): From weekly_historical_data table
+      // 2. REALTIME DATA (after 2026-02-04): From posts_daily aggregated by taken_at
       
-      const historicalCutoff = new Date('2026-01-23T00:00:00Z');
+      const historicalCutoff = new Date('2026-02-05T00:00:00Z');
       const cutoffDate = new Date(cutoff + 'T00:00:00Z');
       
       const ttHandles = accounts.filter(a=>a.platform==='tiktok').map(a=>a.username);
       const igHandles = accounts.filter(a=>a.platform==='instagram').map(a=>a.username);
       const ytHandles = accounts.filter(a=>a.platform==='youtube').map(a=>a.username);
       
-      // PART 1: Query weekly_historical_data for dates < 2026-01-23
+      // PART 1: Query weekly_historical_data for dates < 2026-02-05
       const historicalStart = new Date(startISO + 'T00:00:00Z');
       const historicalEnd = new Date(Math.min(new Date(endISO + 'T23:59:59Z').getTime(), historicalCutoff.getTime()));
       
@@ -86,7 +86,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments, shares, saves')
             .eq('platform', 'tiktok')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='tiktok')) {
             const key = `tiktok:${a.username}`;
@@ -136,7 +136,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments')
             .ilike('platform', 'youtube')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='youtube')) {
             const key = `youtube:${a.username}`;
@@ -182,7 +182,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments')
             .eq('platform', 'instagram')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='instagram')) {
             const key = `instagram:${a.username}`;
@@ -336,10 +336,10 @@ export async function GET(req: Request) {
       }
     } else {
       // Mode accrual: Daily growth/deltas per post
-      // 1. HISTORICAL DATA (2025-08-02 to 2026-01-23): From weekly_historical_data
-      // 2. REALTIME DATA (after 2026-01-23): From post_metrics_history with LAG() delta calculation
+      // 1. HISTORICAL DATA (2025-08-02 to 2026-02-04): From weekly_historical_data
+      // 2. REALTIME DATA (after 2026-02-04): From post_metrics_history with LAG() delta calculation
       
-      const historicalCutoff = new Date('2026-01-23T00:00:00Z');
+      const historicalCutoff = new Date('2026-02-05T00:00:00Z');
       const cutoffDate = new Date(cutoff + 'T00:00:00Z');
       
       const ttHandles = accounts.filter(a=>a.platform==='tiktok').map(a=>a.username);
@@ -358,7 +358,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments, shares, saves')
             .eq('platform', 'tiktok')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='tiktok')) {
             const key = `tiktok:${a.username}`;
@@ -408,7 +408,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments')
             .ilike('platform', 'youtube')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='youtube')) {
             const key = `youtube:${a.username}`;
@@ -449,7 +449,7 @@ export async function GET(req: Request) {
             .select('week_label, start_date, end_date, platform, views, likes, comments')
             .eq('platform', 'instagram')
             .gte('start_date', startISO)
-            .lt('start_date', '2026-01-23');
+            .lt('start_date', '2026-02-05');
           
           for (const a of accounts.filter(a=>a.platform==='instagram')) {
             const key = `instagram:${a.username}`;

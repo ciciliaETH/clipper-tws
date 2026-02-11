@@ -789,6 +789,8 @@ export default function DashboardTotalPage() {
         const weeklyTotal = groupByWeek(realtimeData, REALTIME_START);
         const weeklyTT = groupByWeek(realtimeTT, REALTIME_START);
         const weeklyIG = groupByWeek(realtimeIG, REALTIME_START);
+        const realtimeYT = (data.total_youtube || []).filter((d: any) => String(d.date) >= REALTIME_START);
+        const weeklyYT = groupByWeek(realtimeYT, REALTIME_START);
         
         console.log('[WEEKLY VIEW] Real-time weeks:', weeklyTotal.length);
         
@@ -797,6 +799,8 @@ export default function DashboardTotalPage() {
         weeklyTT.forEach((w: any) => ttByWeekNum.set(w.weekNum, w));
         const igByWeekNum = new Map<number, any>();
         weeklyIG.forEach((w: any) => igByWeekNum.set(w.weekNum, w));
+        const ytByWeekNum = new Map<number, any>();
+        weeklyYT.forEach((w: any) => ytByWeekNum.set(w.weekNum, w));
         
         // Get groups weekly data for real-time
         const groupsWeekly: any[] = [];
@@ -831,6 +835,7 @@ export default function DashboardTotalPage() {
         weeklyTotal.forEach((w: any) => {
           const ttData = ttByWeekNum.get(w.weekNum) || { views: 0, likes: 0, comments: 0 };
           const igData = igByWeekNum.get(w.weekNum) || { views: 0, likes: 0, comments: 0 };
+          const ytData = ytByWeekNum.get(w.weekNum) || { views: 0, likes: 0, comments: 0 };
           const groupsData = groupsByWeekNum.get(w.weekNum) || [];
           
           // Only add if overlaps with selected range
@@ -851,6 +856,7 @@ export default function DashboardTotalPage() {
               instagram: igData.views,
               instagram_likes: igData.likes,
               instagram_comments: igData.comments,
+              youtube: ytData.views,
               is_historical: false,
               groups: groupsData
             });
@@ -1039,6 +1045,21 @@ export default function DashboardTotalPage() {
           borderColor: '#f43f5e', 
           backgroundColor: 'rgba(244,63,94,0.15)', 
           fill: false, 
+          tension: 0.35,
+          yAxisID: 'y'
+        });
+
+        // YouTube breakdown
+        const youtubeVals = allPeriods.map((p: any) => {
+          const val = metric === 'likes' ? (p.youtube_likes || 0) : metric === 'comments' ? (p.youtube_comments || 0) : (p.youtube || 0);
+          return val || 0;
+        });
+        datasets.push({
+          label: 'YouTube',
+          data: youtubeVals,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.15)',
+          fill: false,
           tension: 0.35,
           yAxisID: 'y'
         });

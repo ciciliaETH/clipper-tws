@@ -16,7 +16,7 @@ export async function GET(req: Request) {
     const supa = adminClient();
     const url = new URL(req.url);
     const startISO = url.searchParams.get('start') || '2025-08-01';
-    const endISO = url.searchParams.get('end') || '2026-01-22';
+    const endISO = url.searchParams.get('end') || '2026-02-04';
     
     // Query TikTok historical data
     const { data: ttRows, error: ttErr } = await supa
