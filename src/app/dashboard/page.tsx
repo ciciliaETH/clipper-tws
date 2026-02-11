@@ -719,6 +719,10 @@ export default function DashboardTotalPage() {
           const instagramLikes = (h.instagram && typeof h.instagram === 'object') ? h.instagram.likes : 0;
           const instagramComments = (h.instagram && typeof h.instagram === 'object') ? h.instagram.comments : 0;
           
+          const youtubeViews = (h.youtube && typeof h.youtube === 'object') ? h.youtube.views : 0;
+          const youtubeLikes = (h.youtube && typeof h.youtube === 'object') ? h.youtube.likes : 0;
+          const youtubeComments = (h.youtube && typeof h.youtube === 'object') ? h.youtube.comments : 0;
+
           const totalViews = Number(h.views) || 0;
           const totalLikes = Number(h.likes) || 0;
           const totalComments = Number(h.comments) || 0;
@@ -727,7 +731,8 @@ export default function DashboardTotalPage() {
             period: `${startDate.toISOString().slice(0,10)} to ${endDate.toISOString().slice(0,10)}`,
             total: { views: totalViews, likes: totalLikes, comments: totalComments },
             tiktok: { views: tiktokViews, likes: tiktokLikes, comments: tiktokComments },
-            instagram: { views: instagramViews, likes: instagramLikes, comments: instagramComments }
+            instagram: { views: instagramViews, likes: instagramLikes, comments: instagramComments },
+            youtube: { views: youtubeViews, likes: youtubeLikes, comments: youtubeComments }
           });
           
           histPeriods.push({
@@ -742,6 +747,9 @@ export default function DashboardTotalPage() {
             instagram: instagramViews,
             instagram_likes: instagramLikes,
             instagram_comments: instagramComments,
+            youtube: youtubeViews,
+            youtube_likes: youtubeLikes,
+            youtube_comments: youtubeComments,
             is_historical: true,
             groups: [] // No groups for historical data
           });
