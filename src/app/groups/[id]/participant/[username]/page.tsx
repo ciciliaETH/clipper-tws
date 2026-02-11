@@ -161,9 +161,12 @@ export default function ParticipantVideosPage() {
         {data.videos.map((v: any, i:number) => (
           <div key={`${v.platform}-${v.id}-${i}`} className="glass p-4 rounded-xl border border-white/10 hover:border-white/30 transition-all hover:-translate-y-1">
             <div className="flex justify-between items-start mb-3">
-               <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${v.platform==='tiktok' ? 'bg-black text-white border border-white/20' : v.platform==='instagram' ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' : 'bg-red-600 text-white'}`}>
-                 {v.platform}
-               </span>
+               <div className="flex items-center gap-2">
+                 <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${v.platform==='tiktok' ? 'bg-black text-white border border-white/20' : v.platform==='instagram' ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' : 'bg-red-600 text-white'}`}>
+                   {v.platform}
+                 </span>
+                 <span className="text-xs text-white/70 font-medium">@{v.username}</span>
+               </div>
                <span className="text-xs text-white/40 font-mono">
                    {v.taken_at ? new Date(v.taken_at).toLocaleDateString('id-ID', {day:'numeric', month:'short', year:'2-digit'}) : '-'}
                </span>

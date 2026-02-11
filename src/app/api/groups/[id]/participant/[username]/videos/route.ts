@@ -24,14 +24,29 @@ export async function GET(req: Request, context: any) {
 
     // 1. Resolve User ID from the provided username (assuming text matches tiktok_username or alias)
     // Try users table first
-    let userId: string | null = null
     const normUser = decodeURIComponent(username).toLowerCase().replace(/^@/,'')
     
-    // Check main users table
-    const { data: u1 } = await supabase.from('users').select('id')
-      .or(`tiktok_username.ilike.${normUser},instagram_username.ilike.${normUser},username.ilike.${normUser}`)
+    // Check main users table - Prioritize exact match to handle underscores correctly
+    let userId: string | null = null
+    let foundFullName: string | null = null
+
+    const { data: u1 } = await supabase.from('users').select('id, full_name')
+      .or(`tiktok_username.eq.${normUser},tiktok_username.eq.@${normUser},instagram_username.eq.${normUser},instagram_username.eq.@${normUser},username.eq.${normUser}`)
       .maybeSingle()
-    if (u1) userId = u1.id
+    
+    if (u1) {
+      userId = u1.id
+      foundFullName = u1.full_name
+    } else {
+        // Fallback to ilike if exact match fails
+        const { data: u2 } = await supabase.from('users').select('id, full_name')
+        .or(`tiktok_username.ilike.${normUser},tiktok_username.ilike.@${normUser},instagram_username.ilike.${normUser},instagram_username.ilike.@${normUser},username.ilike.${normUser}`)
+        .maybeSingle()
+        if (u2) {
+          userId = u2.id
+          foundFullName = u2.full_name
+        }
+    }
     
     // Check aliases if not found
     if (!userId) {
@@ -47,7 +62,7 @@ export async function GET(req: Request, context: any) {
     const ttHandles = new Set<string>()
     const igHandles = new Set<string>()
     const ytChannels = new Set<string>()
-    let fullName = normUser;
+    let fullName = foundFullName || normUser;
     
     if (userId) {
        const { data: u } = await supabase.from('users').select('full_name, tiktok_username, instagram_username, youtube_channel_id').eq('id', userId).single()
