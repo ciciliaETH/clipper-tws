@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/client';
+import { createClient } from '@supabase/supabase-js';
 import { createClient as createSSR } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -74,13 +74,17 @@ export async function GET(req: Request, context: any) {
             }
             
             if (upserts.length > 0) {
-              await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id' });
-              return NextResponse.json({ 
-                success: true, 
-                processed: upserts.length, 
-                videos_found: list.length,
-                source: 'aggregator_v2'
-              });
+              const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id' });
+              if (error) {
+                console.error('[YouTube Fetch][V2] DB Error:', error);
+              } else {
+                return NextResponse.json({ 
+                  success: true, 
+                  processed: upserts.length, 
+                  videos_found: list.length,
+                  source: 'aggregator_v2'
+                });
+              }
             }
           }
         }

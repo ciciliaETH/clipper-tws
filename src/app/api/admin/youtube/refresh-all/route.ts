@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/client';
+import { createClient } from '@supabase/supabase-js';
 import { createClient as createSSR } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -66,22 +66,16 @@ export async function POST(req: Request) {
     const nextOffset = offset + parts.length; // Use parts length not unique channels to advance cursor correctly
     const remaining = (count || 0) - nextOffset;
 
-    return NextResponse.json({
+     return NextResponse.json({
        success: successCount,
        failed: channels.length - successCount,
-       total_processed: nextOffset, // Current total processed so far including previous? No, frontend expects accumulated. Wait.
-       // The frontend sets `current: j.total_processed`. TikTok backend usually returns `offset + limit` or similar.
-       // actually frontend sets `setTikTokOffset(j.next_offset)`.
-       // `current` in frontend progress is `j.total_processed`.
-       
-       // Let's match TikTok exactly:
        total_processed: nextOffset,
        total_channels: count,
        processed_channels: channels,
        next_offset: nextOffset,
        remaining: Math.max(0, remaining),
        message: `Batch ${offset} - ${nextOffset} done.`
-    });
+     });
 
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
