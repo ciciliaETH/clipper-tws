@@ -14,7 +14,7 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'instagram_username'
   ) THEN
-    ALTER TABLE public.users DROP COLUMN instagram_username;
+    ALTER TABLE public.users DROP COLUMN instagram_username CASCADE;
   END IF;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns

@@ -9,7 +9,8 @@ ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS profile_picture_url TEXT;
 
 -- 2. Create materialized view for employee total metrics (TikTok + Instagram combined)
-CREATE MATERIALIZED VIEW IF NOT EXISTS public.employee_total_metrics AS
+DROP MATERIALIZED VIEW IF EXISTS public.employee_total_metrics CASCADE;
+CREATE MATERIALIZED VIEW public.employee_total_metrics AS
 WITH tiktok_totals AS (
   -- Aggregate TikTok metrics from tiktok_posts_daily
   SELECT 

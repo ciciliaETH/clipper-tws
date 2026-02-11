@@ -23,6 +23,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_refresh_retry_queue_updated_at on refresh_retry_queue;
 create trigger trg_refresh_retry_queue_updated_at
 before update on refresh_retry_queue
 for each row execute procedure set_updated_at_timestamp();

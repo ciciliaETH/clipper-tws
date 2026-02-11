@@ -58,8 +58,8 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'on_auth_user_created') THEN
     DROP TRIGGER on_auth_user_created ON auth.users;
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'handle_new_user') THEN
-    DROP TRIGGER handle_new_user ON auth.users;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'on_auth_user_created') THEN
+    DROP TRIGGER on_auth_user_created ON auth.users;
   END IF;
 END$$;
 

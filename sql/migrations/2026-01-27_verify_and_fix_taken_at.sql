@@ -125,7 +125,7 @@ END $$;
 -- ========================================
 
 -- Show sample TikTok data
-RAISE NOTICE 'Sample TikTok data (first 5 rows):';
+DO $$ BEGIN RAISE NOTICE 'Sample TikTok data (first 5 rows):'; END $$;
 SELECT 
   video_id,
   username,
@@ -140,7 +140,7 @@ ORDER BY created_at DESC
 LIMIT 5;
 
 -- Show sample Instagram data
-RAISE NOTICE 'Sample Instagram data (first 5 rows):';
+DO $$ BEGIN RAISE NOTICE 'Sample Instagram data (first 5 rows):'; END $$;
 SELECT 
   id,
   username,

@@ -316,19 +316,24 @@ export async function POST(request: Request) {
         // Optionally set/refresh password for the account
         try { await supabaseAdmin.auth.admin.updateUserById(existingId, { password: pwdStr }); } catch {}
 
-        // Upsert profile row
-        const { error: upErr } = await supabaseAdmin
+        // Upsert profile row (make youtube_channel_id optional and resilient)
+        const baseRow: any = {
+          id: existingId,
+          email: emailStr,
+          full_name: userData.full_name,
+          username: userData.username || emailStr.split('@')[0],
+          role: userData.role,
+          tiktok_username: userData.tiktok_username,
+          instagram_username: userData.instagram_username,
+        };
+        if (userData.youtube_channel_id) baseRow.youtube_channel_id = userData.youtube_channel_id;
+        let { error: upErr } = await supabaseAdmin
           .from('users')
-          .upsert({
-            id: existingId,
-            email: emailStr,
-            full_name: userData.full_name,
-            username: userData.username || emailStr.split('@')[0],
-            role: userData.role,
-            tiktok_username: userData.tiktok_username,
-            instagram_username: userData.instagram_username,
-            youtube_channel_id: userData.youtube_channel_id,
-          }, { onConflict: 'id' });
+          .upsert(baseRow, { onConflict: 'id' });
+        if (upErr && (upErr.message?.includes('youtube_channel_id') || upErr.code === 'PGRST204')) {
+          delete baseRow.youtube_channel_id;
+          ({ error: upErr } = await supabaseAdmin.from('users').upsert(baseRow, { onConflict: 'id' }));
+        }
         if (upErr) throw upErr;
 
         return NextResponse.json({ message: 'User already existed. Profile synced.' });
@@ -419,19 +424,28 @@ export async function POST(request: Request) {
       const safeUsername = await ensureUniqueUsername(userData.username || emailStr.split('@')[0], newUserId);
       let profileError: any = null;
       try {
+        // Build row with optional youtube_channel_id
+        const row: any = {
+          id: newUserId,
+          email: emailStr,
+          full_name: userData.full_name,
+          username: safeUsername,
+          role: userData.role,
+          tiktok_username: primary,
+          instagram_username: igPrimary,
+        };
+        if (ytPrimary) row.youtube_channel_id = ytPrimary;
         const { error } = await supabaseAdmin
           .from('users')
-          .upsert({
-            id: newUserId,
-            email: emailStr,
-            full_name: userData.full_name,
-            username: safeUsername,
-            role: userData.role,
-            tiktok_username: primary,
-            instagram_username: igPrimary,
-            youtube_channel_id: ytPrimary,
-          }, { onConflict: 'id' });
-        profileError = error;
+          .upsert(row, { onConflict: 'id' });
+        // If schema doesn't have the column, retry without it
+        if (error && (error.message?.includes('youtube_channel_id') || error.code === 'PGRST204')) {
+          delete row.youtube_channel_id;
+          const { error: err2 } = await supabaseAdmin.from('users').upsert(row, { onConflict: 'id' });
+          profileError = err2;
+        } else {
+          profileError = error;
+        }
       } catch (e: any) {
         profileError = e;
       }
@@ -445,10 +459,17 @@ export async function POST(request: Request) {
             .maybeSingle();
           if (existing?.id && existing.id !== newUserId) {
             // Update PK id to the new auth id and merge fields
-            const { error: updErr } = await supabaseAdmin
+            // Retry update; include youtube_channel_id only if present and schema supports it
+            const baseUpd: any = { id: newUserId, full_name: userData.full_name, username: safeUsername, role: userData.role, tiktok_username: primary, instagram_username: igPrimary };
+            if (ytPrimary) baseUpd.youtube_channel_id = ytPrimary;
+            let { error: updErr } = await supabaseAdmin
               .from('users')
-              .update({ id: newUserId, full_name: userData.full_name, username: safeUsername, role: userData.role, tiktok_username: primary, instagram_username: igPrimary, youtube_channel_id: ytPrimary })
+              .update(baseUpd)
               .eq('email', emailStr);
+            if (updErr && (updErr.message?.includes('youtube_channel_id') || updErr.code === 'PGRST204')) {
+              delete baseUpd.youtube_channel_id;
+              ({ error: updErr } = await supabaseAdmin.from('users').update(baseUpd).eq('email', emailStr));
+            }
             if (!updErr) profileError = null;
           }
         } catch {}
