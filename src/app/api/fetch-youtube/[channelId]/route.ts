@@ -7,6 +7,8 @@ export const maxDuration = 60; // Vercel limit
 
 const AGGREGATOR_BASE = process.env.AGGREGATOR_BASE || 'http://202.10.44.90/api/v1';
 const AGGREGATOR_V2_BASE = 'http://202.10.44.90/api/v2';
+// Comma-separated API keys for aggregator v2 (if required)
+const YT_API_KEYS = process.env.YT_API_KEYS || process.env.YOUTUBE_API_KEYS || 'AIzaSyCQ65XwURWB92sjWfZatGuD0tapMgl3exM,AIzaSyDFcVG-7qYrQUcmDu13V0Bjj8fWanMFKAk,AIzaSyBrjwURvu3R9y50d1IoSy_H10kK8DFIb3E';
 
 function adminClient() {
   return createClient(
@@ -34,7 +36,8 @@ export async function GET(req: Request, context: any) {
 
     // 1. Try V2 Aggregator (Priority)
     // http://202.10.44.90/api/v2/youtube/video?channel=@MrBeast&limit=30&shorts_only=true
-    const v2Url = `${AGGREGATOR_V2_BASE}/youtube/video?channel=${encodeURIComponent(channelParam)}&limit=30&shorts_only=true`;
+    const apiKeyQuery = YT_API_KEYS ? `&api_key=${encodeURIComponent(YT_API_KEYS)}` : '';
+    const v2Url = `${AGGREGATOR_V2_BASE}/youtube/video?channel=${encodeURIComponent(channelParam)}&limit=30&shorts_only=true${apiKeyQuery}`;
     console.log(`[YouTube Fetch] Requesting V2: ${v2Url}`);
 
     try {
@@ -65,7 +68,7 @@ export async function GET(req: Request, context: any) {
                 id: videoId,
                 channel_id: channelParam,
                 shortcode: videoId,
-                title: (v.title || '').substring(0, 255),
+                title: String(v.title || ''),
                 post_date: pDate,
                 views: Number(v.views || 0),
                 likes: Number(v.likes || 0),
@@ -141,7 +144,7 @@ export async function GET(req: Request, context: any) {
         id: videoId,
         channel_id: channelId, // Link to the identifier we used
         shortcode: videoId,
-        title: title.substring(0, 255), // truncate
+        title: String(title),
         post_date: postDate,
         views,
         likes,
