@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url)
     const campaignId = url.searchParams.get('campaign_id') || ''
-    const platform = (url.searchParams.get('platform') || 'all').toLowerCase() // all, tiktok, instagram
+    const platform = (url.searchParams.get('platform') || 'all').toLowerCase() // all, tiktok, instagram, youtube
     const daysParam = Number(url.searchParams.get('days') || '30')
     const mode = (url.searchParams.get('mode') || '').toLowerCase() // '' | 'calendar'
     // Allow any days value between 1 and 365 (default 30)
@@ -85,7 +85,7 @@ export async function GET(req: Request) {
     // Get usernames mapping
     const { data: users } = await supabase
       .from('users')
-      .select('id, full_name, username, tiktok_username, instagram_username')
+      .select('id, full_name, username, tiktok_username, instagram_username, youtube_channel_id')
       .in('id', employeeIds)
     
     // Fetch aliases for comprehensive lookup
@@ -109,11 +109,13 @@ export async function GET(req: Request) {
     // Build Reverse Maps: username -> user_id
     const ttUserToId = new Map<string, string>();
     const igUserToId = new Map<string, string>();
+    const ytChannelToId = new Map<string, string>();
     
     // Populate from users table (current)
     for(const u of users || []) {
         if(u.tiktok_username) ttUserToId.set(u.tiktok_username.toLowerCase().replace(/^@+/,''), u.id);
         if(u.instagram_username) igUserToId.set(u.instagram_username.toLowerCase().replace(/^@+/,''), u.id);
+        if((u as any).youtube_channel_id) ytChannelToId.set(String((u as any).youtube_channel_id).trim(), u.id);
     }
     // Populate from aliases
     for(const a of ttAliases || []) {
@@ -312,11 +314,92 @@ export async function GET(req: Request) {
       }
     }
 
+    // === YOUTUBE VIDEOS ===
+    if (platform === 'all' || platform === 'youtube') {
+      // Collect YouTube channels for employees
+      const channels: string[] = []
+      // from users direct column
+      for (const u of users || []) {
+        const cid = (u as any).youtube_channel_id; if (cid) channels.push(String(cid).trim())
+      }
+      // from user_youtube_channels table
+      if (employeeIds.length > 0) {
+        const { data: ytMap } = await supabase
+          .from('user_youtube_channels')
+          .select('user_id, youtube_channel_id')
+          .in('user_id', employeeIds)
+        for (const r of ytMap || []) {
+          const cid = (r as any).youtube_channel_id; if (cid) {
+            channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).user_id)
+          }
+        }
+        const { data: ytEmp } = await supabase
+          .from('employee_youtube_participants')
+          .select('employee_id, youtube_channel_id')
+          .in('employee_id', employeeIds)
+        for (const r of ytEmp || []) {
+          const cid = (r as any).youtube_channel_id; if (cid) {
+            channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).employee_id)
+          }
+        }
+      }
+      const uniqueChannels = Array.from(new Set(channels.filter(Boolean)))
+      if (uniqueChannels.length > 0) {
+        const { data: ytRows } = await supabase
+          .from('youtube_posts_daily')
+          .select('id, channel_id, post_date, title, views, likes, comments')
+          .in('channel_id', uniqueChannels)
+          .gte('post_date', startISO)
+          .lte('post_date', endISO)
+          .order('views', { ascending: false })
+          .limit(limit * 200)
+
+        // Group by video id
+        const videoMap = new Map<string, any[]>()
+        for (const r of ytRows || []) {
+          const vid = String((r as any).id)
+          if (!videoMap.has(vid)) videoMap.set(vid, [])
+          videoMap.get(vid)!.push(r)
+        }
+
+        for (const [vid, snaps] of videoMap.entries()) {
+          // Sort by post_date
+          snaps.sort((a, b) => String((a as any).post_date).localeCompare(String((b as any).post_date)))
+          const last = snaps[snaps.length - 1]
+          const first = snaps[0]
+          const postDate = String((first as any).post_date)
+          // hashtag filter on title
+          if (!hasRequiredHashtag((last as any).title, requiredHashtags)) continue
+          const views = Number((last as any).views || 0)
+          const likes = Number((last as any).likes || 0)
+          const comments = Number((last as any).comments || 0)
+          const channelId = String((last as any).channel_id)
+          let ownerName = channelId
+          let ownerId: string | null = null
+          if (ytChannelToId.has(channelId)) {
+            ownerId = ytChannelToId.get(channelId)!
+            if (ownerId && userMap.has(ownerId)) ownerName = userMap.get(ownerId).name
+          }
+          videos.push({
+            platform: 'youtube',
+            video_id: vid,
+            username: channelId,
+            owner_name: ownerName,
+            owner_id: ownerId,
+            taken_at: postDate,
+            link: `https://www.youtube.com/watch?v=${vid}`,
+            metrics: { views, likes, comments, shares: 0, saves: 0, total_engagement: likes + comments },
+            snapshots_count: snaps.length
+          })
+        }
+      }
+    }
+
     // Sort by views descending and limit
     videos.sort((a, b) => b.metrics.views - a.metrics.views);
     const topVideos = videos.slice(0, limit);
 
-    console.log(`[Top Videos] Final: ${videos.length} total videos (TikTok + Instagram), showing top ${topVideos.length}`)
+    console.log(`[Top Videos] Final: ${videos.length} total videos (TT+IG+YT), showing top ${topVideos.length}`)
     if (topVideos.length > 0) {
       console.log(`[Top Videos] Top video: ${topVideos[0].platform} @${topVideos[0].username} - ${topVideos[0].metrics.views} views`)
     }

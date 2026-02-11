@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { ExternalLink, TrendingUp, Eye, Heart, MessageCircle, Share2 } from 'lucide-react'
 
 interface Video {
-  platform: 'tiktok' | 'instagram'
+  platform: 'tiktok' | 'instagram' | 'youtube'
   video_id: string
   username: string
   owner_name: string
@@ -33,6 +33,7 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
   const [totalPosts, setTotalPosts] = useState<number>(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [platform, setPlatform] = useState<'all'|'tiktok'|'instagram'|'youtube'>('all')
 
   // Range selector: 'calendar' = bulan ini, 'days' = X hari terakhir
   const [rangeMode, setRangeMode] = useState<'calendar' | 'days'>('calendar')
@@ -47,7 +48,7 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
         const url = new URL('/api/leaderboard/top-videos', window.location.origin)
         if (campaignId) url.searchParams.set('campaign_id', campaignId)
         url.searchParams.set('limit', String(limit))
-        url.searchParams.set('platform', 'all')
+        url.searchParams.set('platform', platform)
         if (rangeMode === 'calendar') {
           url.searchParams.set('mode', 'calendar')
           // fallback days value (not used by API in calendar mode)
@@ -72,7 +73,7 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
     }
 
     fetchVideos()
-  }, [campaignId, limit, rangeMode, selectedDays])
+  }, [campaignId, limit, rangeMode, selectedDays, platform])
 
   const formatNumber = (num: number): string => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`
@@ -142,8 +143,17 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
             {rangeMode === 'calendar' ? '(bulan ini)' : `(${selectedDays} hari terakhir)`}
           </span>
         </div>
-        {/* Range controls */}
+        {/* Platform + Range controls */}
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 mr-3">
+            {(['all','tiktok','instagram','youtube'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setPlatform(p)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs border transition ${platform===p ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+              >{p==='all'?'ALL': p==='tiktok'?'TikTok': p==='instagram'?'Instagram':'YouTube'}</button>
+            ))}
+          </div>
           <button
             onClick={() => { setRangeMode('days'); setSelectedDays(7); }}
             className={`px-3 py-1.5 rounded-lg text-sm border transition ${rangeMode==='days' && selectedDays===7 ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
@@ -193,10 +203,12 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
                         className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                           video.platform === 'tiktok'
                             ? 'bg-black text-white'
-                            : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                            : video.platform === 'instagram'
+                              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                              : 'bg-red-600 text-white'
                         }`}
                       >
-                        {video.platform === 'tiktok' ? '🎵 TikTok' : '📸 Instagram'}
+                        {video.platform === 'tiktok' ? '🎵 TikTok' : video.platform === 'instagram' ? '📸 Instagram' : '▶️ YouTube'}
                       </span>
                       <span className="text-xs text-white/50">
                         {video.snapshots_count} snapshot{video.snapshots_count > 1 ? 's' : ''}

@@ -14,6 +14,8 @@ export default function ParticipantVideosPage() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string|null>(null)
+  const [platform, setPlatform] = useState<'all'|'tiktok'|'instagram'|'youtube'>('all')
+  const [hashtag, setHashtag] = useState<string>('')
   
   // Date filter state
   const [dateRange, setDateRange] = useState<{start: string, end: string}>({
@@ -34,6 +36,8 @@ export default function ParticipantVideosPage() {
     const url = new URL(`/api/groups/${groupId}/participant/${username}/videos`, window.location.origin)
     if (dateRange.start) url.searchParams.set('start', dateRange.start)
     if (dateRange.end) url.searchParams.set('end', dateRange.end)
+    url.searchParams.set('platform', platform)
+    if (hashtag) url.searchParams.set('hashtag', hashtag)
 
     fetch(url.toString())
       .then(res => res.json())
@@ -43,7 +47,7 @@ export default function ParticipantVideosPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [groupId, username, dateRange]) // Trigger on dateRange change
+  }, [groupId, username, dateRange, platform, hashtag]) // include filters
 
   const format = (n: number) => new Intl.NumberFormat('id-ID').format(n)
 
@@ -92,15 +96,21 @@ export default function ParticipantVideosPage() {
                   <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
                       Total Views: <span className="text-white font-medium">{format(totals.views)}</span>
                   </div>
-                  {data.userId && (
-                      <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 opacity-60">
-                          ID: {data.userId.slice(0,8)}...
-                      </div>
-                  )}
+                  {/* Removed user ID badge per request */}
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 bg-white/5 p-2 rounded-xl border border-white/10">
+              {/* Platform filter */}
+              <div className="flex items-end gap-1 mr-2">
+                {(['all','youtube','instagram','tiktok'] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={()=> setPlatform(p)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs border transition ${platform===p ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+                  >{p==='all'?'ALL': p.toUpperCase()}</button>
+                ))}
+              </div>
               <div>
                 <label className="text-[10px] text-white/40 uppercase font-bold tracking-wider ml-1 mb-1 block">Dari Tanggal</label>
                 <input 
@@ -128,6 +138,19 @@ export default function ParticipantVideosPage() {
                    Reset
                  </button>
               </div>
+              {/* Hashtag search */}
+              <div className="flex items-end gap-2">
+                <div>
+                  <label className="text-[10px] text-white/40 uppercase font-bold tracking-wider ml-1 mb-1 block">Cari Hashtag</label>
+                  <input
+                    type="text"
+                    placeholder="#hashtag"
+                    value={hashtag}
+                    onChange={(e)=> setHashtag(e.target.value)}
+                    className="bg-black/20 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors"
+                  />
+                </div>
+              </div>
             </div>
         </div>
       </div>
@@ -136,7 +159,7 @@ export default function ParticipantVideosPage() {
         {data.videos.map((v: any, i:number) => (
           <div key={`${v.platform}-${v.id}-${i}`} className="glass p-4 rounded-xl border border-white/10 hover:border-white/30 transition-all hover:-translate-y-1">
             <div className="flex justify-between items-start mb-3">
-               <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${v.platform==='tiktok' ? 'bg-black text-white border border-white/20' : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'}`}>
+               <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${v.platform==='tiktok' ? 'bg-black text-white border border-white/20' : v.platform==='instagram' ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' : 'bg-red-600 text-white'}`}>
                  {v.platform}
                </span>
                <span className="text-xs text-white/40 font-mono">
@@ -148,8 +171,8 @@ export default function ParticipantVideosPage() {
                <div className="text-white/90 font-medium line-clamp-2 min-h-[2.5rem] text-sm group-hover:text-blue-400 transition-colors" title={v.title || v.caption}>
                   {v.title || v.caption || '(No description)'}
                </div>
-               <div className="mt-2 text-xs text-blue-400/80 group-hover:text-blue-400 flex items-center gap-1">
-                  <ExternalLink className="w-3 h-3" /> Buka di {v.platform === 'tiktok' ? 'TikTok' : 'Instagram'}
+              <div className="mt-2 text-xs text-blue-400/80 group-hover:text-blue-400 flex items-center gap-1">
+                <ExternalLink className="w-3 h-3" /> Buka di {v.platform === 'tiktok' ? 'TikTok' : v.platform==='instagram' ? 'Instagram' : 'YouTube'}
                </div>
             </a>
             

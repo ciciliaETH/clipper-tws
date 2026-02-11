@@ -19,6 +19,8 @@ export async function GET(req: Request, context: any) {
     const url = new URL(req.url)
     const startDate = url.searchParams.get('start')
     const endDate = url.searchParams.get('end')
+    const platform = (url.searchParams.get('platform') || 'all').toLowerCase() // all|tiktok|instagram|youtube
+    const hashtag = (url.searchParams.get('hashtag') || '').trim() // e.g. #abc
 
     // 1. Resolve User ID from the provided username (assuming text matches tiktok_username or alias)
     // Try users table first
@@ -44,14 +46,16 @@ export async function GET(req: Request, context: any) {
     // 2. Collect all handles
     const ttHandles = new Set<string>()
     const igHandles = new Set<string>()
+    const ytChannels = new Set<string>()
     let fullName = normUser;
     
     if (userId) {
-       const { data: u } = await supabase.from('users').select('full_name, tiktok_username, instagram_username').eq('id', userId).single()
+       const { data: u } = await supabase.from('users').select('full_name, tiktok_username, instagram_username, youtube_channel_id').eq('id', userId).single()
        if (u) {
           if (u.full_name) fullName = u.full_name;
           if (u.tiktok_username) ttHandles.add(u.tiktok_username.toLowerCase().replace(/^@/,''))
           if (u.instagram_username) igHandles.add(u.instagram_username.toLowerCase().replace(/^@/,''))
+         if ((u as any).youtube_channel_id) ytChannels.add(String((u as any).youtube_channel_id).trim())
        }
        
        const { data: tta } = await supabase.from('user_tiktok_usernames').select('tiktok_username').eq('user_id', userId)
@@ -59,6 +63,15 @@ export async function GET(req: Request, context: any) {
        
        const { data: iga } = await supabase.from('user_instagram_usernames').select('instagram_username').eq('user_id', userId)
        iga?.forEach(x => x.instagram_username && igHandles.add(x.instagram_username.toLowerCase().replace(/^@/,'')))
+
+       // YouTube channel mappings
+       const { data: ytc } = await supabase.from('user_youtube_channels').select('youtube_channel_id').eq('user_id', userId)
+       ytc?.forEach(x => x.youtube_channel_id && ytChannels.add(String((x as any).youtube_channel_id).trim()))
+       // Also pull from employee_youtube_participants for this campaign (if exists)
+       if (campaignId) {
+         const { data: yte } = await supabase.from('employee_youtube_participants').select('youtube_channel_id').eq('employee_id', userId).eq('campaign_id', campaignId)
+         yte?.forEach(x => x.youtube_channel_id && ytChannels.add(String((x as any).youtube_channel_id).trim()))
+       }
     } else {
        // Fallback
        ttHandles.add(normUser)
@@ -68,7 +81,7 @@ export async function GET(req: Request, context: any) {
     const videos: any[] = []
 
     // TikTok
-    if (ttHandles.size > 0) {
+    if ((platform==='all' || platform==='tiktok') && ttHandles.size > 0) {
       let q = supabase
         .from('tiktok_posts_daily')
         .select('*')
@@ -76,6 +89,7 @@ export async function GET(req: Request, context: any) {
       
       if (startDate) q = q.gte('taken_at', startDate + 'T00:00:00Z');
       if (endDate) q = q.lte('taken_at', endDate + 'T23:59:59Z');
+      if (hashtag) q = q.ilike('title', `%${hashtag}%`)
 
       const { data: posts } = await q.order('play_count', { ascending: false });
       
@@ -105,7 +119,7 @@ export async function GET(req: Request, context: any) {
     }
 
     // Instagram
-    if (igHandles.size > 0) {
+    if ((platform==='all' || platform==='instagram') && igHandles.size > 0) {
       let q = supabase
         .from('instagram_posts_daily')
         .select('*')
@@ -113,6 +127,7 @@ export async function GET(req: Request, context: any) {
         
       if (startDate) q = q.gte('taken_at', startDate + 'T00:00:00Z');
       if (endDate) q = q.lte('taken_at', endDate + 'T23:59:59Z');
+      if (hashtag) q = q.ilike('caption', `%${hashtag}%`)
 
       const { data: posts } = await q.order('play_count', { ascending: false });
         
@@ -136,6 +151,38 @@ export async function GET(req: Request, context: any) {
            saves: 0,
            taken_at: v.taken_at,
            caption: v.caption || ''
+        })
+      }
+    }
+
+    // YouTube
+    if ((platform==='all' || platform==='youtube') && ytChannels.size > 0) {
+      let q = supabase
+        .from('youtube_posts_daily')
+        .select('*')
+        .in('channel_id', Array.from(ytChannels));
+      if (startDate) q = q.gte('post_date', startDate)
+      if (endDate) q = q.lte('post_date', endDate)
+      if (hashtag) q = q.ilike('title', `%${hashtag}%`)
+      const { data: posts } = await q.order('views', { ascending: false })
+      const map = new Map<string, any>()
+      for (const p of posts || []) {
+        const vid = p.id
+        if (!map.has(vid)) map.set(vid, p)
+      }
+      for (const v of map.values()) {
+        videos.push({
+          platform: 'youtube',
+          id: v.id,
+          username: v.channel_id,
+          link: `https://www.youtube.com/watch?v=${v.id}`,
+          views: Number(v.views)||0,
+          likes: Number(v.likes)||0,
+          comments: Number(v.comments)||0,
+          shares: 0,
+          saves: 0,
+          taken_at: v.post_date ? new Date(v.post_date+'T00:00:00Z').toISOString() : null,
+          title: v.title || ''
         })
       }
     }
