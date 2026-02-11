@@ -64,6 +64,7 @@ export async function GET(req: Request, context: any) {
               upserts.push({
                 id: videoId,
                 channel_id: channelParam,
+                shortcode: videoId,
                 title: (v.title || '').substring(0, 255),
                 post_date: pDate,
                 views: Number(v.views || 0),
@@ -139,6 +140,7 @@ export async function GET(req: Request, context: any) {
       upserts.push({
         id: videoId,
         channel_id: channelId, // Link to the identifier we used
+        shortcode: videoId,
         title: title.substring(0, 255), // truncate
         post_date: postDate,
         views,
