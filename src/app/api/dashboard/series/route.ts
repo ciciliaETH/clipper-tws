@@ -36,12 +36,14 @@ export async function GET(req: Request) {
   try {
     const supa = adminClient();
     const url = new URL(req.url);
-    const startISO = String(url.searchParams.get('start') || '2026-01-02');
+    // Default historical window starts 2025-08-02
+    const startISO = String(url.searchParams.get('start') || '2025-08-02');
     const endISO = String(url.searchParams.get('end') || new Date().toISOString().slice(0,10));
     const interval = (String(url.searchParams.get('interval')||'weekly').toLowerCase()) as 'daily'|'weekly'|'monthly';
 
     const keys = buildKeys(interval, startISO, endISO);
-    const historicalCutoffISO = '2026-01-23';
+    // Historical data ends on 2026-02-04; realtime begins 2026-02-05
+    const historicalCutoffISO = '2026-02-05';
     const cutoffDate = new Date(historicalCutoffISO+'T00:00:00Z');
 
     // 1) Build alias sets for employees (karyawan)

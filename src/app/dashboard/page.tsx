@@ -119,8 +119,8 @@ export default function DashboardTotalPage() {
           return weeks;
         };
         
-        // Historical cutoff: data s.d. 22 Jan 2026 dari historical, 23 Jan 2026 ke atas realtime
-        const HISTORICAL_CUTOFF = '2026-01-23';
+        // Historical cutoff: s.d. 04 Feb 2026 dari historical, 05 Feb 2026 ke atas realtime
+        const HISTORICAL_CUTOFF = '2026-02-05';
         
         console.log('[ACCRUAL] Building URLs for campaigns...');
         
@@ -128,9 +128,9 @@ export default function DashboardTotalPage() {
         const rangeStart = accrualCustomStart;
         const rangeEnd = accrualCustomEnd;
         
-        // ALWAYS fetch realtime starting 23 Jan 2026 for consistency
+        // ALWAYS fetch realtime starting 05 Feb 2026 for consistency
         // This ensures the same baseline is used regardless of user-selected range
-        const REALTIME_FIXED_START = '2026-01-23';
+        const REALTIME_FIXED_START = '2026-02-05';
         const needsRealtime = rangeEnd >= REALTIME_FIXED_START;
         // Always start from fixed date to ensure consistent baseline calculations
         const realtimeStart = REALTIME_FIXED_START;
@@ -207,9 +207,9 @@ export default function DashboardTotalPage() {
           json = { interval:'daily', start: effStart, end: effEnd, groups: [], total: [], total_tiktok: [], total_instagram: [], total_youtube: [] };
         }
         
-        // LOAD HISTORICAL DATA for Accrual mode (dates < 2026-01-23)
-        const HISTORICAL_DATA_CUTOFF = '2026-01-23'; // realtime mulai 23 Jan 2026
-        const HISTORICAL_LAST_DAY = '2026-01-22';
+        // LOAD HISTORICAL DATA for Accrual mode (dates < 2026-02-05)
+        const HISTORICAL_DATA_CUTOFF = '2026-02-05'; // realtime mulai 05 Feb 2026
+        const HISTORICAL_LAST_DAY = '2026-02-04';
         if (rangeStart <= HISTORICAL_LAST_DAY) {
           console.log('[ACCRUAL] Loading historical data from weekly_historical_data...');
           const histEndISO = (rangeEnd <= HISTORICAL_LAST_DAY ? rangeEnd : HISTORICAL_LAST_DAY);
@@ -749,8 +749,8 @@ export default function DashboardTotalPage() {
       }
       
       // Historical cutoff for weekly view
-      const HISTORICAL_CUTOFF = '2026-01-22';
-      const REALTIME_START = '2026-01-23';
+      const HISTORICAL_CUTOFF = '2026-02-04';
+      const REALTIME_START = '2026-02-05';
       
       console.log('[WEEKLY VIEW] ═══════════════════════════════════════════════════════════');
       console.log('[WEEKLY VIEW] Range:', accrualCustomStart, 'to', accrualCustomEnd);
@@ -1109,9 +1109,9 @@ export default function DashboardTotalPage() {
       return { labels, datasets };
     }
     
-    // Postdate Weekly: build from historical periods (DB) then realtime weekly starting 2026-01-23
+    // Postdate Weekly: build from historical periods (DB) then realtime weekly starting 2026-02-05
     if (mode==='postdate' && interval==='weekly') {
-      const REALTIME_START = '2026-01-23';
+      const REALTIME_START = '2026-02-05';
       const anchor = new Date(REALTIME_START+'T00:00:00Z');
       const toDate = (s:string)=> new Date(s+'T00:00:00Z');
       // 1) Historical periods directly from DB weekly_historical_data

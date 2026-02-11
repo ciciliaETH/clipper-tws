@@ -158,8 +158,9 @@ export async function GET(req: Request) {
       // keys (daily)
       const keys:string[] = []; const ds=new Date(start+'T00:00:00Z'); const de=new Date(end+'T00:00:00Z'); for (let d=new Date(ds); d<=de; d.setUTCDate(d.getUTCDate()+1)) keys.push(d.toISOString().slice(0,10));
       
-      const historicalCutoff = new Date('2026-01-23T00:00:00Z');
-      const historicalCutoffISO = '2026-01-23';
+      // Historical data ends on 2026-02-04; realtime begins 2026-02-05
+      const historicalCutoff = new Date('2026-02-05T00:00:00Z');
+      const historicalCutoffISO = '2026-02-05';
 
       // Helper: calculate series from post_metrics_history using LAG delta per post (for realtime period only)
       const calcSeriesPlatform = async (usernames: string[], plat: 'tiktok'|'instagram') => {
