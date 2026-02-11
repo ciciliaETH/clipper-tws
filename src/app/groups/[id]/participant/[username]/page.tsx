@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { useDebounce } from 'use-debounce'
 
 export default function ParticipantVideosPage() {
   const params = useParams()
@@ -16,7 +17,8 @@ export default function ParticipantVideosPage() {
   const [error, setError] = useState<string|null>(null)
   const [platform, setPlatform] = useState<'all'|'tiktok'|'instagram'|'youtube'>('all')
   const [hashtag, setHashtag] = useState<string>('')
-  
+  const [debouncedHashtag] = useDebounce(hashtag, 1000)
+
   // Date filter state
   const [dateRange, setDateRange] = useState<{start: string, end: string}>({
     start: '',
@@ -37,7 +39,7 @@ export default function ParticipantVideosPage() {
     if (dateRange.start) url.searchParams.set('start', dateRange.start)
     if (dateRange.end) url.searchParams.set('end', dateRange.end)
     url.searchParams.set('platform', platform)
-    if (hashtag) url.searchParams.set('hashtag', hashtag)
+    if (debouncedHashtag) url.searchParams.set('hashtag', debouncedHashtag)
 
     fetch(url.toString())
       .then(res => res.json())
@@ -47,7 +49,7 @@ export default function ParticipantVideosPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [groupId, username, dateRange, platform, hashtag]) // include filters
+  }, [groupId, username, dateRange, platform, debouncedHashtag]) // include filters
 
   const format = (n: number) => new Intl.NumberFormat('id-ID').format(n)
 
@@ -60,7 +62,7 @@ export default function ParticipantVideosPage() {
   }), { views:0, likes:0, comments:0, shares:0 }) || { views:0, likes:0, comments:0, shares:0 };
 
 
-  if (loading) return (
+  if (loading && !data) return (
       <div className="min-h-screen p-8 flex items-center justify-center">
           <div className="text-white/60 animate-pulse">Memuat data video {username}...</div>
       </div>
