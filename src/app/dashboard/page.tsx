@@ -412,7 +412,7 @@ export default function DashboardTotalPage() {
       try {
         // Fetch weekly historical for fixed window (2 Aug 2025 .. 22 Jan 2026)
         const startISO = '2025-08-02';
-        const endISO = '2026-01-22';
+        const endISO = '2026-02-04';
         const url = `/api/admin/weekly-historical?start=${startISO}&end=${endISO}`;
         console.log('[HISTORICAL] Fetching from:', url);
         const res = await fetch(url, { cache: 'no-store' });
@@ -560,7 +560,8 @@ export default function DashboardTotalPage() {
             end_date: record.end_date,
             all: { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
             tiktok: { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
-            instagram: { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
+            instagram: { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+            youtube: { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
           });
         }
         
@@ -585,6 +586,12 @@ export default function DashboardTotalPage() {
           period.instagram.comments += Number(record.comments) || 0;
           period.instagram.shares += Number(record.shares) || 0;
           period.instagram.saves += Number(record.saves) || 0;
+        } else if ((record.platform||'').toLowerCase() === 'youtube') {
+          period.youtube.views += Number(record.views) || 0;
+          period.youtube.likes += Number(record.likes) || 0;
+          period.youtube.comments += Number(record.comments) || 0;
+          period.youtube.shares += Number(record.shares) || 0;
+          period.youtube.saves += Number(record.saves) || 0;
         }
       });
       
@@ -594,11 +601,11 @@ export default function DashboardTotalPage() {
       periodMap.forEach((period) => {
         // If 'all' platform exists, use it as total, otherwise sum tiktok + instagram
         const total = period.all.views > 0 ? period.all : {
-          views: period.tiktok.views + period.instagram.views,
-          likes: period.tiktok.likes + period.instagram.likes,
-          comments: period.tiktok.comments + period.instagram.comments,
-          shares: period.tiktok.shares + period.instagram.shares,
-          saves: period.tiktok.saves + period.instagram.saves
+          views: period.tiktok.views + period.instagram.views + period.youtube.views,
+          likes: period.tiktok.likes + period.instagram.likes + period.youtube.likes,
+          comments: period.tiktok.comments + period.instagram.comments + period.youtube.comments,
+          shares: period.tiktok.shares + period.instagram.shares + (period.youtube.shares||0),
+          saves: period.tiktok.saves + period.instagram.saves + (period.youtube.saves||0)
         };
         
         console.log('[MERGE] Period aggregation:', {
@@ -631,6 +638,11 @@ export default function DashboardTotalPage() {
             views: period.instagram.views,
             likes: period.instagram.likes,
             comments: period.instagram.comments
+          },
+          youtube: {
+            views: period.youtube.views,
+            likes: period.youtube.likes,
+            comments: period.youtube.comments
           }
         });
       });
@@ -889,6 +901,7 @@ export default function DashboardTotalPage() {
           views: 0, likes: 0, comments: 0,
           tiktok: 0, tiktok_likes: 0, tiktok_comments: 0,
           instagram: 0, instagram_likes: 0, instagram_comments: 0,
+          youtube: 0, youtube_likes: 0, youtube_comments: 0,
           is_historical: p.is_historical,
           groups: [] as any[],
         };
@@ -901,6 +914,9 @@ export default function DashboardTotalPage() {
         cur.instagram += Number(p.instagram)||0;
         cur.instagram_likes += Number(p.instagram_likes)||0;
         cur.instagram_comments += Number(p.instagram_comments)||0;
+        cur.youtube += Number(p.youtube)||0;
+        cur.youtube_likes += Number(p.youtube_likes)||0;
+        cur.youtube_comments += Number(p.youtube_comments)||0;
         if (Array.isArray(p.groups) && p.groups.length) {
           const map = new Map<string, any>(cur.groups.map((g:any)=>[g.name, g] as const));
           for (const g of p.groups) {
@@ -1161,6 +1177,9 @@ export default function DashboardTotalPage() {
           instagram: Number((r as any).instagram_views|| (r as any).instagram)||0,
           instagram_likes: Number((r as any).instagram_likes||0),
           instagram_comments: Number((r as any).instagram_comments||0),
+          youtube: Number((r as any).youtube_views|| (r as any).youtube)||0,
+          youtube_likes: Number((r as any).youtube_likes||0),
+          youtube_comments: Number((r as any).youtube_comments||0),
           is_historical: true,
           groups: []
         });
