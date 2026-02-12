@@ -98,6 +98,17 @@ export async function GET(req: Request) {
       .from('user_instagram_usernames')
       .select('user_id, instagram_username')
       .in('user_id', employeeIds);
+
+    // Fetch employee participants (legacy/secondary mapping)
+    const { data: ttEmpParts } = await supabase
+      .from('employee_participants')
+      .select('employee_id, tiktok_username')
+      .in('employee_id', employeeIds);
+
+    const { data: igEmpParts } = await supabase
+      .from('employee_instagram_participants')
+      .select('employee_id, instagram_username')
+      .in('employee_id', employeeIds);
     
     const userMap = new Map<string, any>()
     for (const u of users || []) {
@@ -112,18 +123,28 @@ export async function GET(req: Request) {
     const ytChannelToId = new Map<string, string>();
     const ytIdToHandle = new Map<string, string>(); // user_id -> youtube handle (without @)
     
+    // Helper to normalize usernames for map keys
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g,'').replace(/^@+/,'');
+
     // Populate from users table (current)
     for(const u of users || []) {
-        if(u.tiktok_username) ttUserToId.set(u.tiktok_username.toLowerCase().replace(/^@+/,''), u.id);
-        if(u.instagram_username) igUserToId.set(u.instagram_username.toLowerCase().replace(/^@+/,''), u.id);
+        if(u.tiktok_username) ttUserToId.set(norm(u.tiktok_username), u.id);
+        if(u.instagram_username) igUserToId.set(norm(u.instagram_username), u.id);
         if((u as any).youtube_channel_id) ytChannelToId.set(String((u as any).youtube_channel_id).trim(), u.id);
     }
     // Populate from aliases
     for(const a of ttAliases || []) {
-        if(a.tiktok_username) ttUserToId.set(a.tiktok_username.toLowerCase().replace(/^@+/,''), a.user_id);
+        if(a.tiktok_username) ttUserToId.set(norm(a.tiktok_username), a.user_id);
     }
     for(const a of igAliases || []) {
-        if(a.instagram_username) igUserToId.set(a.instagram_username.toLowerCase().replace(/^@+/,''), a.user_id);
+        if(a.instagram_username) igUserToId.set(norm(a.instagram_username), a.user_id);
+    }
+    // Populate from employee participants (legacy/secondary)
+    for(const a of ttEmpParts || []) {
+        if(a.tiktok_username) ttUserToId.set(norm(a.tiktok_username), a.employee_id);
+    }
+    for(const a of igEmpParts || []) {
+        if(a.instagram_username) igUserToId.set(norm(a.instagram_username), a.employee_id);
     }
 
     // Try to fetch YouTube handles if a mapping table exists in DB (ignore if missing)
@@ -208,7 +229,7 @@ export async function GET(req: Request) {
           // Find owner user
           let ownerName = last.username
           let ownerId = null
-          const normalized = last.username.toLowerCase().replace(/^@+/,'');
+          const normalized = last.username.toLowerCase().replace(/\s+/g,'').replace(/^@+/,'');
           if (ttUserToId.has(normalized)) {
              ownerId = ttUserToId.get(normalized);
              if (ownerId && userMap.has(ownerId)) {
@@ -301,7 +322,7 @@ export async function GET(req: Request) {
           // Find owner user
           let ownerName = last.username
           let ownerId = null
-          const normalized = last.username.toLowerCase().replace(/^@+/,'');
+          const normalized = last.username.toLowerCase().replace(/\s+/g,'').replace(/^@+/,'');
           if (igUserToId.has(normalized)) {
              ownerId = igUserToId.get(normalized);
              if (ownerId && userMap.has(ownerId)) {
