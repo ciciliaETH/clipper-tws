@@ -30,10 +30,10 @@ END $$;
 -- 4) Backfill id with user_id based on mapping table
 --    If mapping exists for channel_id, set id=user_id
 UPDATE public.youtube_posts_daily y
-SET id = m.user_id
+SET id = m.user_id::text
 FROM public.user_youtube_channels m
 WHERE y.channel_id = m.youtube_channel_id
-  AND (y.id IS DISTINCT FROM m.user_id);
+  AND (y.id IS DISTINCT FROM m.user_id::text);
 
 -- 5) Ensure NOT NULL-ness for composite key columns
 ALTER TABLE public.youtube_posts_daily

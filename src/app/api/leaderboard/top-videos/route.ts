@@ -410,7 +410,7 @@ export async function GET(req: Request) {
             owner_name: ownerName,
             owner_id: ownerId,
             taken_at: postDate,
-            link: `https://www.youtube.com/watch?v=${vid}`,
+            link: `https://www.youtube.com/shorts/${vid}`,
             metrics: { views, likes, comments, shares: 0, saves: 0, total_engagement: likes + comments },
             snapshots_count: snaps.length
           })

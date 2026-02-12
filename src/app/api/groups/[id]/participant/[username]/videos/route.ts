@@ -199,7 +199,7 @@ export async function GET(req: Request, context: any) {
           platform: 'youtube',
           id: vid,
           username: ytHandle || (v.channel_id?.toString()?.replace(/^@/, '') || ''),
-          link: `https://www.youtube.com/watch?v=${vid}`,
+          link: `https://www.youtube.com/shorts/${vid}`,
           views: Number(v.views)||0,
           likes: Number(v.likes)||0,
           comments: Number(v.comments)||0,
