@@ -82,18 +82,20 @@ export async function GET(req: Request, context: any) {
               // Derive post_date from timestamp or string
               const pDate = formatPostDate(v.taken_at_timestamp || v.published_at);
               // Only upsert when we can map to a user
-              upserts.push({
-                id: mappedUserId, // user_id
-                channel_id: mappedChannelId || channelParam, // canonical channel id when known
-                video_id: videoId,
-                shortcode: videoId,
-                title: String(v.title || ''),
-                post_date: pDate,
-                views: Number(v.views || 0),
-                likes: Number(v.likes || 0),
-                comments: Number(v.comments || 0),
-                updated_at: new Date().toISOString()
-              });
+              if (mappedUserId) {
+                upserts.push({
+                  id: mappedUserId, // user_id
+                  channel_id: mappedChannelId || channelParam, // canonical channel id when known
+                  video_id: videoId,
+                  shortcode: videoId,
+                  title: String(v.title || ''),
+                  post_date: pDate,
+                  views: Number(v.views || 0),
+                  likes: Number(v.likes || 0),
+                  comments: Number(v.comments || 0),
+                  updated_at: new Date().toISOString()
+                });
+              }
             }
             
             if (upserts.length > 0) {
@@ -176,18 +178,20 @@ export async function GET(req: Request, context: any) {
       const likes = Number(v.digg_count || 0);
       const comments = Number(v.comment_count || 0);
 
-      upserts.push({
-        id: mappedUserId, // user_id (may be null if mapping not found)
-        channel_id: mappedChannelId || channelParam,
-        video_id: videoId,
-        shortcode: videoId,
-        title: String(title),
-        post_date: postDate,
-        views,
-        likes,
-        comments,
-        updated_at: new Date().toISOString()
-      });
+      if (mappedUserId) {
+        upserts.push({
+          id: mappedUserId, // user_id (must exist for PK)
+          channel_id: mappedChannelId || channelParam,
+          video_id: videoId,
+          shortcode: videoId,
+          title: String(title),
+          post_date: postDate,
+          views,
+          likes,
+          comments,
+          updated_at: new Date().toISOString()
+        });
+      }
     }
 
     if (upserts.length > 0) {

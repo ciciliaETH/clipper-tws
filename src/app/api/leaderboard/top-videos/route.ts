@@ -391,9 +391,9 @@ export async function GET(req: Request) {
           const comments = Number((last as any).comments || 0)
           const channelId = String((last as any).channel_id)
           let ownerName = channelId
-          let ownerId: string | null = null
+          let ownerId: string | null = (last as any).id || null
           let displayUsername = channelId
-          if (ytChannelToId.has(channelId)) {
+          if (!ownerId && ytChannelToId.has(channelId)) {
             ownerId = ytChannelToId.get(channelId)!
             if (ownerId && userMap.has(ownerId)) ownerName = userMap.get(ownerId).name
             // Prefer handle from mapping if available
