@@ -27,25 +27,18 @@ export async function POST(req: Request) {
 
     const supa = adminClient();
 
-    // 1. Get unique channels from participants
-    // Union approach:
-    // We want to refresh anything that is actively being tracked.
-    // Simplifying: Fetch from employee_youtube_participants as they are the active ones.
-    // Also include user_youtube_channels for coverage.
-    
-    // For now, let's just grab from employee_youtube_participants as primary source of truth for dashboard
+    // 1. Get unique channels from official mapping table user_youtube_channels (requested)
     const { data: parts, error } = await supa
-      .from('employee_youtube_participants')
-      .select('youtube_channel_id')
+      .from('user_youtube_channels')
+      .select('user_id, youtube_channel_id', { count: 'exact' })
+      .order('youtube_channel_id', { ascending: true })
       .range(offset, offset + limit - 1);
-      
     if (error) throw error;
-    
-    // De-duplicate
-    const channels = Array.from(new Set(parts.map(p => p.youtube_channel_id))).filter(Boolean);
-    
-    // Check total for pagination
-    const { count } = await supa.from('employee_youtube_participants').select('*', { count: 'exact', head: true });
+
+    const channels = Array.from(new Set((parts||[]).map((p:any)=> p.youtube_channel_id))).filter(Boolean);
+
+    // Check total for pagination based on mapping table
+    const { count } = await supa.from('user_youtube_channels').select('*', { count: 'exact', head: true });
     
     const results = [];
     let successCount = 0;
@@ -63,7 +56,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const nextOffset = offset + parts.length; // Use parts length not unique channels to advance cursor correctly
+    const nextOffset = offset + (parts?.length || 0); // advance by rows fetched
     const remaining = (count || 0) - nextOffset;
 
      return NextResponse.json({

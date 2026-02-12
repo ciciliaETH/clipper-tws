@@ -56,17 +56,36 @@ export async function GET(req: Request, context: any) {
           if (list.length > 0) {
             console.log(`[YouTube Fetch] V2 Found ${list.length} videos`);
             
-            const upserts = [];
+            // Resolve mapping: ensure we have user_id (id) and canonical channel_id from user_youtube_channels
+            let mappedUserId: string | null = null;
+            let mappedChannelId: string | null = null;
+            try {
+              // If channelParam is a channel ID (UC...), match directly; if it's a handle (@...), we cannot map here reliably
+              if (channelParam && !channelParam.startsWith('@')) {
+                const { data: mapRow } = await supa
+                  .from('user_youtube_channels')
+                  .select('user_id, youtube_channel_id')
+                  .eq('youtube_channel_id', channelParam)
+                  .maybeSingle();
+                if (mapRow) {
+                  mappedUserId = (mapRow as any).user_id;
+                  mappedChannelId = (mapRow as any).youtube_channel_id;
+                }
+              }
+            } catch {}
+
+            const upserts = [] as any[];
             for (const v of list) {
               const videoId = v.video_id || v.id;
               if (!videoId) continue;
               
               // Derive post_date from timestamp or string
               const pDate = formatPostDate(v.taken_at_timestamp || v.published_at);
-              
+              // Only upsert when we can map to a user
               upserts.push({
-                id: videoId,
-                channel_id: channelParam,
+                id: mappedUserId, // user_id
+                channel_id: mappedChannelId || channelParam, // canonical channel id when known
+                video_id: videoId,
                 shortcode: videoId,
                 title: String(v.title || ''),
                 post_date: pDate,
@@ -78,7 +97,7 @@ export async function GET(req: Request, context: any) {
             }
             
             if (upserts.length > 0) {
-              const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id' });
+              const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id,video_id' });
               if (error) {
                 console.error('[YouTube Fetch][V2] DB Error:', error);
               } else {
@@ -128,7 +147,24 @@ export async function GET(req: Request, context: any) {
     }
 
     // Process and upsert
-    const upserts = [];
+    // Resolve mapping: use exact channel ID when provided
+    let mappedUserId: string | null = null;
+    let mappedChannelId: string | null = null;
+    try {
+      if (channelParam && !channelParam.startsWith('@')) {
+        const { data: mapRow } = await supa
+          .from('user_youtube_channels')
+          .select('user_id, youtube_channel_id')
+          .eq('youtube_channel_id', channelParam)
+          .maybeSingle();
+        if (mapRow) {
+          mappedUserId = (mapRow as any).user_id;
+          mappedChannelId = (mapRow as any).youtube_channel_id;
+        }
+      }
+    } catch {}
+
+    const upserts: any[] = [];
     for (const v of videos) {
       // Map API fields to our Schema
       const videoId = v.video_id || v.aweme_id || v.id;
@@ -141,8 +177,9 @@ export async function GET(req: Request, context: any) {
       const comments = Number(v.comment_count || 0);
 
       upserts.push({
-        id: videoId,
-        channel_id: channelId, // Link to the identifier we used
+        id: mappedUserId, // user_id (may be null if mapping not found)
+        channel_id: mappedChannelId || channelParam,
+        video_id: videoId,
         shortcode: videoId,
         title: String(title),
         post_date: postDate,
@@ -154,7 +191,7 @@ export async function GET(req: Request, context: any) {
     }
 
     if (upserts.length > 0) {
-        const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id' });
+        const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id,video_id' });
         if (error) {
             console.error('[YouTube Fetch] DB Error:', error);
             throw error;

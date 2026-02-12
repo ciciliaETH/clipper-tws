@@ -62,6 +62,7 @@ export async function GET(req: Request, context: any) {
     const ttHandles = new Set<string>()
     const igHandles = new Set<string>()
     const ytChannels = new Set<string>()
+    let ytHandle: string | null = null // preferred display username for YouTube
     let fullName = foundFullName || normUser;
     
     if (userId) {
@@ -87,6 +88,13 @@ export async function GET(req: Request, context: any) {
          const { data: yte } = await supabase.from('employee_youtube_participants').select('youtube_channel_id').eq('employee_id', userId).eq('campaign_id', campaignId)
          yte?.forEach(x => x.youtube_channel_id && ytChannels.add(String((x as any).youtube_channel_id).trim()))
        }
+       // Fetch YouTube handle mapping if present
+       try {
+         const { data: yh } = await supabase.from('user_youtube_usernames').select('youtube_username').eq('user_id', userId).maybeSingle()
+         if (yh && (yh as any).youtube_username) {
+           ytHandle = String((yh as any).youtube_username).trim().replace(/^@/, '')
+         }
+       } catch {}
     } else {
        // Fallback
        ttHandles.add(normUser)
@@ -182,15 +190,16 @@ export async function GET(req: Request, context: any) {
       const { data: posts } = await q.order('views', { ascending: false })
       const map = new Map<string, any>()
       for (const p of posts || []) {
-        const vid = p.id
+        const vid = (p as any).video_id || (p as any).id
         if (!map.has(vid)) map.set(vid, p)
       }
       for (const v of map.values()) {
+        const vid = (v as any).video_id || (v as any).id
         videos.push({
           platform: 'youtube',
-          id: v.id,
-          username: v.channel_id,
-          link: `https://www.youtube.com/watch?v=${v.id}`,
+          id: vid,
+          username: ytHandle || (v.channel_id?.toString()?.replace(/^@/, '') || ''),
+          link: `https://www.youtube.com/watch?v=${vid}`,
           views: Number(v.views)||0,
           likes: Number(v.likes)||0,
           comments: Number(v.comments)||0,

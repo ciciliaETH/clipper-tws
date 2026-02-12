@@ -110,6 +110,7 @@ export async function GET(req: Request) {
     const ttUserToId = new Map<string, string>();
     const igUserToId = new Map<string, string>();
     const ytChannelToId = new Map<string, string>();
+    const ytIdToHandle = new Map<string, string>(); // user_id -> youtube handle (without @)
     
     // Populate from users table (current)
     for(const u of users || []) {
@@ -123,6 +124,21 @@ export async function GET(req: Request) {
     }
     for(const a of igAliases || []) {
         if(a.instagram_username) igUserToId.set(a.instagram_username.toLowerCase().replace(/^@+/,''), a.user_id);
+    }
+
+    // Try to fetch YouTube handles if a mapping table exists in DB (ignore if missing)
+    try {
+      const { data: ytHandles } = await supabase
+        .from('user_youtube_usernames')
+        .select('user_id, youtube_username')
+        .in('user_id', employeeIds);
+      for (const r of ytHandles || []) {
+        const uid = (r as any).user_id;
+        const handle = String((r as any).youtube_username || '').trim().replace(/^@+/, '').toLowerCase();
+        if (uid && handle) ytIdToHandle.set(uid, handle);
+      }
+    } catch (e) {
+      // table may not exist; ignore silently
     }
 
     const videos: any[] = []
@@ -347,7 +363,7 @@ export async function GET(req: Request) {
       if (uniqueChannels.length > 0) {
         const { data: ytRows } = await supabase
           .from('youtube_posts_daily')
-          .select('id, channel_id, post_date, title, views, likes, comments')
+          .select('video_id, id, channel_id, post_date, title, views, likes, comments')
           .in('channel_id', uniqueChannels)
           .gte('post_date', startISO)
           .lte('post_date', endISO)
@@ -357,7 +373,7 @@ export async function GET(req: Request) {
         // Group by video id
         const videoMap = new Map<string, any[]>()
         for (const r of ytRows || []) {
-          const vid = String((r as any).id)
+          const vid = String((r as any).video_id)
           if (!videoMap.has(vid)) videoMap.set(vid, [])
           videoMap.get(vid)!.push(r)
         }
@@ -376,14 +392,21 @@ export async function GET(req: Request) {
           const channelId = String((last as any).channel_id)
           let ownerName = channelId
           let ownerId: string | null = null
+          let displayUsername = channelId
           if (ytChannelToId.has(channelId)) {
             ownerId = ytChannelToId.get(channelId)!
             if (ownerId && userMap.has(ownerId)) ownerName = userMap.get(ownerId).name
+            // Prefer handle from mapping if available
+            const h = ownerId ? ytIdToHandle.get(ownerId) : undefined
+            if (h) displayUsername = h
+          } else {
+            // If channel_id itself is a handle like @handle, normalize to without @
+            if (channelId.startsWith('@')) displayUsername = channelId.replace(/^@+/, '')
           }
           videos.push({
             platform: 'youtube',
             video_id: vid,
-            username: channelId,
+            username: displayUsername,
             owner_name: ownerName,
             owner_id: ownerId,
             taken_at: postDate,
