@@ -1610,11 +1610,11 @@ export default function DashboardTotalPage() {
         )}
       </div>
 
-      {/* Top 5 Video FYP Section (aggregate across all groups when campaignId undefined) */}
+      {/* Top 15 Video FYP Section (aggregate across all groups when campaignId undefined) */}
       <div className="mt-8">
         <TopViralDashboard 
           days={30} 
-          limit={5} 
+          limit={15} 
         />
       </div>
     </div>
