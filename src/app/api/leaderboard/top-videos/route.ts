@@ -85,7 +85,7 @@ export async function GET(req: Request) {
     // Get usernames mapping
     const { data: users } = await supabase
       .from('users')
-      .select('id, full_name, username, tiktok_username, instagram_username, youtube_channel_id')
+      .select('id, full_name, username, tiktok_username, instagram_username')
       .in('id', employeeIds)
     
     // Fetch aliases for comprehensive lookup
@@ -130,7 +130,7 @@ export async function GET(req: Request) {
     for(const u of users || []) {
         if(u.tiktok_username) ttUserToId.set(norm(u.tiktok_username), u.id);
         if(u.instagram_username) igUserToId.set(norm(u.instagram_username), u.id);
-        if((u as any).youtube_channel_id) ytChannelToId.set(String((u as any).youtube_channel_id).trim(), u.id);
+        // youtube_channel_id removed from select to prevent crash if column missing
     }
     // Populate from aliases
     for(const a of ttAliases || []) {
@@ -322,10 +322,13 @@ export async function GET(req: Request) {
           // Find owner user
           let ownerName = last.username
           let ownerId = null
+          // Use 'username' from the post row directly, stripping any @ or whitespace
           const normalized = last.username.toLowerCase().replace(/\s+/g,'').replace(/^@+/,'');
+          
           if (igUserToId.has(normalized)) {
              ownerId = igUserToId.get(normalized);
              if (ownerId && userMap.has(ownerId)) {
+                // FORCE OVERWRITE ownerName with employee full_name if found
                 ownerName = userMap.get(ownerId).name;
              }
           }
