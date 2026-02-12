@@ -210,9 +210,6 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
                       >
                         {video.platform === 'tiktok' ? '🎵 TikTok' : video.platform === 'instagram' ? '📸 Instagram' : '▶️ YouTube'}
                       </span>
-                      <span className="text-xs text-white/50">
-                        {video.snapshots_count} snapshot{video.snapshots_count > 1 ? 's' : ''}
-                      </span>
                     </div>
                     <h3 className="text-white font-semibold truncate">{video.owner_name}</h3>
                     <p className="text-white/60 text-sm truncate">@{video.username}</p>

@@ -309,6 +309,12 @@ export default function LeaderboardPage() {
                           <a key={`ig-${u}-${idx}`} href={`https://www.instagram.com/${u}/`} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 text-white/80 hover:text-white hover:bg-white/10">Instagram @{u}</a>
                         ));
                       })()}
+                      {(() => {
+                        const yts: string[] = Array.from(new Set([...((selectedUser.extra_youtube_usernames||[]) as string[])]).values()).filter(Boolean) as string[];
+                        return yts.map((u:string, idx:number)=> (
+                          <a key={`yt-${u}-${idx}`} href={`https://www.youtube.com/@${u}`} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 text-white/80 hover:text-white hover:bg-white/10">YouTube @{u}</a>
+                        ));
+                      })()}
                     </div>
                   </div>
                 )}

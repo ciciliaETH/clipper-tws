@@ -198,7 +198,7 @@ export async function GET(req: Request) {
         }
       }
 
-      // Build employee → handles map (TikTok + Instagram)
+      // Build employee → handles map (TikTok + Instagram + YouTube)
       const { data: empUsers } = await supa
         .from('users')
         .select('id, full_name, username, tiktok_username, instagram_username')
@@ -207,11 +207,13 @@ export async function GET(req: Request) {
 
       const handlesTT = new Map<string, string[]>(); // user_id -> tt handles
       const handlesIG = new Map<string, string[]>(); // user_id -> ig handles
+      const channelsYT = new Map<string, string[]>(); // user_id -> youtube channel_ids
       for (const u of empUsers||[]) {
         const baseT = (u as any).tiktok_username ? [String((u as any).tiktok_username).replace(/^@/,'').toLowerCase()] : [];
         const baseI = (u as any).instagram_username ? [String((u as any).instagram_username).replace(/^@/,'').toLowerCase()] : [];
         handlesTT.set(String((u as any).id), baseT);
         handlesIG.set(String((u as any).id), baseI);
+        channelsYT.set(String((u as any).id), []);
       }
       if (empIds.length) {
         const { data: exT } = await supa
@@ -238,11 +240,24 @@ export async function GET(req: Request) {
           if (!arr.includes(u)) arr.push(u);
           handlesIG.set(id, arr);
         }
+        const { data: exYT } = await supa
+          .from('user_youtube_channels')
+          .select('user_id, youtube_channel_id')
+          .in('user_id', empIds);
+        for (const r of exYT||[]) {
+          const id = String((r as any).user_id);
+          const chId = String((r as any).youtube_channel_id||'');
+          if (!chId) continue;
+          const arr = channelsYT.get(id) || [];
+          if (!arr.includes(chId)) arr.push(chId);
+          channelsYT.set(id, arr);
+        }
       }
 
       // Union handles for querying
       const allTT = Array.from(new Set(Array.from(handlesTT.values()).flat())).filter(Boolean);
       const allIG = Array.from(new Set(Array.from(handlesIG.values()).flat())).filter(Boolean);
+      const allYTChannels = Array.from(new Set(Array.from(channelsYT.values()).flat())).filter(Boolean);
 
       // Query monthly aggregates per handle from DB
       const aggTT = new Map<string, { views:number; likes:number; comments:number; shares:number; saves:number; posts:number }>();
@@ -283,6 +298,24 @@ export async function GET(req: Request) {
           aggIG.set(u, cur);
         }
       }
+      const aggYT = new Map<string, { views:number; likes:number; comments:number; posts:number }>();
+      if (allYTChannels.length) {
+        const { data: rowsYT } = await supa
+          .from('youtube_posts_daily')
+          .select('channel_id, views, likes, comments')
+          .in('channel_id', allYTChannels)
+          .gte('post_date', startISO)
+          .lte('post_date', endISO);
+        for (const r of rowsYT || []) {
+          const chId = String((r as any).channel_id || '');
+          const cur = aggYT.get(chId) || { views:0, likes:0, comments:0, posts:0 };
+          cur.views += Number((r as any).views)||0;
+          cur.likes += Number((r as any).likes)||0;
+          cur.comments += Number((r as any).comments)||0;
+          cur.posts += 1;
+          aggYT.set(chId, cur);
+        }
+      }
 
       // Reduce per employee
       const result: Array<{ username:string; views:number; likes:number; comments:number; shares:number; saves:number; posts:number; total:number }>= [];
@@ -291,6 +324,7 @@ export async function GET(req: Request) {
         const label = String((u as any).full_name || (u as any).username || (u as any).tiktok_username || (u as any).instagram_username || id);
         const ttHandles = handlesTT.get(id) || [];
         const igHandles = handlesIG.get(id) || [];
+        const ytChannels = channelsYT.get(id) || [];
         let v=0,l=0,c=0,s=0,sv=0,p=0;
         for (const h of ttHandles) {
           const a = aggTT.get(h); if (!a) continue;
@@ -298,6 +332,10 @@ export async function GET(req: Request) {
         }
         for (const h of igHandles) {
           const a = aggIG.get(h); if (!a) continue;
+          v += a.views; l += a.likes; c += a.comments; p += a.posts;
+        }
+        for (const chId of ytChannels) {
+          const a = aggYT.get(chId); if (!a) continue;
           v += a.views; l += a.likes; c += a.comments; p += a.posts;
         }
         const total = v + l + c + s + sv;

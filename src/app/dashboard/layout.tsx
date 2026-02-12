@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { User } from '@/types';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { FiLogOut, FiUsers, FiBarChart, FiTrendingUp, FiMenu, FiX } from 'react-icons/fi';
 import { FiSettings } from 'react-icons/fi';
@@ -18,7 +18,28 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
   const supabase = createClient();
+
+  // Helper function to check if a link is active
+  const isActive = (href: string): boolean => {
+    if (href === '/leaderboard') {
+      return pathname === '/leaderboard';
+    }
+    if (href === '/dashboard') {
+      return pathname === '/dashboard';
+    }
+    // For other routes, check if pathname starts with the href
+    return pathname.startsWith(href) && href !== '/dashboard';
+  };
+
+  const getLinkClassName = (href: string): string => {
+    const baseClass = "flex items-center gap-2 px-3 py-2 rounded-lg transition";
+    const active = isActive(href);
+    return active
+      ? `${baseClass} text-white bg-blue-500/20 border border-blue-400/40`
+      : `${baseClass} text-white/80 hover:text-white hover:bg-white/5`;
+  };
 
   useEffect(() => {
     const getUser = async () => {
@@ -103,18 +124,18 @@ export default function DashboardLayout({
               <div className="flex items-center gap-2 sm:gap-4">
                 {/* Desktop nav */}
                 <div className="hidden lg:flex items-center gap-2">
-                  <Link href="/leaderboard" className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition">
+                  <Link href="/leaderboard" className={getLinkClassName("/leaderboard")}>
                     <FiBarChart size={18} />
                     <span className="text-sm font-medium">Leaderboard</span>
                   </Link>
 
-                  <Link href="/dashboard" className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition">
+                  <Link href="/dashboard" className={getLinkClassName("/dashboard")}>
                     <FiTrendingUp size={18} />
                     <span className="text-sm font-medium">Analytics</span>
                   </Link>
 
                   {(user.role === 'admin' || user.role === 'super_admin') && (
-                    <Link href="/dashboard/admin" className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition">
+                    <Link href="/dashboard/admin" className={getLinkClassName("/dashboard/admin")}>
                       <FiUsers size={18} />
                       <span className="text-sm font-medium">Admin</span>
                     </Link>
@@ -125,12 +146,12 @@ export default function DashboardLayout({
                     user.role === 'leader' ||
                     user.role === 'karyawan'
                   ) && (
-                    <Link href="/dashboard/groups" className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition">
+                    <Link href="/dashboard/groups" className={getLinkClassName("/dashboard/groups")}>
                       <FiTrendingUp size={18} />
                       <span className="text-sm font-medium">Groups</span>
                     </Link>
                   )}
-                  <Link href="/dashboard/account" className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition">
+                  <Link href="/dashboard/account" className={getLinkClassName("/dashboard/account")}>
                     <FiSettings size={18} />
                     <span className="text-sm font-medium">Akun</span>
                   </Link>
@@ -168,16 +189,16 @@ export default function DashboardLayout({
             {menuOpen && (
               <div className="lg:hidden border-t border-white/10 py-2">
                 <div className="flex flex-col gap-1">
-                  <Link href="/leaderboard" onClick={()=>setMenuOpen(false)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition text-center w-full">
+                  <Link href="/leaderboard" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/leaderboard") + " justify-center text-center w-full"}>
                     <FiBarChart size={18} />
                     <span className="text-sm font-medium">Leaderboard</span>
                   </Link>
-                  <Link href="/dashboard" onClick={()=>setMenuOpen(false)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition text-center w-full">
+                  <Link href="/dashboard" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard") + " justify-center text-center w-full"}>
                     <FiTrendingUp size={18} />
                     <span className="text-sm font-medium">Analytics</span>
                   </Link>
                   {(user.role === 'admin' || user.role === 'super_admin') && (
-                    <Link href="/dashboard/admin" onClick={()=>setMenuOpen(false)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition text-center w-full">
+                    <Link href="/dashboard/admin" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/admin") + " justify-center text-center w-full"}>
                       <FiUsers size={18} />
                       <span className="text-sm font-medium">Admin</span>
                     </Link>
@@ -188,12 +209,12 @@ export default function DashboardLayout({
                     user.role === 'leader' ||
                     user.role === 'karyawan'
                   ) && (
-                    <Link href="/dashboard/groups" onClick={()=>setMenuOpen(false)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition text-center w-full">
+                    <Link href="/dashboard/groups" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/groups") + " justify-center text-center w-full"}>
                       <FiTrendingUp size={18} />
                       <span className="text-sm font-medium">Groups</span>
                     </Link>
                   )}
-                  <Link href="/dashboard/account" onClick={()=>setMenuOpen(false)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/5 transition text-center w-full">
+                  <Link href="/dashboard/account" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/account") + " justify-center text-center w-full"}>
                     <FiSettings size={18} />
                     <span className="text-sm font-medium">Akun</span>
                   </Link>

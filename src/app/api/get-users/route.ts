@@ -49,6 +49,10 @@ export async function GET() {
         .from('user_youtube_channels')
         .select('user_id, youtube_channel_id')
         .in('user_id', ids);
+      const { data: extrasYTUsernames } = await supabaseAdmin
+        .from('user_youtube_usernames')
+        .select('user_id, youtube_username')
+        .in('user_id', ids);
 
       const map = new Map<string, string[]>();
       for (const r of extras || []) {
@@ -68,12 +72,19 @@ export async function GET() {
         arr.push(String(r.youtube_channel_id));
         mapYT.set(r.user_id, arr);
       }
+      const mapYTUsernames = new Map<string, string[]>();
+      for (const r of extrasYTUsernames || []) {
+        const arr = mapYTUsernames.get(r.user_id) || [];
+        arr.push(String(r.youtube_username));
+        mapYTUsernames.set(r.user_id, arr);
+      }
 
       const withExtras = (data || []).map((u: any) => ({
         ...u,
         extra_tiktok_usernames: map.get(u.id) || [],
         extra_instagram_usernames: mapIG.get(u.id) || [],
         extra_youtube_channel_ids: mapYT.get(u.id) || [],
+        extra_youtube_usernames: mapYTUsernames.get(u.id) || [],
       }));
       return NextResponse.json(withExtras);
     }
