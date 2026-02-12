@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { User } from '@/types';
 import { FaEdit, FaTrash, FaPlus, FaTimes } from 'react-icons/fa';
+import { FiUpload, FiUser } from 'react-icons/fi';
 
 export default function AdminPage() {
   const supabase = createClient();
@@ -29,6 +30,11 @@ export default function AdminPage() {
   const [igInput, setIgInput] = useState('');
   const [ytInput, setYtInput] = useState('');
   const [searchName, setSearchName] = useState('');
+  // Profile picture modal
+  const [showPictureModal, setShowPictureModal] = useState(false);
+  const [selectedPictureUrl, setSelectedPictureUrl] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -136,6 +142,27 @@ export default function AdminPage() {
     setShowModal(false);
     setCurrentUser(null);
     setError(null);
+  };
+
+  const handleAdminAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentUser?.id) return;
+    // validations
+    if (file.size > 5 * 1024 * 1024) { alert('Ukuran file maksimal 5MB'); return; }
+    const allowed = ['image/jpeg','image/jpg','image/png','image/gif','image/webp'];
+    if (!allowed.includes(file.type)) { alert('Format file harus JPEG/PNG/GIF/WebP'); return; }
+    setUploadingAvatar(true);
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(currentUser.id)}/upload-profile-picture`, { method: 'POST', body: fd });
+      const j = await res.json().catch(()=>({}));
+      if (!res.ok) throw new Error(j?.error || 'Gagal upload');
+      // Update UI
+      setCurrentUser(prev => prev ? { ...prev, profile_picture_url: j.url } as any : prev);
+      await loadUsers();
+    } catch (e:any) {
+      alert(String(e?.message||e));
+    } finally { setUploadingAvatar(false); }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -660,7 +687,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="p-8 min-h-screen">
+    <div className="p-8 min-h-screen" style={{ colorScheme: 'dark' }}>
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Manajemen Karyawan</h1>
         <div className="flex items-center gap-3">
@@ -1018,16 +1045,35 @@ export default function AdminPage() {
           <tbody>
             {users.filter(u => !searchName || String(u.full_name||'').toLowerCase().includes(searchName.toLowerCase())).map(user => (
               <tr key={user.id} className="border-t border-white/10 hover:bg-white/5">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/90">{user.full_name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/90">
+                  <div className="flex items-center gap-3">
+                    {(user as any)?.profile_picture_url ? (
+                      <img 
+                        src={(user as any).profile_picture_url} 
+                        alt={user.full_name} 
+                        className="w-10 h-10 rounded-full object-cover border border-white/20 cursor-pointer hover:border-white/40 transition-all"
+                        onClick={() => {
+                          setSelectedPictureUrl((user as any).profile_picture_url);
+                          setShowPictureModal(true);
+                        }}
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20 text-white/80 text-xs">—</div>
+                    )}
+                    <span>{user.full_name}</span>
+                  </div>
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{user.username}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.tiktok_username, ...(((user as any).extra_tiktok_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[((user as any).instagram_username), ...(((user as any).extra_instagram_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.youtube_channel_id, ...(user.extra_youtube_channel_ids||[])].filter(Boolean).join(', ') || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
-                    user.role === 'admin' ? 'border-red-500/30 text-red-300 bg-red-500/10' : user.role === 'leader' ? 'border-purple-400/30 text-purple-300 bg-purple-400/10' : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
+                    user.role === 'admin' 
+                      ? 'border-red-500/30 text-red-300 bg-red-500/10' 
+                      : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
                   }`}>
-                    {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'Head' : user.role}
+                    {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'karyawan' : user.role}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -1044,6 +1090,26 @@ export default function AdminPage() {
         </table>
       </div>
 
+      {/* Profile Picture Modal */}
+      {showPictureModal && selectedPictureUrl && (
+        <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4" onClick={() => setShowPictureModal(false)}>
+          <div className="relative max-w-2xl max-h-screen" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setShowPictureModal(false)}
+              className="absolute -top-10 -right-2 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all z-10"
+            >
+              <FaTimes size={24} />
+            </button>
+            <img
+              src={selectedPictureUrl}
+              alt="Profile Picture"
+              className="w-full h-full object-contain rounded-xl border border-white/20"
+            />
+          </div>
+        </div>
+      )}
+
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={closeModal}>
           <div className="glass border border-white/10 p-8 rounded-2xl w-full max-w-2xl glow-border" onClick={(e)=>e.stopPropagation()}>
@@ -1058,6 +1124,29 @@ export default function AdminPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Kolom Kiri */}
                 <div>
+                  {/* Avatar uploader */}
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="relative">
+                      { (currentUser as any)?.profile_picture_url ? (
+                        <img src={(currentUser as any).profile_picture_url as any} alt="Avatar" className="w-16 h-16 rounded-full object-cover border border-white/20" />
+                      ) : (
+                        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20">
+                          <FiUser className="text-white" />
+                        </div>
+                      ) }
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="absolute -bottom-2 -right-2 p-2 rounded-full bg-blue-600 text-white border-2 border-gray-900 hover:bg-blue-700 disabled:opacity-50"
+                        disabled={uploadingAvatar}
+                        title="Upload foto profil"
+                      >
+                        {uploadingAvatar ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <FiUpload size={12} />}
+                      </button>
+                      <input ref={avatarInputRef} className="hidden" type="file" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp" onChange={handleAdminAvatarSelect} />
+                    </div>
+                    <div className="text-xs text-white/50">Klik icon untuk upload foto (max 5MB)</div>
+                  </div>
                   <h3 className="font-semibold text-lg mb-4 border-b border-white/10 pb-2 text-white/80">Info Akun</h3>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-white/80 mb-1">Nama Lengkap</label>
@@ -1097,21 +1186,25 @@ export default function AdminPage() {
                   )}
                    <div className="mb-4">
                     <label className="block text-sm font-medium text-white/80 mb-1">Peran</label>
-                    <select
-                      name="role"
-                      value={currentUser?.role || 'karyawan'}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white"
-                    >
-                      <option value="karyawan">Karyawan</option>
-                      <option value="leader">Head</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                    <div className="relative">
+                      <select
+                        name="role"
+                        value={currentUser?.role || 'karyawan'}
+                        onChange={handleInputChange}
+                        className="w-full pr-10 px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white placeholder:text-white/40 appearance-none focus:outline-none focus:ring-2 focus:ring-white/20"
+                      >
+                        <option className="bg-gray-900 text-white" value="karyawan">Karyawan</option>
+                        <option className="bg-gray-900 text-white" value="admin">Admin</option>
+                      </select>
+                      <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/70" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z" clipRule="evenodd" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
                 {/* Kolom Kanan */}
                 <div>
-                  <h3 className="font-semibold text-lg mb-4 border-b border-white/10 pb-2 text-white/80">Info TikTok</h3>
+                  <h3 className="font-semibold text-lg mb-4 border-b border-white/10 pb-2 text-white/80">Username TikTok</h3>
                   <div className="mb-1 flex flex-wrap gap-2">
                     {tikTags.map((t,idx)=> (
                       <span key={`${t}-${idx}`} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-white/10 text-white/90 text-xs">
@@ -1139,7 +1232,7 @@ export default function AdminPage() {
                   </div>
                   <div className="text-xs text-white/50 mb-4">Tekan Enter untuk menambah. Yang pertama dianggap utama.</div>
 
-                  <h3 className="font-semibold text-lg mb-2 border-b border-white/10 pb-2 text-white/80 mt-2">Info Instagram</h3>
+                  <h3 className="font-semibold text-lg mb-2 border-b border-white/10 pb-2 text-white/80 mt-2">Username Instagram</h3>
                   <div className="mb-1 flex flex-wrap gap-2">
                     {igTags.map((t,idx)=> (
                       <span key={`${t}-${idx}`} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-white/10 text-white/90 text-xs">
@@ -1167,7 +1260,7 @@ export default function AdminPage() {
                   </div>
                   <div className="text-xs text-white/50">Tekan Enter untuk menambah. Yang pertama dianggap utama.</div>
 
-                  <h3 className="font-semibold text-lg mb-2 border-b border-white/10 pb-2 text-white/80 mt-4">Info YouTube</h3>
+                  <h3 className="font-semibold text-lg mb-2 border-b border-white/10 pb-2 text-white/80 mt-4">Username YouTube</h3>
                   <div className="mb-1 flex flex-wrap gap-2">
                     {ytTags.map((t,idx)=> (
                       <span key={`${t}-${idx}`} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-white/10 text-white/90 text-xs">
