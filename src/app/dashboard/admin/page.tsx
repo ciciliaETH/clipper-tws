@@ -13,9 +13,9 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   // Prizes state (active campaign)
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
-  const [firstPrize, setFirstPrize] = useState<number>(0);
-  const [secondPrize, setSecondPrize] = useState<number>(0);
-  const [thirdPrize, setThirdPrize] = useState<number>(0);
+  const [firstPrize, setFirstPrize] = useState<number | typeof NaN>(0);
+  const [secondPrize, setSecondPrize] = useState<number | typeof NaN>(0);
+  const [thirdPrize, setThirdPrize] = useState<number | typeof NaN>(0);
   const [savingPrizes, setSavingPrizes] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -68,16 +68,16 @@ export default function AdminPage() {
         if (res.ok && j?.campaignId) {
           setActiveCampaignId(j.campaignId);
           if (j?.prizes) {
-            setFirstPrize(Number(j.prizes.first_prize)||0);
-            setSecondPrize(Number(j.prizes.second_prize)||0);
-            setThirdPrize(Number(j.prizes.third_prize)||0);
+            setFirstPrize(Number(j.prizes.first_prize) || 0);
+            setSecondPrize(Number(j.prizes.second_prize) || 0);
+            setThirdPrize(Number(j.prizes.third_prize) || 0);
           } else {
             const rp = await fetch(`/api/campaigns/${j.campaignId}/prizes`);
             const pj = await rp.json();
             if (rp.ok) {
-              setFirstPrize(Number(pj.first_prize)||0);
-              setSecondPrize(Number(pj.second_prize)||0);
-              setThirdPrize(Number(pj.third_prize)||0);
+              setFirstPrize(Number(pj.first_prize) || 0);
+              setSecondPrize(Number(pj.second_prize) || 0);
+              setThirdPrize(Number(pj.third_prize) || 0);
             }
           }
         }
@@ -93,7 +93,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/campaigns/${activeCampaignId}/prizes`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ first_prize: firstPrize, second_prize: secondPrize, third_prize: thirdPrize })
+        body: JSON.stringify({ first_prize: isNaN(firstPrize) ? 0 : firstPrize, second_prize: isNaN(secondPrize) ? 0 : secondPrize, third_prize: isNaN(thirdPrize) ? 0 : thirdPrize })
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || 'Gagal menyimpan hadiah');
@@ -1001,15 +1001,15 @@ export default function AdminPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm text-white/70 mb-1">Juara 1</label>
-            <input type="number" value={firstPrize} onChange={e=>setFirstPrize(Number(e.target.value||0))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
+            <input type="number" value={isNaN(firstPrize) ? '' : firstPrize} onChange={e=>setFirstPrize(e.target.value === '' ? NaN : Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
           </div>
           <div>
             <label className="block text-sm text-white/70 mb-1">Juara 2</label>
-            <input type="number" value={secondPrize} onChange={e=>setSecondPrize(Number(e.target.value||0))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
+            <input type="number" value={isNaN(secondPrize) ? '' : secondPrize} onChange={e=>setSecondPrize(e.target.value === '' ? NaN : Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
           </div>
           <div>
             <label className="block text-sm text-white/70 mb-1">Juara 3</label>
-            <input type="number" value={thirdPrize} onChange={e=>setThirdPrize(Number(e.target.value||0))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
+            <input type="number" value={isNaN(thirdPrize) ? '' : thirdPrize} onChange={e=>setThirdPrize(e.target.value === '' ? NaN : Number(e.target.value))} className="w-full px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white" />
           </div>
         </div>
         <div className="mt-4 flex justify-end">
