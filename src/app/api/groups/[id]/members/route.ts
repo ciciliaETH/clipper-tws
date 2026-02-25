@@ -116,6 +116,22 @@ export async function GET(req: Request, context: any) {
       byEmployeeIG.set((r as any).employee_id, arr);
     }
 
+    // YouTube assignments for this campaign (optional)
+    const byEmployeeYT = new Map<string, string[]>();
+    try {
+      const { data: allAssignYT } = await supabase
+        .from('employee_youtube_participants')
+        .select('employee_id, youtube_channel_id')
+        .eq('campaign_id', id);
+      for (const r of allAssignYT || []) {
+        const ch = String((r as any).youtube_channel_id || '').trim();
+        if (!ch) continue;
+        const arr = byEmployeeYT.get((r as any).employee_id) || [];
+        arr.push(ch);
+        byEmployeeYT.set((r as any).employee_id, arr);
+      }
+    } catch {}
+
     // hydrate employee info
     const results: any[] = [];
     const assignmentByUsername: Record<string, { employee_id: string, name: string }> = {};
@@ -187,6 +203,31 @@ export async function GET(req: Request, context: any) {
       }
     }
 
+    // YouTube fallbacks: user_youtube_channels + users.youtube_channel_id
+    const fallbackYT = new Map<string, string[]>();
+    try {
+      const { data: mapYT } = await supabase
+        .from('user_youtube_channels')
+        .select('user_id, youtube_channel_id')
+        .in('user_id', empIds);
+      for (const r of mapYT || []) {
+        const uid = (r as any).user_id; const ch = String((r as any).youtube_channel_id || '').trim();
+        if (!ch) continue; const arr = fallbackYT.get(uid) || []; arr.push(ch); fallbackYT.set(uid, arr);
+      }
+    } catch {}
+    // Also try users.youtube_channel_id as fallback (column may not exist)
+    try {
+      const { data: ytProfiles } = await supabase
+        .from('users')
+        .select('id, youtube_channel_id')
+        .in('id', empIds);
+      for (const r of ytProfiles || []) {
+        const ch = String((r as any).youtube_channel_id || '').trim();
+        if (!ch) continue;
+        const arr = fallbackYT.get((r as any).id) || []; arr.push(ch); fallbackYT.set((r as any).id, arr);
+      }
+    } catch {}
+
     // Campaign-level participants (fallback source if employee has no explicit mapping)
     const { data: campTikTok } = await supabase
       .from('campaign_participants')
@@ -199,6 +240,16 @@ export async function GET(req: Request, context: any) {
       .select('instagram_username')
       .eq('campaign_id', id);
     const campaignIG = Array.from(new Set((campIG || []).map((r:any)=> String((r as any).instagram_username||'').replace(/^@/, '').toLowerCase()).filter(Boolean)));
+
+    // Campaign-level YouTube participants (fallback)
+    let campaignYT: string[] = [];
+    try {
+      const { data: campYT } = await supabase
+        .from('campaign_youtube_participants')
+        .select('youtube_channel_id')
+        .eq('campaign_id', id);
+      campaignYT = Array.from(new Set((campYT || []).map((r:any)=> String((r as any).youtube_channel_id||'').trim()).filter(Boolean)));
+    } catch {}
 
     // Get campaign hashtags for filtering
     const { data: campaign } = await supabase
@@ -278,6 +329,7 @@ export async function GET(req: Request, context: any) {
     // If start/end supplied, aggregate dynamically
     let sumsByUsername: Record<string, { views:number, likes:number, comments:number, shares:number, saves:number, posts:number }> | null = null;
     let sumsByUsernameIG: Record<string, { views:number, likes:number, comments:number, posts:number }> | null = null;
+    let sumsByChannelYT: Record<string, { views:number, likes:number, comments:number, posts:number }> | null = null;
     // Accrual per-employee totals (if requested)
     const accrualTotals = new Map<string, { views:number, likes:number, comments:number, shares:number, saves:number }>();
     let accrualPosts: Map<string, number> | null = null;
@@ -366,11 +418,19 @@ export async function GET(req: Request, context: any) {
         if (!snapshotsOnly && ttUnion.length) {
           const { data: ptt } = await supabase
             .from('tiktok_posts_daily')
-            .select('username, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
+            .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
             .in('username', ttUnion)
             .gte('taken_at', start + 'T00:00:00Z')
-            .lte('taken_at', end + 'T23:59:59Z');
-          for (const r of ptt||[]) {
+            .lte('taken_at', end + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+            .limit(50000);
+          // Deduplicate by video_id (same logic as participant detail page)
+          const dedupedTT = new Map<string, any>();
+          for (const r of ptt || []) {
+            const vid = String((r as any).video_id || '');
+            if (vid && !dedupedTT.has(vid)) dedupedTT.set(vid, r);
+          }
+          for (const r of dedupedTT.values()) {
             if (requiredHashtags && requiredHashtags.length) {
               const title = String((r as any).title || '');
               if (!hasRequiredHashtag(title, requiredHashtags)) continue;
@@ -395,11 +455,19 @@ export async function GET(req: Request, context: any) {
         if (!snapshotsOnly && igUnion.length) {
           const { data: pig } = await supabase
             .from('instagram_posts_daily')
-            .select('username, taken_at, play_count, like_count, comment_count, caption')
+            .select('id, code, username, taken_at, play_count, like_count, comment_count, caption')
             .in('username', igUnion)
             .gte('taken_at', start + 'T00:00:00Z')
-            .lte('taken_at', end + 'T23:59:59Z');
-          for (const r of pig||[]) {
+            .lte('taken_at', end + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+            .limit(50000);
+          // Deduplicate by id/code (same logic as participant detail page)
+          const dedupedIG = new Map<string, any>();
+          for (const r of pig || []) {
+            const vid = String((r as any).id || (r as any).code || '');
+            if (vid && !dedupedIG.has(vid)) dedupedIG.set(vid, r);
+          }
+          for (const r of dedupedIG.values()) {
             if (requiredHashtags && requiredHashtags.length) {
               const caption = String((r as any).caption || '');
               if (!hasRequiredHashtag(caption, requiredHashtags)) continue;
@@ -493,6 +561,7 @@ export async function GET(req: Request, context: any) {
         }
       } else {
       // collect union per-employee based on assignment, else fallbacks
+      const ytNeed = new Set<string>();
       for (const empId of empIds) {
         const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
         const useTT = assignedTT.length ? assignedTT : (campaignTT.length ? campaignTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean))));
@@ -500,19 +569,30 @@ export async function GET(req: Request, context: any) {
         const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
         const useIG = assignedIG.length ? assignedIG : (campaignIG.length ? campaignIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean))));
         for (const u of useIG) igNeed.add(u);
+        const assignedYT = (byEmployeeYT.get(empId) || []).filter(Boolean);
+        const useYT = assignedYT.length ? assignedYT : (campaignYT.length ? campaignYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean))));
+        for (const u of useYT) ytNeed.add(u);
       }
       if (tikNeed.size > 0) {
         const { data: rows } = await supabase
           .from('tiktok_posts_daily')
-          .select('username, play_count, digg_count, comment_count, share_count, save_count, title')
+          .select('video_id, username, play_count, digg_count, comment_count, share_count, save_count, title')
           .gte('taken_at', start + 'T00:00:00Z')
           .lte('taken_at', end + 'T23:59:59Z')
-          .in('username', Array.from(tikNeed));
-        const map: Record<string, { views:number, likes:number, comments:number, shares:number, saves:number, posts:number }> = {};
+          .in('username', Array.from(tikNeed))
+          .order('play_count', { ascending: false })
+          .limit(50000);
+        // Deduplicate by video_id (same logic as participant detail page)
+        const deduped = new Map<string, any>();
         for (const r of rows || []) {
+          const vid = String((r as any).video_id || '');
+          if (vid && !deduped.has(vid)) deduped.set(vid, r);
+        }
+        const map: Record<string, { views:number, likes:number, comments:number, shares:number, saves:number, posts:number }> = {};
+        for (const r of deduped.values()) {
           // Apply hashtag filter
           if (!hasRequiredHashtag((r as any).title, requiredHashtags)) continue;
-          
+
           const u = String((r as any).username||''); if (!u) continue;
           const m = map[u] || { views:0, likes:0, comments:0, shares:0, saves:0, posts:0 };
           m.views += Number((r as any).play_count)||0;
@@ -528,15 +608,23 @@ export async function GET(req: Request, context: any) {
       if (igNeed.size > 0) {
         const { data: rowsIG } = await supabase
           .from('instagram_posts_daily')
-          .select('username, play_count, like_count, comment_count, caption')
+          .select('id, code, username, play_count, like_count, comment_count, caption')
           .gte('taken_at', start + 'T00:00:00Z')
           .lte('taken_at', end + 'T23:59:59Z')
-          .in('username', Array.from(igNeed));
-        const mapIG: Record<string, { views:number, likes:number, comments:number, posts:number }> = {};
+          .in('username', Array.from(igNeed))
+          .order('play_count', { ascending: false })
+          .limit(50000);
+        // Deduplicate by id/code (same logic as participant detail page)
+        const dedupedIG = new Map<string, any>();
         for (const r of rowsIG || []) {
+          const vid = String((r as any).id || (r as any).code || '');
+          if (vid && !dedupedIG.has(vid)) dedupedIG.set(vid, r);
+        }
+        const mapIG: Record<string, { views:number, likes:number, comments:number, posts:number }> = {};
+        for (const r of dedupedIG.values()) {
           // Apply hashtag filter
           if (!hasRequiredHashtag((r as any).caption, requiredHashtags)) continue;
-          
+
           const u = String((r as any).username||''); if (!u) continue;
           const m = mapIG[u] || { views:0, likes:0, comments:0, posts:0 };
           m.views += Number((r as any).play_count)||0;
@@ -547,6 +635,35 @@ export async function GET(req: Request, context: any) {
         }
         sumsByUsernameIG = mapIG;
       }
+      // YouTube: deduplicate by video_id (same logic as participant detail page)
+      try {
+        if (ytNeed.size > 0) {
+          const { data: rowsYT } = await supabase
+            .from('youtube_posts_daily')
+            .select('video_id, channel_id, views, likes, comments')
+            .gte('post_date', start)
+            .lte('post_date', end)
+            .in('channel_id', Array.from(ytNeed))
+            .order('views', { ascending: false })
+            .limit(50000);
+          const dedupedYT = new Map<string, any>();
+          for (const r of rowsYT || []) {
+            const vid = String((r as any).video_id || (r as any).id || '');
+            if (vid && !dedupedYT.has(vid)) dedupedYT.set(vid, r);
+          }
+          const mapYT: Record<string, { views:number, likes:number, comments:number, posts:number }> = {};
+          for (const r of dedupedYT.values()) {
+            const ch = String((r as any).channel_id||''); if (!ch) continue;
+            const m = mapYT[ch] || { views:0, likes:0, comments:0, posts:0 };
+            m.views += Number((r as any).views)||0;
+            m.likes += Number((r as any).likes)||0;
+            m.comments += Number((r as any).comments)||0;
+            m.posts += 1;
+            mapYT[ch] = m;
+          }
+          sumsByChannelYT = mapYT;
+        }
+      } catch {}
       }
     }
 
@@ -558,8 +675,10 @@ export async function GET(req: Request, context: any) {
       // Resolve usernames: prefer explicit group assignment; else fall back to employee mappings/profile
       const assignedTT: string[] = (byEmployee.get(empId) || []).filter(Boolean);
       const assignedIG: string[] = (byEmployeeIG.get(empId) || []).filter(Boolean);
+      const assignedYT: string[] = (byEmployeeYT.get(empId) || []).filter(Boolean);
       let accountUsernames: string[] = assignedTT.length ? assignedTT : (campaignTT.length ? campaignTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean))));
       let accountIG: string[] = assignedIG.length ? assignedIG : (campaignIG.length ? campaignIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean))));
+      let accountYT: string[] = assignedYT.length ? assignedYT : (campaignYT.length ? campaignYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean))));
       for (const u of accountUsernames) assignmentByUsername[u] = { employee_id: empId, name: user.full_name || user.email || user.tiktok_username };
 
       // totals: STRICT MODE
@@ -579,15 +698,19 @@ export async function GET(req: Request, context: any) {
         const postsEnd = rangeEnd || endISO;
         let postsCount = 0;
         
-        // TikTok posts dari tiktok_posts_daily
+        // TikTok posts dari tiktok_posts_daily (deduplicate by video_id)
         if (accountUsernames.length > 0) {
           const { data: ttPosts } = await supabase
             .from('tiktok_posts_daily')
-            .select('username, title')
+            .select('video_id, username, title')
             .in('username', accountUsernames)
             .gte('taken_at', postsStart + 'T00:00:00Z')
             .lte('taken_at', postsEnd + 'T23:59:59Z');
+          const seenTT = new Set<string>();
           for (const r of ttPosts || []) {
+            const vid = String((r as any).video_id || '');
+            if (vid && seenTT.has(vid)) continue;
+            if (vid) seenTT.add(vid);
             // Apply hashtag filter jika ada
             if (requiredHashtags && requiredHashtags.length) {
               const title = String((r as any).title || '');
@@ -596,16 +719,20 @@ export async function GET(req: Request, context: any) {
             postsCount += 1;
           }
         }
-        
-        // Instagram posts dari instagram_posts_daily
+
+        // Instagram posts dari instagram_posts_daily (deduplicate by id/code)
         if (accountIG.length > 0) {
           const { data: igPosts } = await supabase
             .from('instagram_posts_daily')
-            .select('username, caption')
+            .select('id, code, username, caption')
             .in('username', accountIG)
             .gte('taken_at', postsStart + 'T00:00:00Z')
             .lte('taken_at', postsEnd + 'T23:59:59Z');
+          const seenIG = new Set<string>();
           for (const r of igPosts || []) {
+            const vid = String((r as any).id || (r as any).code || '');
+            if (vid && seenIG.has(vid)) continue;
+            if (vid) seenIG.add(vid);
             // Apply hashtag filter jika ada
             if (requiredHashtags && requiredHashtags.length) {
               const caption = String((r as any).caption || '');
@@ -616,7 +743,7 @@ export async function GET(req: Request, context: any) {
         }
         
         totals.posts = postsCount;
-      } else if (sumsByUsername || sumsByUsernameIG) {
+      } else if (sumsByUsername || sumsByUsernameIG || sumsByChannelYT) {
         if (sumsByUsername) {
           for (const u of accountUsernames) {
             const m = (sumsByUsername as any)[u]; if (!m) continue;
@@ -626,6 +753,12 @@ export async function GET(req: Request, context: any) {
         if (sumsByUsernameIG) {
           for (const u of accountIG) {
             const m = (sumsByUsernameIG as any)[u]; if (!m) continue;
+            totals.views += m.views; totals.likes += m.likes; totals.comments += m.comments; totals.posts += m.posts;
+          }
+        }
+        if (sumsByChannelYT) {
+          for (const ch of accountYT) {
+            const m = (sumsByChannelYT as any)[ch]; if (!m) continue;
             totals.views += m.views; totals.likes += m.likes; totals.comments += m.comments; totals.posts += m.posts;
           }
         }

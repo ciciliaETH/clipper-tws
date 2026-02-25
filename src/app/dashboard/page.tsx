@@ -332,22 +332,29 @@ export default function DashboardTotalPage() {
         }
       } else {
         // Post date: gunakan endpoint dashboard/series (alias-aware, historical + realtime)
+        // Use daily interval when date range is entirely in realtime period or <= 60 days
+        const REALTIME_CUTOFF = '2026-02-05';
+        const daysDiff = Math.ceil((new Date(effEnd+'T00:00:00Z').getTime() - new Date(effStart+'T00:00:00Z').getTime()) / (1000*60*60*24));
+        const effectiveInterval = (effStart >= REALTIME_CUTOFF || daysDiff <= 60) ? 'daily' : 'weekly';
         const url = new URL('/api/dashboard/series', window.location.origin);
         url.searchParams.set('start', effStart);
         url.searchParams.set('end', effEnd);
-        url.searchParams.set('interval', 'weekly');
+        url.searchParams.set('interval', effectiveInterval);
         url.searchParams.set('mode', mode);
         url.searchParams.set('cutoff', accrualCutoff);
         const res = await fetch(url.toString(), { cache: 'no-store' });
         json = await res.json();
+        // Per-group series are now returned directly by /api/dashboard/series
+        // using the same participant resolution as /api/groups/[id]/members
       }
       // Ensure platform arrays exist (older API responses might miss them)
       try {
         if (Array.isArray(json?.groups)) {
-          // Derive platform totals if missing or empty
+          // Derive platform totals if missing, empty, or all-zero (e.g. dashboard/series returns YouTube with 0s)
+          const isAllZero = (arr: any[]) => arr.every((s: any) => !Number(s.views) && !Number(s.likes) && !Number(s.comments));
           const needTT = !Array.isArray(json?.total_tiktok) || json.total_tiktok.length === 0;
           const needIG = !Array.isArray(json?.total_instagram) || json.total_instagram.length === 0;
-          const needYT = !Array.isArray(json?.total_youtube) || json.total_youtube.length === 0;
+          const needYT = !Array.isArray(json?.total_youtube) || json.total_youtube.length === 0 || isAllZero(json.total_youtube);
           if (needTT || needIG || needYT) {
             const sumByDate = (arrs: any[][], pick: (s:any)=>{views:number;likes:number;comments:number;shares?:number;saves?:number}) => {
               const map = new Map<string, any>();
@@ -375,6 +382,19 @@ export default function DashboardTotalPage() {
             if (needYT) {
               const ytArrays = json.groups.map((g:any)=> g.series_youtube || []);
               json.total_youtube = sumByDate(ytArrays, (s:any)=>({views:s.views||0, likes:s.likes||0, comments:s.comments||0}));
+              // Also add YouTube into the total series so the "Total" line includes YT
+              if (Array.isArray(json.total) && json.total_youtube.length) {
+                const ytMap = new Map<string, any>();
+                for (const s of json.total_youtube) ytMap.set(String(s.date), s);
+                for (const t of json.total) {
+                  const yt = ytMap.get(String(t.date));
+                  if (yt) {
+                    t.views = (Number(t.views)||0) + (Number(yt.views)||0);
+                    t.likes = (Number(t.likes)||0) + (Number(yt.likes)||0);
+                    t.comments = (Number(t.comments)||0) + (Number(yt.comments)||0);
+                  }
+                }
+              }
             }
           }
         }
@@ -392,17 +412,19 @@ export default function DashboardTotalPage() {
         json.totals = sumSeries(json.total || []);
       }
       setData(json);
+      // Update interval state to match what was actually used by the API
+      if (json?.interval) setIntervalVal(json.interval);
     } catch {}
     setLoading(false);
   };
 
-  useEffect(()=>{ load(); }, [start, end, interval, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, activeCampaignId]);
+  useEffect(()=>{ load(); }, [start, end, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, activeCampaignId]);
   
-  // Load historical data (weekly_historical_data)
+  // Load historical data (weekly_historical_data) — skip if date range is entirely in realtime
   useEffect(() => {
     const loadHistorical = async () => {
-      if (!showHistorical) {
-        console.log('[HISTORICAL] showHistorical is false, skipping load');
+      const HIST_CUTOFF = '2026-02-05';
+      if (!showHistorical || start >= HIST_CUTOFF) {
         setHistoricalData([]);
         return;
       }
@@ -463,7 +485,7 @@ export default function DashboardTotalPage() {
     };
     
     loadHistorical();
-  }, [showHistorical]);
+  }, [showHistorical, start]);
   
   // Load posts data for chart
   useEffect(() => {
@@ -503,7 +525,10 @@ export default function DashboardTotalPage() {
     
     loadPosts();
   }, [showPosts, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, start, end, platformFilter]);
-  
+
+  // Header totals now use the same data source as the chart (data.total from dashboard/series API)
+  // This ensures the header always matches the chart values exactly.
+
   useEffect(()=>{
     // Fetch active campaign ID
     const fetchCampaign = async () => {
@@ -1200,6 +1225,9 @@ export default function DashboardTotalPage() {
       const mapIGViews = sumSeries(data.total_instagram||[], 'views');
       const mapIGLikes = sumSeries(data.total_instagram||[], 'likes');
       const mapIGComments = sumSeries(data.total_instagram||[], 'comments');
+      const mapYTViews = sumSeries(data.total_youtube||[], 'views');
+      const mapYTLikes = sumSeries(data.total_youtube||[], 'likes');
+      const mapYTComments = sumSeries(data.total_youtube||[], 'comments');
       const rtPeriods: any[] = [];
       const indices = Array.from(new Set([ ...mapViews.keys(), ...mapLikes.keys(), ...mapComments.keys() ])).sort((a,b)=> a-b);
       for (const idx of indices) {
@@ -1216,6 +1244,9 @@ export default function DashboardTotalPage() {
           instagram: mapIGViews.get(idx)||0,
           instagram_likes: mapIGLikes.get(idx)||0,
           instagram_comments: mapIGComments.get(idx)||0,
+          youtube: mapYTViews.get(idx)||0,
+          youtube_likes: mapYTLikes.get(idx)||0,
+          youtube_comments: mapYTComments.get(idx)||0,
           is_historical: false,
           groups: []
         });
@@ -1393,22 +1424,23 @@ export default function DashboardTotalPage() {
   const chartRef = useRef<any>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   
-  // Calculate grand totals strictly from current masked server totals
-  // NOTE: Historical data is already merged into data.total/data.total_tiktok/data.total_instagram
-  // at load time (see lines 291-293), so we DON'T add historicalData again here (no double counting)
+  // Calculate grand totals: prefer sum of all group totals (from members API) for consistency
+  // with /dashboard/groups page. Fallback to series-based sum.
   const grandTotals = useMemo(() => {
     if (!data) return { views: 0, likes: 0, comments: 0 };
-    // Sum from currently selected platform series (already includes merged historical data)
+    // Sum from the same data source as the chart to ensure header matches chart values
     const sumArr = (arr:any[] = []) => arr.reduce((a:any,s:any)=>({
       views: (a.views||0) + Number(s.views||0),
       likes: (a.likes||0) + Number(s.likes||0),
       comments: (a.comments||0) + Number(s.comments||0)
     }), { views:0, likes:0, comments:0 });
-    
+
     if (platformFilter === 'tiktok' && Array.isArray(data.total_tiktok)) {
       return sumArr(data.total_tiktok);
     } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram)) {
       return sumArr(data.total_instagram);
+    } else if (platformFilter === 'youtube' && Array.isArray(data.total_youtube)) {
+      return sumArr(data.total_youtube);
     } else {
       return sumArr(data.total || []);
     }

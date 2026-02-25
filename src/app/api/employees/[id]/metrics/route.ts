@@ -432,16 +432,24 @@ export async function GET(req: Request, context: any) {
     let totalsYouTube = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 } as any;
 
     if (start && end) {
+      // TikTok: deduplicate by video_id (same logic as participant detail page)
       const { data: rows, error: aggErr } = await supabase
         .from('tiktok_posts_daily')
-        .select('play_count, digg_count, comment_count, share_count, save_count, title')
+        .select('video_id, play_count, digg_count, comment_count, share_count, save_count, title')
         .in('username', normUsernames)
         .gte('taken_at', start + 'T00:00:00Z')
-        .lte('taken_at', end + 'T23:59:59Z');
+        .lte('taken_at', end + 'T23:59:59Z')
+        .order('play_count', { ascending: false })
+        .limit(50000);
+      const seenTT = new Map<string, any>();
       for (const r of rows || []) {
+        const vid = String((r as any).video_id || '');
+        if (vid && !seenTT.has(vid)) seenTT.set(vid, r);
+      }
+      for (const r of seenTT.values()) {
         // Apply hashtag filter
         if (!hasRequiredHashtag((r as any).title, requiredHashtags)) continue;
-        
+
         totalsTikTok.views += Number((r as any).play_count) || 0;
         totalsTikTok.likes += Number((r as any).digg_count) || 0;
         totalsTikTok.comments += Number((r as any).comment_count) || 0;
@@ -449,30 +457,46 @@ export async function GET(req: Request, context: any) {
         totalsTikTok.saves += Number((r as any).save_count) || 0;
         totalsTikTok.posts += 1;
       }
+      // Instagram: deduplicate by id/code (same logic as participant detail page)
       const { data: igRows } = await supabase
         .from('instagram_posts_daily')
-        .select('play_count, like_count, comment_count, caption')
+        .select('id, code, play_count, like_count, comment_count, caption')
         .in('username', normIG)
         .gte('taken_at', start + 'T00:00:00Z')
-        .lte('taken_at', end + 'T23:59:59Z');
+        .lte('taken_at', end + 'T23:59:59Z')
+        .order('play_count', { ascending: false })
+        .limit(50000);
+      const seenIG = new Map<string, any>();
       for (const r of igRows || []) {
+        const vid = String((r as any).id || (r as any).code || '');
+        if (vid && !seenIG.has(vid)) seenIG.set(vid, r);
+      }
+      for (const r of seenIG.values()) {
         // Apply hashtag filter
         if (!hasRequiredHashtag((r as any).caption, requiredHashtags)) continue;
-        
+
         totalsInstagram.views += Number((r as any).play_count)||0;
         totalsInstagram.likes += Number((r as any).like_count)||0;
         totalsInstagram.comments += Number((r as any).comment_count)||0;
         totalsInstagram.posts += 1;
       }
 
+      // YouTube: deduplicate by video_id (same logic as participant detail page)
       if (normYT.length) {
         const { data: ytRows } = await supabase
           .from('youtube_posts_daily')
-          .select('views, likes, comments')
+          .select('video_id, views, likes, comments')
           .in('channel_id', normYT)
           .gte('post_date', start)
-          .lte('post_date', end);
+          .lte('post_date', end)
+          .order('views', { ascending: false })
+          .limit(50000);
+        const seenYT = new Map<string, any>();
         for (const r of ytRows || []) {
+          const vid = String((r as any).video_id || (r as any).id || '');
+          if (vid && !seenYT.has(vid)) seenYT.set(vid, r);
+        }
+        for (const r of seenYT.values()) {
           totalsYouTube.views += Number((r as any).views)||0;
           totalsYouTube.likes += Number((r as any).likes)||0;
           totalsYouTube.comments += Number((r as any).comments)||0;
@@ -536,16 +560,24 @@ export async function GET(req: Request, context: any) {
       }
     } catch {}
 
-    // Instagram series (group by date in range)
+    // Instagram series (group by date in range) - deduplicate by id/code
     try {
       const { data: rows } = await supabase
         .from('instagram_posts_daily')
-        .select('taken_at, play_count, like_count, comment_count')
+        .select('id, code, taken_at, play_count, like_count, comment_count')
         .in('username', normIG)
         .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
-        .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
+        .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
+        .order('play_count', { ascending: false })
+        .limit(50000);
+      // Deduplicate by id/code first
+      const dedupIG = new Map<string, any>();
+      for (const r of rows || []) {
+        const vid = String((r as any).id || (r as any).code || '');
+        if (vid && !dedupIG.has(vid)) dedupIG.set(vid, r);
+      }
       const map = new Map<string,{views:number;likes:number;comments:number}>();
-      for (const r of rows||[]) {
+      for (const r of dedupIG.values()) {
         const key = new Date((r as any).taken_at).toISOString().slice(0,10);
         const cur = map.get(key) || { views:0, likes:0, comments:0 };
         cur.views += Number((r as any).play_count)||0;
@@ -576,18 +608,25 @@ export async function GET(req: Request, context: any) {
       seriesInstagram = Array.from(buck.values()).sort((a,b)=> a.date.localeCompare(b.date));
     } catch {}
 
-    // YouTube series
+    // YouTube series - deduplicate by video_id
     try {
       if (normYT.length) {
         const { data: rows } = await supabase
           .from('youtube_posts_daily')
-          .select('post_date, views, likes, comments')
+          .select('video_id, post_date, views, likes, comments')
           .in('channel_id', normYT)
           .gte('post_date', start || '1970-01-01')
-          .lte('post_date', end || new Date().toISOString().slice(0,10));
-        
+          .lte('post_date', end || new Date().toISOString().slice(0,10))
+          .order('views', { ascending: false })
+          .limit(50000);
+        // Deduplicate by video_id first
+        const dedupYT = new Map<string, any>();
+        for (const r of rows || []) {
+          const vid = String((r as any).video_id || (r as any).id || '');
+          if (vid && !dedupYT.has(vid)) dedupYT.set(vid, r);
+        }
         const map = new Map<string,{views:number;likes:number;comments:number}>();
-        for (const r of rows||[]) {
+        for (const r of dedupYT.values()) {
           const key = String(r.post_date).slice(0,10);
           const cur = map.get(key) || { views:0, likes:0, comments:0 };
           cur.views += Number(r.views)||0;

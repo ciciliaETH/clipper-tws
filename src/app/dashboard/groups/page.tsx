@@ -57,6 +57,7 @@ export default function CampaignsPage() {
   // Group members (employees)
   const [participants, setParticipants] = useState<any[]>([]);
   const [assignmentByUsername, setAssignmentByUsername] = useState<Record<string, { employee_id: string, name: string }>>({});
+  const [memberGroupTotals, setMemberGroupTotals] = useState<any | null>(null);
   const [showManage, setShowManage] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -166,57 +167,72 @@ export default function CampaignsPage() {
       if (!selected) return;
       setLoading(true);
       try {
-        const effStart = groupStart; // ignored by accrual server
+        const effStart = groupStart;
         const effEnd = groupEnd;
-        // Load group metrics using selected interval
-        const groupUrl = `/api/campaigns/${selected.id}/metrics?start=${effStart}&end=${effEnd}&interval=${chartInterval}`;
-        const gRes = await fetch(groupUrl, { cache: 'no-store' });
-        let gData = await gRes.json();
-        console.log('[DEBUG] API Response:', { 
-          url: groupUrl, 
-          seriesLength: gData?.series_total?.length || 0,
-          firstDate: gData?.series_total?.[0]?.date,
-          lastDate: gData?.series_total?.[gData?.series_total?.length - 1]?.date
-        });
-        if (!gRes.ok) throw new Error(gData.error || 'Failed to load metrics');
-        // No accrual masking in Post Date mode
-        // Header totals should match the chart exactly -> sum from MASKED series currently shown
-        const baseArr = (gData?.series_total || gData?.series || []) as any[];
-        const headerSums = baseArr.reduce((a:any, s:any)=>({
-          views: (a.views||0) + Number(s.views||0),
-          likes: (a.likes||0) + Number(s.likes||0),
-          comments: (a.comments||0) + Number(s.comments||0)
-        }), { views:0, likes:0, comments:0 });
-        setMetrics({ ...(gData||{}), totals: headerSums });
-
-        // Optionally load selected employees
-        const DEFAULT_MAX = 12; // show more employees on the chart legend by default
-        const ids = (chartCompareIds.length > 0
-          ? chartCompareIds.slice(0, 20)
-          : (participants || []).slice(0, DEFAULT_MAX).map((p:any)=> p.id));
-        if (ids.length > 0) {
-          const reqs = ids.map(async (eid) => {
+        // Fetch ALL employee metrics in parallel so group Total = sum of all employees
+        // This ensures consistency with /api/groups/[id]/members totals
+        const allEmpIds = (participants || []).map((p: any) => p.id).filter(Boolean);
+        let allRows: { id: string; data: any }[] = [];
+        if (allEmpIds.length > 0) {
+          const reqs = allEmpIds.map(async (eid: string) => {
             const url = new URL(`/api/employees/${encodeURIComponent(eid)}/metrics`, window.location.origin);
             url.searchParams.set('campaign_id', selected.id);
             url.searchParams.set('interval', chartInterval);
             url.searchParams.set('start', effStart);
             url.searchParams.set('end', effEnd);
-            
             const res = await fetch(url.toString(), { cache: 'no-store' });
             const json = await res.json();
             return { id: eid, data: json };
           });
-          const rows = await Promise.all(reqs);
-          const nameMap: Record<string,string> = {};
-          for (const p of participants) nameMap[p.id] = p.name || `@${p.tiktok_username||''}`;
-          setCompareData(rows.map(r => ({ 
-            id: r.id, 
-            name: nameMap[r.id] || r.id, 
+          allRows = await Promise.all(reqs);
+        }
+
+        // Compute group Total/TikTok/Instagram/YouTube by summing ALL employee series
+        const totalMap = new Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>();
+        const ttMap = new Map<string, {views:number;likes:number;comments:number;shares:number;saves:number}>();
+        const igMap = new Map<string, {views:number;likes:number;comments:number}>();
+        const ytMap = new Map<string, {views:number;likes:number;comments:number}>();
+        const addTo = (map: Map<string, any>, arr: any[], fields: string[]) => {
+          for (const s of arr || []) {
+            const k = String(s.date);
+            const cur = map.get(k) || Object.fromEntries(fields.map(f => [f, 0]));
+            for (const f of fields) cur[f] = (cur[f] || 0) + (Number(s[f]) || 0);
+            map.set(k, cur);
+          }
+        };
+        for (const row of allRows) {
+          addTo(totalMap, row.data?.series || [], ['views','likes','comments','shares','saves']);
+          addTo(ttMap, row.data?.series_tiktok || [], ['views','likes','comments','shares','saves']);
+          addTo(igMap, row.data?.series_instagram || [], ['views','likes','comments']);
+          addTo(ytMap, row.data?.series_youtube || [], ['views','likes','comments']);
+        }
+        const toArr = (map: Map<string, any>) => Array.from(map.entries()).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date));
+        const series_total = toArr(totalMap);
+        const series_tiktok = toArr(ttMap);
+        const series_instagram = toArr(igMap);
+        const series_youtube = toArr(ytMap);
+
+        const headerSums = series_total.reduce((a: any, s: any) => ({
+          views: (a.views || 0) + Number(s.views || 0),
+          likes: (a.likes || 0) + Number(s.likes || 0),
+          comments: (a.comments || 0) + Number(s.comments || 0)
+        }), { views: 0, likes: 0, comments: 0 });
+        setMetrics({ series_total, series_tiktok, series_instagram, series_youtube, totals: headerSums, interval: chartInterval });
+
+        // Per-employee overlay: use subset of already-fetched data
+        const DEFAULT_MAX = 12;
+        const ids = (chartCompareIds.length > 0
+          ? chartCompareIds.slice(0, 20)
+          : (participants || []).slice(0, DEFAULT_MAX).map((p: any) => p.id));
+        const nameMap: Record<string, string> = {};
+        for (const p of participants) nameMap[p.id] = p.name || `@${p.tiktok_username || ''}`;
+        setCompareData(allRows
+          .filter(r => ids.includes(r.id))
+          .map(r => ({
+            id: r.id,
+            name: nameMap[r.id] || r.id,
             series: r.data?.series || []
           })));
-        } else {
-          setCompareData([]);
-        }
       } catch (e: any) {
         setError(e.message);
       } finally { setLoading(false); }
@@ -254,7 +270,11 @@ export default function CampaignsPage() {
       
       const res = await fetch(apiUrl, { cache: 'no-store' });
       const data = await res.json();
-      if (res.ok) { setParticipants(data.members || []); setAssignmentByUsername(data.assignmentByUsername || {}); }
+      if (res.ok) {
+        setParticipants(data.members || []);
+        setAssignmentByUsername(data.assignmentByUsername || {});
+        if (data.groupTotals) setMemberGroupTotals(data.groupTotals);
+      }
     };
     loadMembers();
   }, [selected, groupStart, groupEnd, chartMode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd]);
@@ -741,11 +761,11 @@ export default function CampaignsPage() {
           {/* Header totals then refresh button below */}
           <div className="glass rounded-2xl p-4 border border-white/10">
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/70">
-              {metrics && (
+              {(memberGroupTotals || metrics) && (
                 <>
-                  <span>Views: <strong className="text-white">{metrics.totals.views.toLocaleString('id-ID')}</strong></span>
-                  <span>Likes: <strong className="text-white">{metrics.totals.likes.toLocaleString('id-ID')}</strong></span>
-                  <span>Comments: <strong className="text-white">{metrics.totals.comments.toLocaleString('id-ID')}</strong></span>
+                  <span>Views: <strong className="text-white">{(memberGroupTotals?.views ?? metrics?.totals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Likes: <strong className="text-white">{(memberGroupTotals?.likes ?? metrics?.totals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Comments: <strong className="text-white">{(memberGroupTotals?.comments ?? metrics?.totals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
                   {lastUpdatedHuman && (
                     <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
                   )}
