@@ -19,10 +19,11 @@ function adminClient() {
 }
 
 // Convert Unix timestamp (seconds) or date string to YYYY-MM-DD
-function formatPostDate(val: any): string {
-  if (!val) return new Date().toISOString().split('T')[0];
+// Returns null if no valid date can be extracted (do NOT default to today)
+function formatPostDate(val: any): string | null {
+  if (!val) return null;
   const d = new Date(typeof val === 'number' ? val * 1000 : val);
-  return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+  return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : null;
 }
 
 export async function GET(req: Request, context: any) {
@@ -79,8 +80,9 @@ export async function GET(req: Request, context: any) {
               const videoId = v.video_id || v.id;
               if (!videoId) continue;
               
-              // Derive post_date from timestamp or string
+              // Derive post_date from timestamp or string — skip if no valid date
               const pDate = formatPostDate(v.taken_at_timestamp || v.published_at);
+              if (!pDate) continue; // skip videos without a valid publish date
               // Only upsert when we can map to a user
               if (mappedUserId) {
                 const row: any = {
@@ -186,6 +188,7 @@ export async function GET(req: Request, context: any) {
 
       const title = String(v.title || v.desc || '');
       const postDate = formatPostDate(v.create_time);
+      if (!postDate) continue; // skip videos without a valid publish date
       const views = Number(v.play_count || 0);
       const likes = Number(v.digg_count || 0);
       const comments = Number(v.comment_count || 0);
