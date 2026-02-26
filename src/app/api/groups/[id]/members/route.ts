@@ -640,7 +640,7 @@ export async function GET(req: Request, context: any) {
         if (ytNeed.size > 0) {
           const { data: rowsYT } = await supabase
             .from('youtube_posts_daily')
-            .select('video_id, channel_id, views, likes, comments')
+            .select('video_id, channel_id, views, likes, comments, title')
             .gte('post_date', start)
             .lte('post_date', end)
             .in('channel_id', Array.from(ytNeed))
@@ -654,6 +654,10 @@ export async function GET(req: Request, context: any) {
           const mapYT: Record<string, { views:number, likes:number, comments:number, posts:number }> = {};
           for (const r of dedupedYT.values()) {
             const ch = String((r as any).channel_id||''); if (!ch) continue;
+            // Apply hashtag filter for YouTube
+            if (requiredHashtags && requiredHashtags.length) {
+              if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtags)) continue;
+            }
             const m = mapYT[ch] || { views:0, likes:0, comments:0, posts:0 };
             m.views += Number((r as any).views)||0;
             m.likes += Number((r as any).likes)||0;
@@ -741,7 +745,29 @@ export async function GET(req: Request, context: any) {
             postsCount += 1;
           }
         }
-        
+
+        // YouTube posts dari youtube_posts_daily (deduplicate by video_id)
+        if (accountYT.length > 0) {
+          const { data: ytPosts } = await supabase
+            .from('youtube_posts_daily')
+            .select('video_id, channel_id, title')
+            .in('channel_id', accountYT)
+            .gte('post_date', postsStart)
+            .lte('post_date', postsEnd);
+          const seenYT = new Set<string>();
+          for (const r of ytPosts || []) {
+            const vid = String((r as any).video_id || '');
+            if (vid && seenYT.has(vid)) continue;
+            if (vid) seenYT.add(vid);
+            // Apply hashtag filter jika ada
+            if (requiredHashtags && requiredHashtags.length) {
+              const title = String((r as any).title || '');
+              if (!hasRequiredHashtag(title, requiredHashtags)) continue;
+            }
+            postsCount += 1;
+          }
+        }
+
         totals.posts = postsCount;
       } else if (sumsByUsername || sumsByUsernameIG || sumsByChannelYT) {
         if (sumsByUsername) {

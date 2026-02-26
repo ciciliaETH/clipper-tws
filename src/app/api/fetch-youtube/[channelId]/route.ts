@@ -83,29 +83,41 @@ export async function GET(req: Request, context: any) {
               const pDate = formatPostDate(v.taken_at_timestamp || v.published_at);
               // Only upsert when we can map to a user
               if (mappedUserId) {
-                upserts.push({
+                const row: any = {
                   id: mappedUserId, // user_id
                   channel_id: mappedChannelId || channelParam, // canonical channel id when known
                   video_id: videoId,
                   shortcode: videoId,
-                  title: String(v.title || ''),
                   post_date: pDate,
                   views: Number(v.views || 0),
                   likes: Number(v.likes || 0),
                   comments: Number(v.comments || 0),
                   updated_at: new Date().toISOString()
-                });
+                };
+                // Only include title if non-empty, so we don't overwrite existing title with empty string
+                const vTitle = String(v.title || '');
+                if (vTitle) row.title = vTitle;
+                upserts.push(row);
               }
             }
             
             if (upserts.length > 0) {
-              const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id,video_id' });
-              if (error) {
-                console.error('[YouTube Fetch][V2] DB Error:', error);
-              } else {
-                return NextResponse.json({ 
-                  success: true, 
-                  processed: upserts.length, 
+              // Split rows: those with title vs without, so we don't overwrite existing titles
+              const withTitle = upserts.filter((r: any) => r.title);
+              const withoutTitle = upserts.filter((r: any) => !r.title);
+              let dbError = false;
+              for (const batch of [withTitle, withoutTitle]) {
+                if (batch.length === 0) continue;
+                const { error } = await supa.from('youtube_posts_daily').upsert(batch, { onConflict: 'id,video_id' });
+                if (error) {
+                  console.error('[YouTube Fetch][V2] DB Error:', error);
+                  dbError = true;
+                }
+              }
+              if (!dbError) {
+                return NextResponse.json({
+                  success: true,
+                  processed: upserts.length,
                   videos_found: list.length,
                   source: 'aggregator_v2'
                 });
@@ -172,33 +184,41 @@ export async function GET(req: Request, context: any) {
       const videoId = v.video_id || v.aweme_id || v.id;
       if (!videoId) continue;
 
-      const title = v.title || v.desc || '(No Title)';
+      const title = String(v.title || v.desc || '');
       const postDate = formatPostDate(v.create_time);
       const views = Number(v.play_count || 0);
       const likes = Number(v.digg_count || 0);
       const comments = Number(v.comment_count || 0);
 
       if (mappedUserId) {
-        upserts.push({
+        const row: any = {
           id: mappedUserId, // user_id (must exist for PK)
           channel_id: mappedChannelId || channelParam,
           video_id: videoId,
           shortcode: videoId,
-          title: String(title),
           post_date: postDate,
           views,
           likes,
           comments,
           updated_at: new Date().toISOString()
-        });
+        };
+        // Only include title if non-empty, so we don't overwrite existing title
+        if (title) row.title = title;
+        upserts.push(row);
       }
     }
 
     if (upserts.length > 0) {
-        const { error } = await supa.from('youtube_posts_daily').upsert(upserts, { onConflict: 'id,video_id' });
-        if (error) {
+        // Split rows: those with title vs without, so we don't overwrite existing titles
+        const withTitle = upserts.filter((r: any) => r.title);
+        const withoutTitle = upserts.filter((r: any) => !r.title);
+        for (const batch of [withTitle, withoutTitle]) {
+          if (batch.length === 0) continue;
+          const { error } = await supa.from('youtube_posts_daily').upsert(batch, { onConflict: 'id,video_id' });
+          if (error) {
             console.error('[YouTube Fetch] DB Error:', error);
             throw error;
+          }
         }
     }
 

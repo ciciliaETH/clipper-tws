@@ -35,7 +35,7 @@ export default function DashboardTotalPage() {
   const [weeklyView, setWeeklyView] = useState<boolean>(true); // Changed to true
   const [platformFilter, setPlatformFilter] = useState<'all'|'tiktok'|'instagram'>('all');
   const [showHistorical, setShowHistorical] = useState<boolean>(true); // Changed to true
-  const [showPosts, setShowPosts] = useState<boolean>(true); // Show posts line on chart
+  const [showPosts, setShowPosts] = useState<boolean>(false); // Show posts line on chart
   const [historicalData, setHistoricalData] = useState<any[]>([]);
   const [postsData, setPostsData] = useState<any[]>([]); // Posts per day/period
   const [data, setData] = useState<any | null>(null);
@@ -1139,43 +1139,6 @@ export default function DashboardTotalPage() {
         });
       }
       
-      // Posts line (if showPosts is enabled)
-      if (showPosts && postsData.length > 0) {
-        // Group posts by week matching allPeriods
-        const postsMap = new Map<string, number>();
-        postsData.forEach((p: any) => {
-          postsMap.set(p.date, p.posts || 0);
-        });
-        
-        const postsVals = allPeriods.map((period: any) => {
-          // Sum posts within this period's date range
-          const startDate = period.startDate;
-          const endDate = period.endDate;
-          let sum = 0;
-          
-          for (const [dateStr, count] of postsMap.entries()) {
-            const d = new Date(dateStr + 'T00:00:00Z');
-            if (d >= startDate && d <= endDate) {
-              sum += count;
-            }
-          }
-          return sum;
-        });
-        
-        console.log('[WEEKLY VIEW] Posts values:', postsVals);
-        
-        datasets.push({
-          label: 'Posts',
-          data: postsVals,
-          borderColor: '#a855f7', // Purple color for Posts
-          backgroundColor: 'rgba(168, 85, 247, 0.15)',
-          fill: false,
-          tension: 0.35,
-          yAxisID: 'y1', // Use secondary Y axis for Posts (different scale)
-          borderDash: [5, 5] // Dashed line to differentiate
-        });
-      }
-      
       return { labels, datasets };
     }
     
@@ -1299,21 +1262,6 @@ export default function DashboardTotalPage() {
         }
       }
 
-      // Posts overlay (realtime only) if enabled
-      if (showPosts && postsData.length>0) {
-        const histLen = histPeriods.length;
-        const vals = new Array(allPeriods.length).fill(0);
-        // Build a map of date->count
-        const pmap = new Map<string, number>();
-        postsData.forEach((p:any)=> pmap.set(String(p.date), Number(p.posts||0)));
-        indices.forEach((wIdx:number, pos:number)=>{
-          const startDate = new Date(anchor.getTime() + wIdx*7*24*60*60*1000);
-          const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate()+6);
-          let sum=0; for (const [ds,c] of pmap.entries()) { const d=new Date(ds+'T00:00:00Z'); if (d>=startDate && d<=endDate) sum+=Number(c)||0; }
-          vals[histLen + pos] = sum;
-        });
-        datasets.push({ label:'Posts', data: vals, borderColor:'#a855f7', backgroundColor:'rgba(168,85,247,0.15)', fill:false, tension:0.35, yAxisID:'y1', borderDash:[5,5] });
-      }
       return { labels, datasets };
     }
 
@@ -1394,31 +1342,73 @@ export default function DashboardTotalPage() {
       datasets.push({ label: g.name, data: vals, borderColor: color, backgroundColor: color+'33', fill: false, tension:0.35, yAxisID: 'y' });
     }
     
-    // Posts line (if showPosts is enabled) - Daily view
-    if (showPosts && postsData.length > 0) {
-      const postsMap = new Map<string, number>();
-      postsData.forEach((p: any) => {
-        postsMap.set(p.date, p.posts || 0);
+    return { labels, datasets };
+  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter]);
+
+  // Posts chart data - separate chart, uses same labels/periods as main chart
+  const postsChartData = useMemo(() => {
+    if (!postsData || postsData.length === 0 || !chartData) return null;
+
+    // Build posts map: date string -> count
+    const postsMap = new Map<string, number>();
+    postsData.forEach((p: any) => postsMap.set(String(p.date), Number(p.posts || 0)));
+
+    // Reuse labels from main chart
+    const labels = chartData.labels;
+
+    // We need to figure out what date ranges each label covers
+    // Use the same source data to build weekly/period bins
+    const totalSeries = data?.total || [];
+
+    let values: number[];
+    if (interval === 'daily' || (!data?.total?.length)) {
+      // Daily: direct map
+      values = totalSeries.map((t: any) => postsMap.get(String(t.date)) || 0);
+    } else if (interval === 'weekly') {
+      // Weekly: each entry in total covers 7 days starting from entry.date
+      values = totalSeries.map((t: any) => {
+        const startDate = new Date(String(t.date) + 'T00:00:00Z');
+        const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate() + 6);
+        let sum = 0;
+        for (const [ds, c] of postsMap.entries()) {
+          const d = new Date(ds + 'T00:00:00Z');
+          if (d >= startDate && d <= endDate) sum += c;
+        }
+        return sum;
       });
-      
-      const postsVals = totalSeries.map((t: any) => {
-        return postsMap.get(String(t.date)) || 0;
-      });
-      
-      datasets.push({
-        label: 'Posts',
-        data: postsVals,
-        borderColor: '#a855f7', // Purple
-        backgroundColor: 'rgba(168, 85, 247, 0.15)',
-        fill: false,
-        tension: 0.35,
-        yAxisID: 'y1', // Secondary Y axis
-        borderDash: [5, 5]
+    } else {
+      // Monthly: group by month
+      values = totalSeries.map((t: any) => {
+        const d = new Date(String(t.date) + 'T00:00:00Z');
+        const m = d.getUTCMonth(); const y = d.getUTCFullYear();
+        let sum = 0;
+        for (const [ds, c] of postsMap.entries()) {
+          const pd = new Date(ds + 'T00:00:00Z');
+          if (pd.getUTCMonth() === m && pd.getUTCFullYear() === y) sum += c;
+        }
+        return sum;
       });
     }
-    
-    return { labels, datasets };
-  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, showPosts, postsData]);
+
+    // For postdate weekly with historical data, labels may be longer than totalSeries
+    // In that case, pad values at the beginning with zeros for historical periods
+    if (labels.length > values.length) {
+      const pad = new Array(labels.length - values.length).fill(0);
+      values = [...pad, ...values];
+    }
+
+    return {
+      labels,
+      datasets: [{
+        label: 'Posts',
+        data: values,
+        borderColor: '#a855f7',
+        backgroundColor: 'rgba(168, 85, 247, 0.15)',
+        fill: true,
+        tension: 0.35,
+      }]
+    };
+  }, [postsData, chartData, data, interval]);
 
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
@@ -1510,6 +1500,7 @@ export default function DashboardTotalPage() {
               <span>Views: <strong className="text-white">{Number(grandTotals.views).toLocaleString('id-ID')}</strong></span>
               <span>Likes: <strong className="text-white">{Number(grandTotals.likes).toLocaleString('id-ID')}</strong></span>
               <span>Comments: <strong className="text-white">{Number(grandTotals.comments).toLocaleString('id-ID')}</strong></span>
+              <span>Posts: <strong className="text-white">{postsData.reduce((sum, p: any) => sum + Number(p.posts || 0), 0).toLocaleString('id-ID')}</strong></span>
               {lastUpdatedHuman && (
                 <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
               )}
@@ -1583,62 +1574,60 @@ export default function DashboardTotalPage() {
 
       <div className="glass rounded-2xl p-4 md:p-6 border border-white/10 overflow-x-auto">
         {loading && <p className="text-white/60">Memuat…</p>}
-        {!loading && chartData && (
+        {/* Main chart (Views/Likes/Comments) - hidden when Posts enabled */}
+        {!loading && !showPosts && chartData && (
           <Line ref={chartRef} data={chartData} plugins={[crosshairPlugin]} options={{
             responsive:true,
             interaction:{ mode:'index', intersect:false },
-            plugins:{ 
+            plugins:{
               legend:{ labels:{ color:'rgba(255,255,255,0.8)'} },
               tooltip: {
                 filter: function(tooltipItem: any) {
-                  // Hide group lines if value is 0 (historical data doesn't have groups)
                   const label = tooltipItem.dataset.label || '';
                   const value = tooltipItem.parsed.y;
-                  
-                  // If it's a group (Group A, B, C, D) and value is 0, hide it
-                  if (label.startsWith('Group') && value === 0) {
-                    return false;
-                  }
-                  
+                  if (label.startsWith('Group') && value === 0) return false;
                   return true;
                 }
               }
             },
             scales:{
               x:{
-                ticks:{ 
-                  color:'rgba(255,255,255,0.6)', 
-                  autoSkip: false,
-                  maxRotation: 90, 
-                  minRotation: 45,
-                  font: { size: 9 }
-                },
+                ticks:{ color:'rgba(255,255,255,0.6)', autoSkip: false, maxRotation: 90, minRotation: 45, font: { size: 9 } },
                 grid:{ color:'rgba(255,255,255,0.06)'}
               },
-              y:{ 
-                type: 'linear',
-                display: true,
-                position: 'left',
-                ticks:{ color:'rgba(255,255,255,0.6)'}, 
-                grid:{ color:'rgba(255,255,255,0.06)'},
-                title: {
-                  display: false
-                }
-              },
-              y1: {
-                type: 'linear',
-                display: showPosts,
-                position: 'right',
-                ticks:{ color:'#a855f7', font: { size: 10 } },
-                grid:{ drawOnChartArea: false },
-                title: {
-                  display: false
-                },
-                beginAtZero: true
+              y:{
+                type: 'linear', display: true, position: 'left',
+                ticks:{ color:'rgba(255,255,255,0.6)'},
+                grid:{ color:'rgba(255,255,255,0.06)'}
               }
             },
             onHover: (_e:any, el:any[])=> setActiveIndex(el && el.length>0 ? (el[0].index ?? null) : null)
           }} onMouseLeave={()=> setActiveIndex(null)} />
+        )}
+        {/* Posts chart - shown only when Posts enabled */}
+        {!loading && showPosts && postsChartData && (
+          <Line data={postsChartData} options={{
+            responsive:true,
+            interaction:{ mode:'index', intersect:false },
+            plugins:{
+              legend:{ labels:{ color:'rgba(255,255,255,0.8)'} }
+            },
+            scales:{
+              x:{
+                ticks:{ color:'rgba(255,255,255,0.6)', autoSkip: true, maxRotation: 90, minRotation: 45, font: { size: 9 } },
+                grid:{ color:'rgba(255,255,255,0.06)'}
+              },
+              y:{
+                type: 'linear', display: true, position: 'left',
+                ticks:{ color:'#a855f7' },
+                grid:{ color:'rgba(255,255,255,0.06)'},
+                beginAtZero: true
+              }
+            }
+          }} />
+        )}
+        {!loading && showPosts && !postsChartData && (
+          <p className="text-white/40 text-sm text-center py-8">Tidak ada data posts</p>
         )}
       </div>
 

@@ -1,8 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import TopViralVideos from '@/components/TopViralVideos';
-
 type Row = {
   username: string;
   views: number;
@@ -24,7 +22,7 @@ export default function LeaderboardPage() {
   const [now, setNow] = useState<number>(Date.now())
   const [weeklyStart, setWeeklyStart] = useState<string>('')
   const [weeklyEnd, setWeeklyEnd] = useState<string>('')
-  const [campaignId, setCampaignId] = useState<string>('')
+  const [activeHashtags, setActiveHashtags] = useState<string[] | null>(null)
   const [users, setUsers] = useState<any[]>([])
   const accrualCutoff = (process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE as string) || '2026-01-02';
   const [selectedName, setSelectedName] = useState<string | null>(null)
@@ -63,6 +61,7 @@ export default function LeaderboardPage() {
       setPrizes(json?.prizes || null);
       if ('start' in json || 'end' in json) setPeriod({ start: json.start ?? null, end: json.end ?? null });
       setRows(json?.data || []);
+      setActiveHashtags(json?.required_hashtags || null);
     } catch(e:any) {
       setError(e?.message || 'Unknown error');
     } finally { setLoading(false); }
@@ -170,6 +169,7 @@ export default function LeaderboardPage() {
             </>
           )}
         </div>
+
         {/* Header section (title / period / totals) intentionally removed per request */}
       </div>
 
@@ -345,7 +345,6 @@ export default function LeaderboardPage() {
         </>
       )}
 
-      {/* Top Viral Videos Section removed as requested */}
     </div>
   )
 }

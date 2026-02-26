@@ -402,19 +402,20 @@ async function getTikTokData(username: string, cachedSecUid?: string, window?: {
         continue;
       }
       const title = String(post?.title || post?.desc || post?.description || '');
-      const upsertData = {
+      const upsertData: any = {
         video_id: ids.video_id,
         username,
         sec_uid: secUid,
         taken_at: postDate.toISOString(), // Store actual TikTok create_time
-        title: title || null,
         comment_count: readStat(post,'comment'),
         play_count: readStat(post,'play'),
         share_count: readStat(post,'share'),
         digg_count: readStat(post,'digg'),
         save_count: readStat(post,'save'),
       };
-      
+      // Only include title if non-empty, so we don't overwrite existing title with null
+      if (title) upsertData.title = title;
+
       const { error: upsertError } = await supabase.from('tiktok_posts_daily').upsert(upsertData, { onConflict: 'video_id' });
       
       if (upsertError) {
@@ -964,13 +965,22 @@ export async function GET(request: Request, context: any) {
         const vShares = readStat(v,'share');
         const vSaves = readStat(v,'save');
         totals.views += vViews; totals.likes += vLikes; totals.comments += vComments; totals.shares += vShares; totals.saves += vSaves; totals.posts_total += 1;
-        if (vId) toUpsert.push({ video_id: String(vId), username: normalized, sec_uid: tiktok_sec_uid || null, taken_at: d.toISOString(), play_count: vViews, digg_count: vLikes, comment_count: vComments, share_count: vShares, save_count: vSaves });
+        const vTitle = String(v?.title || v?.desc || v?.description || '');
+        const row: any = { video_id: String(vId), username: normalized, sec_uid: tiktok_sec_uid || null, taken_at: d.toISOString(), play_count: vViews, digg_count: vLikes, comment_count: vComments, share_count: vShares, save_count: vSaves };
+        // Only include title if non-empty, so we don't overwrite existing title with null
+        if (vTitle) row.title = vTitle;
+        if (vId) toUpsert.push(row);
       }
       if (toUpsert.length) {
+        // Split into rows with title and without title to avoid overwriting existing titles with null
+        const withTitle = toUpsert.filter((r: any) => r.title);
+        const withoutTitle = toUpsert.filter((r: any) => !r.title);
         const chunkSize = 500;
-        for (let i = 0; i < toUpsert.length; i += chunkSize) {
-          const chunk = toUpsert.slice(i, i + chunkSize);
-          await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
+        for (const batch of [withTitle, withoutTitle]) {
+          for (let i = 0; i < batch.length; i += chunkSize) {
+            const chunk = batch.slice(i, i + chunkSize);
+            await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
+          }
         }
       }
       // followers best-effort
@@ -1171,50 +1181,63 @@ export async function GET(request: Request, context: any) {
       
       console.log(`[TikTok Parse] ✅ Video ${vId}: views=${vViews}, likes=${vLikes}, comments=${vComments}, date=${d.toISOString().slice(0,10)}`);
       
+      // Extract title/description for hashtag filtering
+      const vTitle = String(v?.title || v?.desc || v?.description || '');
+
       totals.views += vViews; totals.likes += vLikes; totals.comments += vComments; totals.shares += vShares; totals.saves += vSaves; totals.posts_total += 1;
-      if (vId) toUpsert.push({ 
-        video_id: String(vId), 
-        username: normalized, 
-        sec_uid: tiktok_sec_uid || null, 
-        taken_at: d.toISOString(), 
-        post_date: d.toISOString().slice(0, 10), // Derive post_date from taken_at
-        play_count: vViews, 
-        digg_count: vLikes, 
-        comment_count: vComments, 
-        share_count: vShares, 
-        save_count: vSaves 
-      });
+      if (vId) {
+        const row: any = {
+          video_id: String(vId),
+          username: normalized,
+          sec_uid: tiktok_sec_uid || null,
+          taken_at: d.toISOString(),
+          post_date: d.toISOString().slice(0, 10),
+          play_count: vViews,
+          digg_count: vLikes,
+          comment_count: vComments,
+          share_count: vShares,
+          save_count: vSaves
+        };
+        // Only include title if non-empty, so we don't overwrite existing title with null
+        if (vTitle) row.title = vTitle;
+        toUpsert.push(row);
+      }
     }
     
     console.log(`[TikTok Parse] ${normalized}: Parsed ${toUpsert.length}/${videos.length} videos. Total stats: views=${totals.views}, likes=${totals.likes}`);
     
     if (toUpsert.length) {
       console.log(`[TikTok Save] Attempting to save ${toUpsert.length} posts to tiktok_posts_daily for ${normalized}...`);
+      // Split into rows with title and without title to avoid overwriting existing titles with null
+      const withTitle = toUpsert.filter((r: any) => r.title);
+      const withoutTitle = toUpsert.filter((r: any) => !r.title);
       const chunkSize = 500;
       let savedCount = 0;
       let errorCount = 0;
-      
-      for (let i = 0; i < toUpsert.length; i += chunkSize) {
-        const chunk = toUpsert.slice(i, i + chunkSize);
-        const { error: upsertError, data } = await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
-        
-        if (upsertError) {
-          console.error(`[TikTok Save] ❌ FAILED chunk ${i}-${i+chunk.length}:`, {
-            error: upsertError.message,
-            code: upsertError.code,
-            details: upsertError.details,
-            hint: upsertError.hint,
-            username: normalized,
-            chunkSize: chunk.length
-          });
-          errorCount += chunk.length;
-        } else {
-          console.log(`[TikTok Save] ✅ Saved chunk ${i}-${i+chunk.length} (${chunk.length} posts)`);
-          savedCount += chunk.length;
+
+      for (const batch of [withTitle, withoutTitle]) {
+        for (let i = 0; i < batch.length; i += chunkSize) {
+          const chunk = batch.slice(i, i + chunkSize);
+          const { error: upsertError, data } = await admin.from('tiktok_posts_daily').upsert(chunk, { onConflict: 'video_id' });
+
+          if (upsertError) {
+            console.error(`[TikTok Save] ❌ FAILED chunk:`, {
+              error: upsertError.message,
+              code: upsertError.code,
+              details: upsertError.details,
+              hint: upsertError.hint,
+              username: normalized,
+              chunkSize: chunk.length
+            });
+            errorCount += chunk.length;
+          } else {
+            console.log(`[TikTok Save] ✅ Saved chunk (${chunk.length} posts, hasTitle=${!!chunk[0]?.title})`);
+            savedCount += chunk.length;
+          }
         }
       }
-      
-      console.log(`[TikTok Save] Summary for ${normalized}: ✅ ${savedCount} saved, ❌ ${errorCount} failed out of ${toUpsert.length} total`);
+
+      console.log(`[TikTok Save] Summary for ${normalized}: ✅ ${savedCount} saved, ❌ ${errorCount} failed out of ${toUpsert.length} total (${withTitle.length} with title, ${withoutTitle.length} without)`);
     } else {
       console.warn(`[TikTok Save] No posts to save for ${normalized} (all filtered out by date range)`);
     }

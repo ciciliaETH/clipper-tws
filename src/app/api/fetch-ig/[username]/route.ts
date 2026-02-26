@@ -276,12 +276,23 @@ export async function GET(req: Request, context: any) {
           
           // Save to database
           if (upserts.length > 0) {
-            // Use the actual unique constraint for this table: id
-            // Using an invalid conflict target (e.g. 'id,post_date') causes silent failures
-            // where Supabase returns { error } but we didn't check it before.
-            const { error: upErr } = await supa.from('instagram_posts_daily').upsert(upserts, { onConflict: 'id' });
-            if (upErr) {
-              console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message);
+            // Split rows by optional fields to avoid overwriting existing DB values with null
+            // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
+            const groups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+            for (const r of upserts) {
+              const hasCap = !!r.caption;
+              const hasTA = !!r.taken_at;
+              if (hasCap && hasTA) groups[0].push(r);
+              else if (hasCap && !hasTA) groups[1].push(({ caption: r.caption, ...(() => { const { taken_at, post_date, ...rest } = r; return rest; })() }));
+              else if (!hasCap && hasTA) groups[2].push((() => { const { caption, ...rest } = r; return rest; })());
+              else groups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+            }
+            for (const batch of groups) {
+              if (batch.length === 0) continue;
+              const { error: upErr } = await supa.from('instagram_posts_daily').upsert(batch, { onConflict: 'id' });
+              if (upErr) {
+                console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message);
+              }
             }
             const totalViews = upserts.reduce((s, u) => s + (Number(u.play_count) || 0), 0);
             const totalLikes = upserts.reduce((s, u) => s + (Number(u.like_count) || 0), 0);
@@ -682,37 +693,42 @@ export async function GET(req: Request, context: any) {
         }
       }
       
+      // Split rows by optional fields to avoid overwriting existing DB values with null
+      // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
+      const upsertGroups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+      for (const r of upserts) {
+        const hasCap = !!r.caption;
+        const hasTA = !!r.taken_at;
+        if (hasCap && hasTA) upsertGroups[0].push(r);
+        else if (hasCap && !hasTA) upsertGroups[1].push((() => { const { taken_at, post_date, ...rest } = r; return rest; })());
+        else if (!hasCap && hasTA) upsertGroups[2].push((() => { const { caption, ...rest } = r; return rest; })());
+        else upsertGroups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+      }
       const chunk = 500;
       let totalSaved = 0;
       let totalErrors = 0;
-      
-      for (let i=0; i<upserts.length; i+=chunk) {
-        const part = upserts.slice(i, i+chunk);
-        const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
-        
-        if (upsertError) {
-          console.error(`[Instagram] ❌ FAILED to upsert chunk ${i}-${i+part.length}:`, {
-            error: upsertError.message,
-            code: upsertError.code,
-            details: upsertError.details,
-            hint: upsertError.hint,
-            username: norm,
-            chunk_size: part.length
-          });
-          totalErrors += part.length;
-        } else {
-          totalSaved += part.length;
-          if (i === 0) { // Log first chunk sample
-            console.log(`[Instagram] ✅ Saved chunk ${i}-${i+part.length} to instagram_posts_daily. Sample:`, {
+
+      for (const batch of upsertGroups) {
+        for (let i=0; i<batch.length; i+=chunk) {
+          const part = batch.slice(i, i+chunk);
+          const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
+
+          if (upsertError) {
+            console.error(`[Instagram] ❌ FAILED to upsert chunk:`, {
+              error: upsertError.message,
+              code: upsertError.code,
+              details: upsertError.details,
+              hint: upsertError.hint,
               username: norm,
-              first_post: part[0]?.id,
-              taken_at: part[0]?.taken_at,
-              like_count: part[0]?.like_count
+              chunk_size: part.length,
             });
+            totalErrors += part.length;
+          } else {
+            totalSaved += part.length;
           }
         }
       }
-      
+
       console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total`);
     }
 

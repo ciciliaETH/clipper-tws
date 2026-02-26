@@ -23,21 +23,11 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 export default function CampaignsPage() {
   const supabase = createClient();
-  // Centralize accrual masking cutoff (can be configured from env)
-  const accrualCutoff = (process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE as string) || '2026-01-02';
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [selected, setSelected] = useState<Campaign | null>(null);
   const [metrics, setMetrics] = useState<any | null>(null);
   const [chartInterval, setChartInterval] = useState<'daily'|'weekly'|'monthly'>('daily');
-  const [chartMode, setChartMode] = useState<'postdate'|'accrual'>('postdate');
-  const [accrualWindow, setAccrualWindow] = useState<7|28|60>(7);
-  const [useCustomAccrualDates, setUseCustomAccrualDates] = useState<boolean>(false);
-  const [accrualCustomStart, setAccrualCustomStart] = useState<string>(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
-    return d.toISOString().slice(0, 10);
-  });
-  const [accrualCustomEnd, setAccrualCustomEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
   // Multi-employee comparison (empty = Group)
   const [chartCompareIds, setChartCompareIds] = useState<string[]>([]);
   const [compareMetric, setCompareMetric] = useState<'views'|'likes'|'comments'>('views');
@@ -58,6 +48,7 @@ export default function CampaignsPage() {
   const [participants, setParticipants] = useState<any[]>([]);
   const [assignmentByUsername, setAssignmentByUsername] = useState<Record<string, { employee_id: string, name: string }>>({});
   const [memberGroupTotals, setMemberGroupTotals] = useState<any | null>(null);
+  const [empMetricsTotals, setEmpMetricsTotals] = useState<Record<string, any>>({});
   const [showManage, setShowManage] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -212,11 +203,30 @@ export default function CampaignsPage() {
         const series_instagram = toArr(igMap);
         const series_youtube = toArr(ytMap);
 
-        const headerSums = series_total.reduce((a: any, s: any) => ({
-          views: (a.views || 0) + Number(s.views || 0),
-          likes: (a.likes || 0) + Number(s.likes || 0),
-          comments: (a.comments || 0) + Number(s.comments || 0)
-        }), { views: 0, likes: 0, comments: 0 });
+        // Compute group totals from each employee's API totals (same source as chart series)
+        // This guarantees summary bar = sum of table rows = chart total
+        const empTotalsMap: Record<string, any> = {};
+        const headerSums = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
+        for (const row of allRows) {
+          const t = row.data?.totals || {};
+          const empT = {
+            views: Number(t.views || 0),
+            likes: Number(t.likes || 0),
+            comments: Number(t.comments || 0),
+            shares: Number(t.shares || 0),
+            saves: Number(t.saves || 0),
+            posts: Number(t.posts || 0),
+          };
+          empTotalsMap[row.id] = empT;
+          headerSums.views += empT.views;
+          headerSums.likes += empT.likes;
+          headerSums.comments += empT.comments;
+          headerSums.shares += empT.shares;
+          headerSums.saves += empT.saves;
+          headerSums.posts += empT.posts;
+        }
+        setEmpMetricsTotals(empTotalsMap);
+        setMemberGroupTotals(headerSums);
         setMetrics({ series_total, series_tiktok, series_instagram, series_youtube, totals: headerSums, interval: chartInterval });
 
         // Per-employee overlay: use subset of already-fetched data
@@ -243,31 +253,9 @@ export default function CampaignsPage() {
   useEffect(() => {
     const loadMembers = async () => {
       if (!selected) { setParticipants([]); return; }
-      // Selaraskan window anggota dengan grafik (accrual memakai custom dates atau preset)
-      const todayStr = new Date().toISOString().slice(0,10);
-      const accStart = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(accrualWindow-1)); return d.toISOString().slice(0,10); })();
-      const effStart = chartMode==='accrual' ? (useCustomAccrualDates ? accrualCustomStart : accStart) : groupStart;
-      const effEnd = chartMode==='accrual' ? (useCustomAccrualDates ? accrualCustomEnd : todayStr) : groupEnd;
-      const cutoff = accrualCutoff; // realtime di-mask oleh cutoff global
-      
-      // FIXED: Always use fixed start date for consistent baseline
-      const REALTIME_FIXED_START = '2026-01-03';
-      
-      let apiUrl: string;
-      if (chartMode === 'accrual') {
-        if (useCustomAccrualDates) {
-          const fixedStart = new Date(REALTIME_FIXED_START);
-          const end = new Date(accrualCustomEnd);
-          const days = Math.ceil((end.getTime() - fixedStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-          // Pass both fixed cutoff for API and user range for frontend filtering
-          apiUrl = `/api/groups/${selected.id}/members?mode=accrual&days=${days}&cutoff=${encodeURIComponent(REALTIME_FIXED_START)}&snapshots_only=1&custom=1&range_start=${encodeURIComponent(accrualCustomStart)}&range_end=${encodeURIComponent(accrualCustomEnd)}`;
-        } else {
-          apiUrl = `/api/groups/${selected.id}/members?mode=accrual&days=${accrualWindow}&cutoff=${encodeURIComponent(cutoff)}&snapshots_only=1`;
-        }
-      } else {
-        apiUrl = `/api/groups/${selected.id}/members?mode=postdate&start=${effStart}&end=${effEnd}`;
-      }
-      
+      // Always use postdate mode (absolute values from posts by taken_at)
+      const apiUrl = `/api/groups/${selected.id}/members?mode=postdate&start=${groupStart}&end=${groupEnd}`;
+
       const res = await fetch(apiUrl, { cache: 'no-store' });
       const data = await res.json();
       if (res.ok) {
@@ -277,7 +265,7 @@ export default function CampaignsPage() {
       }
     };
     loadMembers();
-  }, [selected, groupStart, groupEnd, chartMode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd]);
+  }, [selected, groupStart, groupEnd]);
 
   // No explicit UI for toggling; overlays will default to first few employees when chartCompareIds is empty (handled in loadMetrics)
 
@@ -317,7 +305,7 @@ export default function CampaignsPage() {
       } finally { setUserSeriesLoading(false); }
     };
     load();
-  }, [selectedUser, selected, groupStart, groupEnd, chartMode, chartInterval, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd]);
+  }, [selectedUser, selected, groupStart, groupEnd, chartInterval]);
 
   // Refresh snapshot button removed; metrics and member totals follow date filter automatically
 
@@ -475,10 +463,12 @@ export default function CampaignsPage() {
     });
     const sm = sortMetric; const so = sortOrder;
     return list.sort((a:any,b:any)=>{
-      const av = Number(a.totals?.[sm]||a[sm]||0); const bv = Number(b.totals?.[sm]||b[sm]||0);
+      const at = empMetricsTotals[a.id] || a.totals || {};
+      const bt = empMetricsTotals[b.id] || b.totals || {};
+      const av = Number(at[sm]||0); const bv = Number(bt[sm]||0);
       return so==='desc' ? (bv-av) : (av-bv);
     });
-  }, [participants, participantSearch, sortMetric, sortOrder]);
+  }, [participants, participantSearch, sortMetric, sortOrder, empMetricsTotals]);
 
   const createCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -773,32 +763,11 @@ export default function CampaignsPage() {
               )}
             </div>
             <div className="mt-3 flex justify-end">
-              {chartMode==='postdate' ? (
-                <div className="flex items-center gap-2 mr-2">
-                  <input type="date" value={groupStart} onChange={(e)=>setGroupStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                  <span className="text-white/50">s/d</span>
-                  <input type="date" value={groupEnd} onChange={(e)=>setGroupEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2 items-end">
-                  <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={useCustomAccrualDates}
-                      onChange={(e) => setUseCustomAccrualDates(e.target.checked)}
-                      className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-blue-600"
-                    />
-                    <span>Custom Date</span>
-                  </label>
-                  {useCustomAccrualDates && (
-                    <div className="flex items-center gap-2">
-                      <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                      <span className="text-white/50">→</span>
-                      <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="flex items-center gap-2 mr-2">
+                <input type="date" value={groupStart} onChange={(e)=>setGroupStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+                <span className="text-white/50">s/d</span>
+                <input type="date" value={groupEnd} onChange={(e)=>setGroupEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+              </div>
             </div>
           </div>
 
@@ -927,11 +896,13 @@ export default function CampaignsPage() {
                           {p.is_head && <span className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-400/10 border border-yellow-400/20">HEAD</span>}
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.views||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.likes||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.comments||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.shares||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.posts||0).toLocaleString('id-ID')}</td>
+                      {(() => { const t = empMetricsTotals[p.id] || p.totals || {}; return (<>
+                      <td className="px-2 py-2 text-right">{Number(t.views||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.likes||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.comments||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.shares||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.posts||0).toLocaleString('id-ID')}</td>
+                      </>); })()}
                     </tr>
                   ))}
                   {(participants.length===0) && (
@@ -1339,27 +1310,14 @@ export default function CampaignsPage() {
             {(() => {
               // Use parent page settings for period display
               const todayStr = new Date().toISOString().slice(0,10);
-              let effStart: string;
-              let effEnd: string;
-              if (chartMode === 'accrual') {
-                if (useCustomAccrualDates) {
-                  effStart = accrualCustomStart;
-                  effEnd = accrualCustomEnd;
-                } else {
-                  const accStart = (()=>{ const d=new Date(); d.setUTCDate(d.getUTCDate()-(accrualWindow-1)); return d.toISOString().slice(0,10); })();
-                  effStart = accStart;
-                  effEnd = todayStr;
-                }
-              } else {
-                effStart = groupStart;
-                effEnd = groupEnd;
-              }
+              const effStart = groupStart;
+              const effEnd = groupEnd;
               return (
                 <div className="mb-3">
                   <div className="text-xs text-white/60 mb-2">
                     Periode: {format(parseISO(effStart), 'd MMM yyyy', { locale: localeID })} — {format(parseISO(effEnd), 'd MMM yyyy', { locale: localeID })}
                     <span className="ml-2 text-white/40">
-                      ({chartMode === 'accrual' ? 'Accrual' : 'Post Date'}{chartMode === 'accrual' && useCustomAccrualDates ? ' - Custom' : chartMode === 'accrual' ? ` - ${accrualWindow} hari` : ''}{chartMode !== 'accrual' ? ` - ${chartInterval === 'daily' ? 'Harian' : chartInterval === 'weekly' ? 'Mingguan' : 'Bulanan'}` : ''})
+                      (Post Date - {chartInterval === 'daily' ? 'Harian' : chartInterval === 'weekly' ? 'Mingguan' : 'Bulanan'})
                     </span>
                   </div>
                   
