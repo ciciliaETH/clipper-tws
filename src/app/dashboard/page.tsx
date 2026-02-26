@@ -1343,7 +1343,7 @@ export default function DashboardTotalPage() {
     }
     
     return { labels, datasets };
-  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter]);
+  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
 
   // Posts chart data - separate chart, uses same labels/periods as main chart
   const postsChartData = useMemo(() => {
