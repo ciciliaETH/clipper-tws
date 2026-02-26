@@ -1550,14 +1550,8 @@ export default function DashboardTotalPage() {
           </button>
         </div>
 
-        {/* Center: Posts platform toggles (visible when Posts mode is on) */}
+        {/* Center: empty */}
         <div className="flex items-center gap-2 justify-center">
-          {showPosts && (<>
-            <button onClick={()=>setPostsShowTotal(v=>!v)} className={`px-2 py-1 rounded border ${postsShowTotal?'bg-[#a855f7]/20 text-[#a855f7] border-[#a855f7]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>Total</button>
-            <button onClick={()=>setPostsShowTikTok(v=>!v)} className={`px-2 py-1 rounded border ${postsShowTikTok?'bg-[#38bdf8]/20 text-[#38bdf8] border-[#38bdf8]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>TikTok</button>
-            <button onClick={()=>setPostsShowInstagram(v=>!v)} className={`px-2 py-1 rounded border ${postsShowInstagram?'bg-[#f43f5e]/20 text-[#f43f5e] border-[#f43f5e]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>Instagram</button>
-            <button onClick={()=>setPostsShowYouTube(v=>!v)} className={`px-2 py-1 rounded border ${postsShowYouTube?'bg-[#ef4444]/20 text-[#ef4444] border-[#ef4444]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>YouTube</button>
-          </>)}
         </div>
 
         {/* Right: Metric */}
