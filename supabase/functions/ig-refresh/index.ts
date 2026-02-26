@@ -404,10 +404,25 @@ Deno.serve(async (req) => {
         }
 
         if (upserts.length) {
+          // Strip null optional fields to avoid overwriting existing DB values
+          // Group by column set so each batch has consistent columns (PostgREST requirement)
+          const colGroups = new Map<string, any[]>()
+          for (const r of upserts) {
+            const clean: any = {}
+            for (const [k, v] of Object.entries(r)) {
+              if ((k === 'taken_at' || k === 'post_date' || k === 'caption' || k === 'code') && (v === null || v === undefined || v === '')) continue
+              clean[k] = v
+            }
+            const key = Object.keys(clean).sort().join(',')
+            if (!colGroups.has(key)) colGroups.set(key, [])
+            colGroups.get(key)!.push(clean)
+          }
           const chunk = 500
-          for (let k=0; k<upserts.length; k+=chunk) {
-            const part = upserts.slice(k, k+chunk)
-            await supabase.from('instagram_posts_daily').upsert(part, { onConflict: 'id' })
+          for (const batch of colGroups.values()) {
+            for (let k=0; k<batch.length; k+=chunk) {
+              const part = batch.slice(k, k+chunk)
+              await supabase.from('instagram_posts_daily').upsert(part, { onConflict: 'id' })
+            }
           }
         }
         // Try map to a user_id if exists
