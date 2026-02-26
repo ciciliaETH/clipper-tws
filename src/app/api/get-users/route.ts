@@ -11,7 +11,7 @@ export async function GET() {
   const { data: { user } } = await supabaseSSR.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { data: me } = await supabaseSSR.from('users').select('role').eq('id', user.id).single();
-  if (me?.role !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (me?.role !== 'admin' && me?.role !== 'super_admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   // Use service_role key for admin operations
   const supabaseAdmin = createClient(

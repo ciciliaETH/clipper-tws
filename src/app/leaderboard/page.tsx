@@ -104,7 +104,7 @@ export default function LeaderboardPage() {
     const u = findUser(label);
     return u?.profile_picture_url || null;
   }
-  const withTotal = rows.map(r => ({ ...r, total: r.total ?? (r.views + r.likes + r.comments + r.shares + (r as any).saves || 0) }))
+  const withTotal = rows.map(r => ({ ...r, total: r.total ?? ((Number(r.views) || 0) + (Number(r.likes) || 0) + (Number(r.comments) || 0) + (Number(r.shares) || 0) + (Number((r as any).saves) || 0)) }))
   const top3 = withTotal.slice(0,3)
   const rest = withTotal.slice(3)
   const grandTotals = useMemo(() => {
@@ -310,10 +310,28 @@ export default function LeaderboardPage() {
                         ));
                       })()}
                       {(() => {
-                        const yts: string[] = Array.from(new Set([...((selectedUser.extra_youtube_usernames||[]) as string[])]).values()).filter(Boolean) as string[];
-                        return yts.map((u:string, idx:number)=> (
-                          <a key={`yt-${u}-${idx}`} href={`https://www.youtube.com/@${u}`} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 text-white/80 hover:text-white hover:bg-white/10">YouTube @{u}</a>
-                        ));
+                        // Aggregate all YouTube identifiers (Channel IDs + Usernames)
+                        const yt1 = selectedUser.youtube_channel_id ? [String(selectedUser.youtube_channel_id)] : [];
+                        const yt2 = (selectedUser.extra_youtube_channel_ids || []) as string[];
+                        const yt3 = (selectedUser.extra_youtube_usernames || []) as string[];
+                        
+                        // Deduplicate and clean
+                        const allYt = Array.from(new Set([...yt1, ...yt2, ...yt3]))
+                          .map(s => String(s).trim().replace(/^@/, ''))
+                          .filter(Boolean);
+
+                        return allYt.map((u: string, idx: number) => {
+                          // Naive check: Channel IDs usually start with 'UC' and are 24 chars long
+                          const isChannelId = u.startsWith('UC') && u.length === 24;
+                          const url = isChannelId ? `https://www.youtube.com/channel/${u}` : `https://www.youtube.com/@${u}`;
+                          const label = isChannelId ? `YouTube` : `YouTube @${u}`; 
+                          
+                          return (
+                            <a key={`yt-${u}-${idx}`} href={url} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 text-white/80 hover:text-white hover:bg-white/10">
+                              {label}
+                            </a>
+                          );
+                        });
                       })()}
                     </div>
                   </div>

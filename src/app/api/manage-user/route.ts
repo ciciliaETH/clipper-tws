@@ -137,14 +137,15 @@ export async function POST(request: Request) {
       const igNormalized = Array.from(new Set(igList.map((u: string) => u.replace(/^@/, '').toLowerCase())));
       const igPrimary = igNormalized[0] || null;
 
-      // Normalize multi YouTube channel IDs
+      // Normalize multi YouTube channel IDs / Usernames
       const ytList: string[] = Array.isArray((userData as any).youtube_channel_ids)
         ? (userData as any).youtube_channel_ids
         : String((userData as any).youtube_channel_id || '')
         .split(',')
         .map((s: string) => s.trim())
         .filter(Boolean);
-      const ytNormalized = Array.from(new Set(ytList)); 
+      // Remove @ if present, to store clean handle/ID
+      const ytNormalized = Array.from(new Set(ytList.map((u: string) => u.replace(/^@/, '')))); 
       const ytPrimary = ytNormalized[0] || null;
 
       // 1. Update profile in public.users
@@ -231,6 +232,23 @@ export async function POST(request: Request) {
         const toRemoveYT = Array.from(existingSetYT).filter(u => !ytNormalized.includes(u));
         if (toRemoveYT.length) {
           await supabaseAdmin.from('user_youtube_channels').delete().eq('user_id', userData.id).in('youtube_channel_id', toRemoveYT);
+        }
+      } catch {}
+
+      // 1f. Upsert YouTube usernames mapping (For display)
+      try {
+        const { data: existingYTUsernames } = await supabaseAdmin
+          .from('user_youtube_usernames')
+          .select('youtube_username')
+          .eq('user_id', userData.id);
+        const existingSetYTUsernames = new Set((existingYTUsernames || []).map((r: any) => String(r.youtube_username)));
+        const toAddYTUsernames = ytNormalized.filter(u => !existingSetYTUsernames.has(u)).map(u => ({ user_id: userData.id, youtube_username: u }));
+        if (toAddYTUsernames.length) {
+          await supabaseAdmin.from('user_youtube_usernames').upsert(toAddYTUsernames, { onConflict: 'user_id,youtube_username', ignoreDuplicates: true });
+        }
+        const toRemoveYTUsernames = Array.from(existingSetYTUsernames).filter(u => !ytNormalized.includes(u));
+        if (toRemoveYTUsernames.length) {
+          await supabaseAdmin.from('user_youtube_usernames').delete().eq('user_id', userData.id).in('youtube_username', toRemoveYTUsernames);
         }
       } catch {}
 

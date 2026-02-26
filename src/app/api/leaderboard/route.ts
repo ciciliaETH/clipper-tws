@@ -395,16 +395,7 @@ export async function GET(req: Request) {
 
       // Fetch prizes from any campaign overlapping month (latest by start_date)
       let prizes: { first_prize: number; second_prize: number; third_prize: number } | null = null;
-      // Fetch campaign name for client display
-      let campaignName: string | null = null;
-      try {
-        const { data: c } = await supabaseAdmin
-          .from('campaigns')
-          .select('name')
-          .eq('id', campaignId)
-          .maybeSingle();
-        campaignName = (c as any)?.name || null;
-      } catch {}
+      // (campaignName fetch removed: employees scope has no single campaignId)
       try {
         const { data: camps } = await supa
           .from('campaigns')
@@ -873,7 +864,7 @@ export async function GET(req: Request) {
           const { data: rows } = await supabaseAdmin
             .from('tiktok_posts_daily')
             .select('username, play_count, digg_count, comment_count, share_count, save_count, taken_at')
-            .in('username', ttHandles)
+            .in('username', usernames)
             .gte('taken_at', String(campaignStart || '1970-01-01') + 'T00:00:00Z')
             .lte('taken_at', String(campaignEnd || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
           const agg = new Map<string, { views: number, likes: number, comments: number, shares: number, saves: number, posts: number }>();
@@ -906,7 +897,7 @@ export async function GET(req: Request) {
               const { data: igRows } = await supabaseAdmin
                 .from('instagram_posts_daily')
                 .select('username, play_count, like_count, comment_count, taken_at')
-                .in('username', igHandles)
+                .in('username', igUsernames)
                 .gte('taken_at', String(campaignStart || '1970-01-01') + 'T00:00:00Z')
                 .lte('taken_at', String(campaignEnd || new Date().toISOString().slice(0,10)) + 'T23:59:59Z');
               const aggIG = new Map<string, { views:number, likes:number, comments:number, posts:number }>();

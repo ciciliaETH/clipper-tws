@@ -409,6 +409,83 @@ export async function GET(req: Request, context: any) {
         } catch {}
       }
 
+      // Fallback 3: Employee Groups -> Employees -> Channels
+      if (!ytChannels.length) {
+        try {
+            const empIds = new Set<string>();
+            
+            // A. Get from Employee Groups (if any)
+            const { data: eg } = await supabaseAdmin
+                .from('employee_groups')
+                .select('employee_id')
+                .eq('campaign_id', id);
+            for (const r of eg || []) empIds.add(String(r.employee_id));
+
+            // B. Get from TikTok Participants (The Bridge Strategy)
+            if (usernames.length > 0) {
+               // cleans usernames to remove @ and lower case
+               const userList = usernames.map(u => String(u).replace(/^@/, '').trim().toLowerCase());
+               
+               // Map 1: user_tiktok_usernames -> user_id
+               const { data: mapT } = await supabaseAdmin
+                 .from('user_tiktok_usernames')
+                 .select('user_id')
+                 .in('tiktok_username', userList); // Try exact match first? No, use list.
+               
+               // Also try to match ignoring case if possible via RPC? No, let's just rely on lowercase if data is clean.
+               // Actually, let's try to match on `user_instagram_usernames` too just in case the "tiktok_username" in campaign_participants was actually an IG handle? Users do weird things.
+               const { data: mapI } = await supabaseAdmin
+                 .from('user_instagram_usernames')
+                 .select('user_id')
+                 .in('instagram_username', userList);
+
+               for (const r of mapT || []) empIds.add(String(r.user_id));
+               for (const r of mapI || []) empIds.add(String(r.user_id));
+               
+               // Map 2: users table direct fields
+               // tiktok_username
+               const { data: mapU1 } = await supabaseAdmin
+                 .from('users')
+                 .select('id')
+                 .in('tiktok_username', userList);
+                for (const r of mapU1 || []) empIds.add(String(r.id));
+                
+               // instagram_username 
+               const { data: mapU2 } = await supabaseAdmin
+                 .from('users')
+                 .select('id')
+                 .in('instagram_username', userList);
+                for (const r of mapU2 || []) empIds.add(String(r.id));
+            }
+
+            // Now fetch channels for all these User IDs
+            const allUserIds = Array.from(empIds);
+            
+            if (allUserIds.length > 0) {
+                 // Check user_youtube_channels (Many-to-Many map)
+                const { data: mapRows } = await supabaseAdmin
+                    .from('user_youtube_channels')
+                    .select('youtube_channel_id')
+                    .in('user_id', allUserIds);
+                
+                // Check users.youtube_channel_id (Direct column)
+                const { data: userRows } = await supabaseAdmin
+                    .from('users')
+                    .select('youtube_channel_id')
+                    .in('id', allUserIds);
+
+                const set = new Set<string>();
+                for (const r of mapRows || []) if (r.youtube_channel_id) set.add(r.youtube_channel_id);
+                for (const r of userRows || []) if (r.youtube_channel_id) set.add(r.youtube_channel_id);
+                
+                ytChannels = Array.from(set);
+                console.log(`[YouTube Bridge] Found ${ytChannels.length} channels:`, ytChannels, `from ${allUserIds.length} users:`, allUserIds);
+            } else {
+                 console.log('[YouTube Bridge] No User IDs found for usernames:', usernames);
+            }
+        } catch(e) { console.warn('youtube fallback error', e); }
+      }
+
       if (ytChannels.length > 0) {
           const { data: rows } = await supabaseAdmin
             .from('youtube_posts_daily')
@@ -457,7 +534,25 @@ export async function GET(req: Request, context: any) {
           .from('campaign_participants')
           .select('tiktok_username')
           .eq('campaign_id', id);
-        const usernames = (parts || []).map((p:any)=> String(p.tiktok_username).replace(/^@/, '').toLowerCase());
+
+        // Also get Employee Participants
+        const { data: empParts } = await supabaseAdmin
+            .from('employee_participants')
+            .select('tiktok_username, employee_id')
+            .in('employee_id', (
+                await supabaseAdmin
+                    .from('employee_groups')
+                    .select('employee_id')
+                    .eq('campaign_id', id)
+            ).data?.map((e:any) => e.employee_id) || []
+            );
+
+        const allUsernames = new Set<string>();
+        for (const p of parts || []) allUsernames.add(String(p.tiktok_username).replace(/^@/, '').toLowerCase());
+        for (const p of empParts || []) allUsernames.add(String(p.tiktok_username).replace(/^@/, '').toLowerCase());
+
+        const usernames = Array.from(allUsernames);
+
         if (usernames.length) {
           // Aggregasi harian langsung dari tiktok_posts_daily
           const { data: rows } = await supabaseAdmin

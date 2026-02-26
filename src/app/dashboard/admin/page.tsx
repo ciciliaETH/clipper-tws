@@ -129,9 +129,11 @@ export default function AdminPage() {
     setIgTags(Array.from(new Set(allIG)));
     
     // YouTube
-    const ytExtras: string[] = (user as any).extra_youtube_channel_ids || [];
-    const ytPrim = (user as any).youtube_channel_id ? [String((user as any).youtube_channel_id)] : [];
-    const allYT = [...ytPrim, ...ytExtras].map((u:string)=> String(u).trim()).filter(Boolean);
+    const ytExtrasIds: string[] = (user as any).extra_youtube_channel_ids || [];
+    const ytPrimId = (user as any).youtube_channel_id ? [String((user as any).youtube_channel_id)] : [];
+    const ytExtrasNames: string[] = (user as any).extra_youtube_usernames || [];
+    // Merge IDs and Usernames for the input display (since user handles both in same input)
+    const allYT = [...ytPrimId, ...ytExtrasIds, ...ytExtrasNames].map((u:string)=> String(u).trim().replace(/^@/, '')).filter(Boolean);
     setYtTags(Array.from(new Set(allYT)));
     
     setTikInput(''); setIgInput(''); setYtInput('');

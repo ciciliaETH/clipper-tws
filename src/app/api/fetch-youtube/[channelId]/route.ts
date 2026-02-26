@@ -57,23 +57,105 @@ export async function GET(req: Request, context: any) {
           if (list.length > 0) {
             console.log(`[YouTube Fetch] V2 Found ${list.length} videos`);
             
-            // Resolve mapping: ensure we have user_id (id) and canonical channel_id from user_youtube_channels
+            // Resolve mapping: robust strategy to find user_id and canonical channel_id
             let mappedUserId: string | null = null;
             let mappedChannelId: string | null = null;
+            
             try {
-              // If channelParam is a channel ID (UC...), match directly; if it's a handle (@...), we cannot map here reliably
-              if (channelParam && !channelParam.startsWith('@')) {
-                const { data: mapRow } = await supa
-                  .from('user_youtube_channels')
-                  .select('user_id, youtube_channel_id')
-                  .eq('youtube_channel_id', channelParam)
+              // 1. Try direct match on user_youtube_channels (Channel ID)
+              const { data: mapRow } = await supa
+                .from('user_youtube_channels')
+                .select('user_id, youtube_channel_id')
+                .eq('youtube_channel_id', channelParam)
+                .maybeSingle();
+
+              if (mapRow) {
+                mappedUserId = (mapRow as any).user_id;
+                mappedChannelId = (mapRow as any).youtube_channel_id;
+              }
+
+              // 2. If not found, try lookup via user_youtube_usernames (Handle)
+              if (!mappedUserId) {
+                const handle = channelParam.replace(/^@/, '');
+                
+                // A. Check user_youtube_usernames
+                const { data: userMap } = await supa
+                  .from('user_youtube_usernames')
+                  .select('user_id')
+                  .or(`youtube_username.eq.${handle},youtube_username.eq.@${handle}`)
                   .maybeSingle();
-                if (mapRow) {
-                  mappedUserId = (mapRow as any).user_id;
-                  mappedChannelId = (mapRow as any).youtube_channel_id;
+                
+                if (userMap) mappedUserId = (userMap as any).user_id;
+
+                // B. Check user_tiktok_usernames (Common handle strategy)
+                if (!mappedUserId) {
+                    const { data: ttMap } = await supa
+                        .from('user_tiktok_usernames')
+                        .select('user_id')
+                        .eq('tiktok_username', handle) // stored as plain username usually
+                        .maybeSingle();
+                    if (ttMap) mappedUserId = (ttMap as any).user_id;
+                }
+
+                // C. Check user_instagram_usernames (Common handle strategy)
+                if (!mappedUserId) {
+                    const { data: igMap } = await supa
+                        .from('user_instagram_usernames')
+                        .select('user_id')
+                        .eq('instagram_username', handle)
+                        .maybeSingle();
+                    if (igMap) mappedUserId = (igMap as any).user_id;
+                }
+                
+                if (mappedUserId) {
+                  // Try to find the canonical channel ID for this user from DB first
+                  const { data: canon } = await supa
+                    .from('user_youtube_channels')
+                    .select('youtube_channel_id')
+                    .eq('user_id', mappedUserId)
+                    .maybeSingle();
+                  
+                  if (canon) {
+                    mappedChannelId = (canon as any).youtube_channel_id;
+                  } else {
+                     // If we found the USER but don't know their Channel ID yet,
+                     // and the response from Aggregator contains the channel ID...
+                     // Wait, the aggregator response (v) might have channel info?
+                     // Usually aggregator v2 returns `author` object with `id` (channel id) inside video object.
+                     if (list.length > 0) {
+                        const firstVideo = list[0];
+                        // Check if aggregator provides channel ID in video metadata
+                        // Typical response: { ... author: { id: "UC...", unique_id: "handle" } ... }
+                        // Or just top level author_id?
+                        // Let's safe check common fields
+                        const authId = firstVideo?.author?.id || firstVideo?.author_id || firstVideo?.channel_id;
+                        if (authId && String(authId).startsWith('UC')) {
+                           mappedChannelId = String(authId);
+                           // Auto-link this channel ID to the user!
+                           await supa.from('user_youtube_channels').upsert({
+                               user_id: mappedUserId,
+                               youtube_channel_id: mappedChannelId
+                           }, { onConflict: 'user_id, youtube_channel_id' });
+                           console.log(`[YouTube Fetch] Auto-linked Channel ${mappedChannelId} to User ${mappedUserId}`);
+                        }
+                     }
+                  }
                 }
               }
-            } catch {}
+              
+              // 3. Fallback: If still no channel ID and input looks like one
+              if (mappedUserId && !mappedChannelId && String(channelParam).startsWith('UC')) {
+                 mappedChannelId = channelParam;
+                 // verify link
+                 await supa.from('user_youtube_channels').upsert({
+                    user_id: mappedUserId,
+                    youtube_channel_id: mappedChannelId
+                 }, { onConflict: 'user_id, youtube_channel_id' });
+              }
+
+            } catch (e) {
+              console.warn('[YouTube Fetch] Mapping error:', e);
+            }
 
             const upserts = [] as any[];
             for (const v of list) {
@@ -163,22 +245,43 @@ export async function GET(req: Request, context: any) {
     }
 
     // Process and upsert
-    // Resolve mapping: use exact channel ID when provided
+    // Resolve mapping: robust strategy
     let mappedUserId: string | null = null;
     let mappedChannelId: string | null = null;
+    
     try {
-      if (channelParam && !channelParam.startsWith('@')) {
-        const { data: mapRow } = await supa
-          .from('user_youtube_channels')
-          .select('user_id, youtube_channel_id')
-          .eq('youtube_channel_id', channelParam)
+      // 1. Try direct match (Channel ID)
+      const { data: mapRow } = await supa
+        .from('user_youtube_channels')
+        .select('user_id, youtube_channel_id')
+        .eq('youtube_channel_id', channelParam)
+        .maybeSingle();
+
+      if (mapRow) {
+        mappedUserId = (mapRow as any).user_id;
+        mappedChannelId = (mapRow as any).youtube_channel_id;
+      }
+
+      // 2. Try Handle lookup
+      if (!mappedUserId) {
+        const handle = channelParam.replace(/^@/, '');
+        const { data: userMap } = await supa
+          .from('user_youtube_usernames')
+          .select('user_id')
+          .or(`youtube_username.eq.${handle},youtube_username.eq.@${handle}`)
           .maybeSingle();
-        if (mapRow) {
-          mappedUserId = (mapRow as any).user_id;
-          mappedChannelId = (mapRow as any).youtube_channel_id;
+        
+        if (userMap) {
+          mappedUserId = (userMap as any).user_id;
+          const { data: canon } = await supa
+            .from('user_youtube_channels')
+            .select('youtube_channel_id')
+            .eq('user_id', mappedUserId)
+            .maybeSingle();
+          if (canon) mappedChannelId = (canon as any).youtube_channel_id;
         }
       }
-    } catch {}
+    } catch (e) { console.warn('[YouTube Fetch] V1 Mapping error:', e); }
 
     const upserts: any[] = [];
     for (const v of videos) {
