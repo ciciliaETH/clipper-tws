@@ -778,9 +778,6 @@ export default function CampaignsPage() {
               {/* Left: Mode removed - always Post Date weekly */}
               <div className="flex items-center gap-2 justify-start flex-wrap">
                 <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
-                <button onClick={()=>setShowTikTok(!showTikTok)} className={`px-2 py-1 rounded border border-white/10 ${showTikTok?'bg-[#38bdf8]/20 text-[#38bdf8]':'text-white/40'}`}>TikTok</button>
-                <button onClick={()=>setShowInstagram(!showInstagram)} className={`px-2 py-1 rounded border border-white/10 ${showInstagram?'bg-[#e1306c]/20 text-[#e1306c]':'text-white/40'}`}>IG</button>
-                <button onClick={()=>setShowYouTube(!showYouTube)} className={`px-2 py-1 rounded border border-white/10 ${showYouTube?'bg-[#ff0000]/20 text-[#ff0000]':'text-white/40'}`}>YT</button>
               </div>
 
               {/* Center: Interval removed - historical data is weekly only */}

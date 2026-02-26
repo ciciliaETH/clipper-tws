@@ -1547,25 +1547,10 @@ export default function DashboardTotalPage() {
         </div>
       </div>
       
-      {/* Platform Filter */}
+      {/* Posts toggle */}
       <div className="mb-3 flex items-center gap-2 text-xs flex-wrap">
-        <span className="text-white/60">Platform:</span>
-        <button className={`px-2 py-1 rounded ${platformFilter==='all'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('all')}>Semua</button>
-        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='tiktok'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('tiktok')}>
-          <span className="text-[#38bdf8]">●</span> TikTok
-        </button>
-        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='instagram'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('instagram')}>
-          <span className="text-[#f43f5e]">●</span> Instagram
-        </button>
-        <button className={`px-2 py-1 rounded flex items-center gap-1 ${platformFilter==='youtube'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setPlatformFilter('youtube')}>
-          <span className="text-[#ef4444]">●</span> YouTube
-        </button>
-        
-        <span className="text-white/30 mx-2">|</span>
-        
-        {/* Posts toggle */}
-        <button 
-          className={`px-2 py-1 rounded flex items-center gap-1 ${showPosts?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} 
+        <button
+          className={`px-2 py-1 rounded flex items-center gap-1 ${showPosts?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`}
           onClick={()=>setShowPosts(!showPosts)}
         >
           <span className="text-[#a855f7]">●</span> Posts
