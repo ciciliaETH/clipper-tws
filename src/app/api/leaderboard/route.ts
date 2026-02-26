@@ -198,6 +198,41 @@ export async function GET(req: Request) {
         }
       }
 
+      // Optional campaign filter: if campaign param provided, fetch required_hashtags
+      const campaignParam = url.searchParams.get('campaign') || '';
+      const filterModeParam = url.searchParams.get('filter_mode') || ''; // '' | 'no_campaign'
+      let requiredHashtagsEmp: string[] | null = null;
+      let campaignNameEmp: string | null = null;
+      let noCampaignEmployeeIds: Set<string> | null = null;
+
+      if (filterModeParam === 'no_campaign') {
+        // Get campaigns that have NO required_hashtags
+        const { data: allCamps } = await supa
+          .from('campaigns')
+          .select('id, required_hashtags');
+        const noCampIds = (allCamps || [])
+          .filter((c: any) => !c.required_hashtags || (Array.isArray(c.required_hashtags) && c.required_hashtags.length === 0))
+          .map((c: any) => c.id);
+        if (noCampIds.length > 0) {
+          const { data: emps } = await supa
+            .from('employee_groups')
+            .select('employee_id')
+            .in('campaign_id', noCampIds);
+          noCampaignEmployeeIds = new Set((emps || []).map((e: any) => String(e.employee_id)));
+        } else {
+          noCampaignEmployeeIds = new Set();
+        }
+        campaignNameEmp = 'Semua No Campaign';
+      } else if (campaignParam) {
+        const { data: camp } = await supa
+          .from('campaigns')
+          .select('name, required_hashtags')
+          .eq('id', campaignParam)
+          .maybeSingle();
+        requiredHashtagsEmp = (camp as any)?.required_hashtags || null;
+        campaignNameEmp = (camp as any)?.name || null;
+      }
+
       // Build employee → handles map (TikTok + Instagram + YouTube)
       const { data: empUsers } = await supa
         .from('users')
@@ -264,11 +299,15 @@ export async function GET(req: Request) {
       if (allTT.length) {
         const { data: rowsTT } = await supa
           .from('tiktok_posts_daily')
-          .select('username, play_count, digg_count, comment_count, share_count, save_count')
+          .select('username, play_count, digg_count, comment_count, share_count, save_count, title')
           .in('username', allTT)
           .gte('taken_at', startISO + 'T00:00:00Z')
           .lte('taken_at', endISO + 'T23:59:59Z');
         for (const r of rowsTT || []) {
+          // Apply hashtag filter if campaign selected
+          if (requiredHashtagsEmp && requiredHashtagsEmp.length > 0) {
+            if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtagsEmp)) continue;
+          }
           const u = String((r as any).username).toLowerCase();
           const cur = aggTT.get(u) || { views:0, likes:0, comments:0, shares:0, saves:0, posts:0 };
           cur.views += Number((r as any).play_count)||0;
@@ -284,11 +323,15 @@ export async function GET(req: Request) {
       if (allIG.length) {
         const { data: rowsIG } = await supa
           .from('instagram_posts_daily')
-          .select('username, play_count, like_count, comment_count')
+          .select('username, play_count, like_count, comment_count, caption')
           .in('username', allIG)
           .gte('taken_at', startISO + 'T00:00:00Z')
           .lte('taken_at', endISO + 'T23:59:59Z');
         for (const r of rowsIG || []) {
+          // Apply hashtag filter if campaign selected
+          if (requiredHashtagsEmp && requiredHashtagsEmp.length > 0) {
+            if (!hasRequiredHashtag(String((r as any).caption || ''), requiredHashtagsEmp)) continue;
+          }
           const u = String((r as any).username).toLowerCase();
           const cur = aggIG.get(u) || { views:0, likes:0, comments:0, posts:0 };
           cur.views += Number((r as any).play_count)||0;
@@ -302,11 +345,15 @@ export async function GET(req: Request) {
       if (allYTChannels.length) {
         const { data: rowsYT } = await supa
           .from('youtube_posts_daily')
-          .select('channel_id, views, likes, comments')
+          .select('channel_id, views, likes, comments, title')
           .in('channel_id', allYTChannels)
           .gte('post_date', startISO)
           .lte('post_date', endISO);
         for (const r of rowsYT || []) {
+          // Apply hashtag filter if campaign selected
+          if (requiredHashtagsEmp && requiredHashtagsEmp.length > 0) {
+            if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtagsEmp)) continue;
+          }
           const chId = String((r as any).channel_id || '');
           const cur = aggYT.get(chId) || { views:0, likes:0, comments:0, posts:0 };
           cur.views += Number((r as any).views)||0;
@@ -321,6 +368,8 @@ export async function GET(req: Request) {
       const result: Array<{ username:string; views:number; likes:number; comments:number; shares:number; saves:number; posts:number; total:number }>= [];
       for (const u of empUsers || []) {
         const id = String((u as any).id);
+        // If no_campaign mode, only include employees from campaigns without hashtags
+        if (noCampaignEmployeeIds && !noCampaignEmployeeIds.has(id)) continue;
         const label = String((u as any).full_name || (u as any).username || (u as any).tiktok_username || (u as any).instagram_username || id);
         const ttHandles = handlesTT.get(id) || [];
         const igHandles = handlesIG.get(id) || [];
@@ -406,7 +455,7 @@ export async function GET(req: Request) {
       const sorted = result.sort((a,b)=> b.total-a.total);
       const limited = top ? sorted.slice(0, top) : sorted;
       const data = limited.map((x,i)=> ({ rank: i+1, ...x }));
-      return NextResponse.json({ top, start: startISO, end: endISO, prizes, data, scope:'employees', period: periodType });
+      return NextResponse.json({ top, start: startISO, end: endISO, prizes, data, scope:'employees', period: periodType, campaignId: campaignParam || null, campaignName: campaignNameEmp, required_hashtags: requiredHashtagsEmp, filtered_by_hashtag: !!(requiredHashtagsEmp && requiredHashtagsEmp.length > 0) });
     }
 
     // Determine campaign_id: query ?campaign=..., else active campaign
@@ -583,6 +632,20 @@ export async function GET(req: Request) {
         const uid = String((r as any).user_id);
         if (!userToInstagram.has(uid)) userToInstagram.set(uid, String((r as any).instagram_username).replace(/^@/, '').toLowerCase());
       }
+      // YouTube channel mapping
+      const userToYouTube = new Map<string, string[]>();
+      const { data: ytChMap } = await supabaseAdmin
+        .from('user_youtube_channels')
+        .select('user_id, youtube_channel_id')
+        .in('user_id', empIds);
+      for (const r of ytChMap || []) {
+        const uid = String((r as any).user_id);
+        const chId = String((r as any).youtube_channel_id || '');
+        if (!chId) continue;
+        const arr = userToYouTube.get(uid) || [];
+        if (!arr.includes(chId)) arr.push(chId);
+        userToYouTube.set(uid, arr);
+      }
 
       // Query history untuk semua karyawan + platform, sertakan baseline sehari sebelum start
       const prev = new Date(startISO+'T00:00:00Z'); prev.setUTCDate(prev.getUTCDate()-1);
@@ -643,6 +706,31 @@ export async function GET(req: Request) {
               for (const [uid, handle] of userToInstagram.entries()) {
                 if (handle === username) {
                   const key = `${uid}::instagram::${(post as any).taken_at}`;
+                  const set = validPostsByUser.get(uid) || new Set<string>();
+                  set.add(key);
+                  validPostsByUser.set(uid, set);
+                }
+              }
+            }
+          }
+        }
+        // Fetch YouTube posts with titles
+        const allYTChIds = Array.from(new Set(Array.from(userToYouTube.values()).flat())).filter(Boolean);
+        if (allYTChIds.length > 0) {
+          const { data: ytPosts } = await supabaseAdmin
+            .from('youtube_posts_daily')
+            .select('channel_id, video_id, title, post_date')
+            .in('channel_id', allYTChIds)
+            .gte('post_date', startISO)
+            .lte('post_date', endISO);
+          for (const post of ytPosts || []) {
+            const title = String((post as any).title || '');
+            if (hasRequiredHashtag(title, requiredHashtags)) {
+              const chId = String((post as any).channel_id || '');
+              // Find user_id for this channel
+              for (const [uid, channels] of userToYouTube.entries()) {
+                if (channels.includes(chId)) {
+                  const key = `${uid}::youtube::${(post as any).video_id}`;
                   const set = validPostsByUser.get(uid) || new Set<string>();
                   set.add(key);
                   validPostsByUser.set(uid, set);

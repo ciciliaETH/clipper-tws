@@ -276,12 +276,15 @@ export async function GET(req: Request, context: any) {
           
           // Save to database
           if (upserts.length > 0) {
-            // Use the actual unique constraint for this table: id
-            // Using an invalid conflict target (e.g. 'id,post_date') causes silent failures
-            // where Supabase returns { error } but we didn't check it before.
-            const { error: upErr } = await supa.from('instagram_posts_daily').upsert(upserts, { onConflict: 'id' });
-            if (upErr) {
-              console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message);
+            // Split rows: those with caption vs without, so we don't overwrite existing captions with null
+            const withCaption = upserts.filter((r: any) => r.caption);
+            const withoutCaption = upserts.filter((r: any) => !r.caption).map(({ caption, ...rest }: any) => rest);
+            for (const batch of [withCaption, withoutCaption]) {
+              if (batch.length === 0) continue;
+              const { error: upErr } = await supa.from('instagram_posts_daily').upsert(batch, { onConflict: 'id' });
+              if (upErr) {
+                console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message, `(hasCaption=${batch === withCaption})`);
+              }
             }
             const totalViews = upserts.reduce((s, u) => s + (Number(u.play_count) || 0), 0);
             const totalLikes = upserts.reduce((s, u) => s + (Number(u.like_count) || 0), 0);
@@ -682,38 +685,36 @@ export async function GET(req: Request, context: any) {
         }
       }
       
+      // Split rows: those with caption vs without, so we don't overwrite existing captions with null
+      const withCaption = upserts.filter((r: any) => r.caption);
+      const withoutCaption = upserts.filter((r: any) => !r.caption).map(({ caption, ...rest }: any) => rest);
       const chunk = 500;
       let totalSaved = 0;
       let totalErrors = 0;
-      
-      for (let i=0; i<upserts.length; i+=chunk) {
-        const part = upserts.slice(i, i+chunk);
-        const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
-        
-        if (upsertError) {
-          console.error(`[Instagram] ❌ FAILED to upsert chunk ${i}-${i+part.length}:`, {
-            error: upsertError.message,
-            code: upsertError.code,
-            details: upsertError.details,
-            hint: upsertError.hint,
-            username: norm,
-            chunk_size: part.length
-          });
-          totalErrors += part.length;
-        } else {
-          totalSaved += part.length;
-          if (i === 0) { // Log first chunk sample
-            console.log(`[Instagram] ✅ Saved chunk ${i}-${i+part.length} to instagram_posts_daily. Sample:`, {
+
+      for (const batch of [withCaption, withoutCaption]) {
+        for (let i=0; i<batch.length; i+=chunk) {
+          const part = batch.slice(i, i+chunk);
+          const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
+
+          if (upsertError) {
+            console.error(`[Instagram] ❌ FAILED to upsert chunk:`, {
+              error: upsertError.message,
+              code: upsertError.code,
+              details: upsertError.details,
+              hint: upsertError.hint,
               username: norm,
-              first_post: part[0]?.id,
-              taken_at: part[0]?.taken_at,
-              like_count: part[0]?.like_count
+              chunk_size: part.length,
+              hasCaption: batch === withCaption
             });
+            totalErrors += part.length;
+          } else {
+            totalSaved += part.length;
           }
         }
       }
-      
-      console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total`);
+
+      console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total (${withCaption.length} with caption, ${withoutCaption.length} without)`);
     }
 
     const totals = upserts.reduce((a, r)=>({

@@ -39,29 +39,49 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
   const [rangeMode, setRangeMode] = useState<'calendar' | 'days'>('calendar')
   const [selectedDays, setSelectedDays] = useState<number>(days)
 
+  // Campaign filter: 'all' = semua video, 'no_campaign' = tanpa hashtag, or campaign id
+  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [filterMode, setFilterMode] = useState<string>('all') // 'all' | 'no_campaign' | campaign_id
+
+  useEffect(() => {
+    const loadCampaigns = async () => {
+      try {
+        const r = await fetch('/api/campaigns/public')
+        const j = await r.json()
+        if (r.ok && Array.isArray(j)) setCampaigns(j)
+      } catch {}
+    }
+    loadCampaigns()
+  }, [])
+
   useEffect(() => {
     const fetchVideos = async () => {
       setLoading(true)
       setError(null)
-      
+
       try {
         const url = new URL('/api/leaderboard/top-videos', window.location.origin)
+        // Campaign filter
+        if (filterMode === 'no_campaign') {
+          url.searchParams.set('filter_mode', 'no_campaign')
+        } else if (filterMode !== 'all') {
+          url.searchParams.set('campaign_id', filterMode)
+        }
         if (campaignId) url.searchParams.set('campaign_id', campaignId)
         url.searchParams.set('limit', String(limit))
         url.searchParams.set('platform', platform)
         if (rangeMode === 'calendar') {
           url.searchParams.set('mode', 'calendar')
-          // fallback days value (not used by API in calendar mode)
           url.searchParams.set('days', String(selectedDays))
         } else {
           url.searchParams.set('days', String(selectedDays))
         }
         const res = await fetch(url.toString())
-        
+
         if (!res.ok) {
           throw new Error('Failed to fetch top videos')
         }
-        
+
         const data = await res.json()
         setVideos(data.videos || [])
         setTotalPosts(data.total_found || 0)
@@ -73,7 +93,7 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
     }
 
     fetchVideos()
-  }, [campaignId, limit, rangeMode, selectedDays, platform])
+  }, [campaignId, limit, rangeMode, selectedDays, platform, filterMode])
 
   const formatNumber = (num: number): string => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`
@@ -166,8 +186,41 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
             onClick={() => setRangeMode('calendar')}
             className={`px-3 py-1.5 rounded-lg text-sm border transition ${rangeMode==='calendar' ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
           >Bulan ini</button>
+          {/* Campaign hashtag filter */}
+          {campaigns.length > 0 && (
+            <select
+              value={filterMode}
+              onChange={(e) => setFilterMode(e.target.value)}
+              className="px-3 py-1.5 rounded-lg text-xs bg-white/10 border border-white/20 text-white appearance-none cursor-pointer hover:bg-white/15 focus:outline-none focus:ring-1 focus:ring-white/30 ml-2"
+            >
+              <option value="all" className="bg-gray-900 text-white">Semua</option>
+              {campaigns.map((c: any) => (
+                <option key={c.id} value={c.id} className="bg-gray-900 text-white">{c.name}</option>
+              ))}
+              <option value="no_campaign" className="bg-gray-900 text-white">Semua No Campaign</option>
+            </select>
+          )}
         </div>
       </div>
+      {/* Hashtag badges */}
+      {filterMode !== 'all' && filterMode !== 'no_campaign' && (() => {
+        const camp = campaigns.find((c: any) => String(c.id) === filterMode);
+        if (!camp?.required_hashtags?.length) return null;
+        return (
+          <div className="flex items-center gap-1.5 mb-4 ml-9">
+            <span className="text-white/40 text-xs">Hashtag:</span>
+            {camp.required_hashtags.map((tag: string) => (
+              <span key={tag} className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[10px] font-medium">{tag}</span>
+            ))}
+          </div>
+        );
+      })()}
+      {filterMode === 'no_campaign' && (
+        <div className="flex items-center gap-1.5 mb-4 ml-9">
+          <span className="text-white/40 text-xs">Filter:</span>
+          <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-300 text-[10px] font-medium">Video tanpa hashtag campaign</span>
+        </div>
+      )}
 
       <div className="space-y-4">
         {videos.map((video, index) => (

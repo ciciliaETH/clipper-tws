@@ -412,13 +412,17 @@ export async function GET(req: Request, context: any) {
       if (ytChannels.length > 0) {
           const { data: rows } = await supabaseAdmin
             .from('youtube_posts_daily')
-            .select('post_date, views, likes, comments')
+            .select('post_date, views, likes, comments, title')
             .in('channel_id', ytChannels)
             .gte('post_date', startISO)
             .lte('post_date', endISO);
-          
+
           const map = new Map<string,{views:number;likes:number;comments:number}>();
           for (const r of rows||[]) {
+             // Apply hashtag filter for YouTube
+             if (requiredHashtags && requiredHashtags.length > 0) {
+               if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtags)) continue;
+             }
              let key = String(r.post_date);
 
              if (interval === 'monthly') {

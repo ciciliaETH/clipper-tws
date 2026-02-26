@@ -485,7 +485,7 @@ export async function GET(req: Request, context: any) {
       if (normYT.length) {
         const { data: ytRows } = await supabase
           .from('youtube_posts_daily')
-          .select('video_id, views, likes, comments')
+          .select('video_id, views, likes, comments, title')
           .in('channel_id', normYT)
           .gte('post_date', start)
           .lte('post_date', end)
@@ -497,6 +497,8 @@ export async function GET(req: Request, context: any) {
           if (vid && !seenYT.has(vid)) seenYT.set(vid, r);
         }
         for (const r of seenYT.values()) {
+          // Apply hashtag filter for YouTube
+          if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtags)) continue;
           totalsYouTube.views += Number((r as any).views)||0;
           totalsYouTube.likes += Number((r as any).likes)||0;
           totalsYouTube.comments += Number((r as any).comments)||0;
@@ -536,35 +538,74 @@ export async function GET(req: Request, context: any) {
       totalsTikTok = totalsSnap; // best effort
     }
 
-    // Build series using RPC that aggregates by usernames subset within group window
+    // Helper: bucket a date string by interval
+    const bucketKey = (dStr:string) => {
+      if (interval === 'weekly') {
+        const d = new Date(dStr+'T00:00:00Z');
+        const day = d.getUTCDay();
+        const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - ((day+6)%7));
+        return monday.toISOString().slice(0,10);
+      }
+      if (interval === 'monthly') {
+        const d = new Date(dStr+'T00:00:00Z');
+        return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10);
+      }
+      return dStr;
+    };
+
+    // Build series from direct queries (consistent with totals: dedup + hashtag filter)
     let series: any[] = [];
     let seriesTikTok: any[] = [];
     let seriesInstagram: any[] = [];
     let seriesYouTube: any[] = [];
+
+    // TikTok series - direct query with dedup by video_id + hashtag filter (matches totals logic)
     try {
-      const { data: rows, error: rpcErr } = await supabase.rpc('campaign_series_usernames', {
-        start_date: start || null,
-        end_date: end || null,
-        usernames: usernames,
-        p_interval: interval,
-      } as any);
-      if (!rpcErr) {
-        seriesTikTok = (rows || []).map((r: any) => ({
-          date: String(r.bucket_date),
-          views: Number(r.views)||0,
-          likes: Number(r.likes)||0,
-          comments: Number(r.comments)||0,
-          shares: Number(r.shares)||0,
-          saves: Number(r.saves)||0,
-        }));
+      if (normUsernames.length && start && end) {
+        const { data: ttSeriesRows } = await supabase
+          .from('tiktok_posts_daily')
+          .select('video_id, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
+          .in('username', normUsernames)
+          .gte('taken_at', start + 'T00:00:00Z')
+          .lte('taken_at', end + 'T23:59:59Z')
+          .order('play_count', { ascending: false })
+          .limit(50000);
+        // Deduplicate by video_id (same logic as totals)
+        const dedupTT = new Map<string, any>();
+        for (const r of ttSeriesRows || []) {
+          const vid = String((r as any).video_id || '');
+          if (vid && !dedupTT.has(vid)) dedupTT.set(vid, r);
+        }
+        const mapTTSeries = new Map<string,{views:number;likes:number;comments:number;shares:number;saves:number}>();
+        for (const r of dedupTT.values()) {
+          // Apply hashtag filter (same as totals)
+          if (!hasRequiredHashtag((r as any).title, requiredHashtags)) continue;
+          const key = new Date((r as any).taken_at).toISOString().slice(0,10);
+          const cur = mapTTSeries.get(key) || { views:0, likes:0, comments:0, shares:0, saves:0 };
+          cur.views += Number((r as any).play_count)||0;
+          cur.likes += Number((r as any).digg_count)||0;
+          cur.comments += Number((r as any).comment_count)||0;
+          cur.shares += Number((r as any).share_count)||0;
+          cur.saves += Number((r as any).save_count)||0;
+          mapTTSeries.set(key, cur);
+        }
+        // Bucket by interval
+        const buckTT = new Map<string,{date:string;views:number;likes:number;comments:number;shares:number;saves:number}>();
+        for (const [d,v] of mapTTSeries.entries()) {
+          const k = bucketKey(d);
+          const cur = buckTT.get(k) || { date:k, views:0, likes:0, comments:0, shares:0, saves:0 };
+          cur.views += v.views; cur.likes += v.likes; cur.comments += v.comments; cur.shares += v.shares; cur.saves += v.saves;
+          buckTT.set(k, cur);
+        }
+        seriesTikTok = Array.from(buckTT.values()).sort((a,b)=> a.date.localeCompare(b.date));
       }
     } catch {}
 
-    // Instagram series (group by date in range) - deduplicate by id/code
+    // Instagram series - deduplicate by id/code + hashtag filter (matches totals logic)
     try {
       const { data: rows } = await supabase
         .from('instagram_posts_daily')
-        .select('id, code, taken_at, play_count, like_count, comment_count')
+        .select('id, code, taken_at, play_count, like_count, comment_count, caption')
         .in('username', normIG)
         .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
         .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
@@ -578,6 +619,8 @@ export async function GET(req: Request, context: any) {
       }
       const map = new Map<string,{views:number;likes:number;comments:number}>();
       for (const r of dedupIG.values()) {
+        // Apply hashtag filter (matches totals logic)
+        if (!hasRequiredHashtag((r as any).caption, requiredHashtags)) continue;
         const key = new Date((r as any).taken_at).toISOString().slice(0,10);
         const cur = map.get(key) || { views:0, likes:0, comments:0 };
         cur.views += Number((r as any).play_count)||0;
@@ -585,20 +628,7 @@ export async function GET(req: Request, context: any) {
         cur.comments += Number((r as any).comment_count)||0;
         map.set(key, cur);
       }
-      // Bucket IG by requested interval (daily/weekly/monthly)
-      const bucketKey = (dStr:string) => {
-        if (interval === 'weekly') {
-          const d = new Date(dStr+'T00:00:00Z');
-          const day = d.getUTCDay();
-          const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - ((day+6)%7));
-          return monday.toISOString().slice(0,10);
-        }
-        if (interval === 'monthly') {
-          const d = new Date(dStr+'T00:00:00Z');
-          return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10);
-        }
-        return dStr;
-      };
+      // Bucket IG by requested interval
       const buck = new Map<string,{date:string;views:number;likes:number;comments:number;shares:number;saves:number}>();
       for (const [d,v] of Array.from(map.entries())) {
         const k = bucketKey(d);
@@ -613,7 +643,7 @@ export async function GET(req: Request, context: any) {
       if (normYT.length) {
         const { data: rows } = await supabase
           .from('youtube_posts_daily')
-          .select('video_id, post_date, views, likes, comments')
+          .select('video_id, post_date, views, likes, comments, title')
           .in('channel_id', normYT)
           .gte('post_date', start || '1970-01-01')
           .lte('post_date', end || new Date().toISOString().slice(0,10))
@@ -627,6 +657,8 @@ export async function GET(req: Request, context: any) {
         }
         const map = new Map<string,{views:number;likes:number;comments:number}>();
         for (const r of dedupYT.values()) {
+          // Apply hashtag filter for YouTube
+          if (!hasRequiredHashtag(String((r as any).title || ''), requiredHashtags)) continue;
           const key = String(r.post_date).slice(0,10);
           const cur = map.get(key) || { views:0, likes:0, comments:0 };
           cur.views += Number(r.views)||0;

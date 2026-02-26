@@ -17,6 +17,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url)
     const campaignId = url.searchParams.get('campaign_id') || ''
+    const filterMode = url.searchParams.get('filter_mode') || '' // '' | 'no_campaign'
     const platform = (url.searchParams.get('platform') || 'all').toLowerCase() // all, tiktok, instagram, youtube
     const daysParam = Number(url.searchParams.get('days') || '30')
     const mode = (url.searchParams.get('mode') || '').toLowerCase() // '' | 'calendar'
@@ -29,7 +30,24 @@ export async function GET(req: Request) {
     // If campaign_id is missing, we aggregate across ALL campaigns (all employees)
     let requiredHashtags: string[] | null = null
     let employeeIds: string[] = []
-    if (!campaignId) {
+    if (filterMode === 'no_campaign') {
+      // Get campaigns that have NO required_hashtags
+      const { data: allCamps } = await supabase
+        .from('campaigns')
+        .select('id, required_hashtags')
+      const noCampIds = (allCamps || [])
+        .filter((c: any) => !c.required_hashtags || (Array.isArray(c.required_hashtags) && c.required_hashtags.length === 0))
+        .map((c: any) => c.id)
+      if (noCampIds.length > 0) {
+        const { data: emps } = await supabase
+          .from('employee_groups')
+          .select('employee_id')
+          .in('campaign_id', noCampIds)
+        const empSet = new Set((emps || []).map((e: any) => String(e.employee_id)))
+        employeeIds = Array.from(empSet)
+      }
+      // No hashtag filter needed for no_campaign mode
+    } else if (!campaignId) {
       // All employees (role=karyawan)
       const { data: emps } = await supabase
         .from('users')
