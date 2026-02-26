@@ -203,11 +203,30 @@ export default function CampaignsPage() {
         const series_instagram = toArr(igMap);
         const series_youtube = toArr(ytMap);
 
-        const headerSums = series_total.reduce((a: any, s: any) => ({
-          views: (a.views || 0) + Number(s.views || 0),
-          likes: (a.likes || 0) + Number(s.likes || 0),
-          comments: (a.comments || 0) + Number(s.comments || 0)
-        }), { views: 0, likes: 0, comments: 0 });
+        // Compute group totals from each employee's API totals (same source as chart series)
+        // This guarantees summary bar = sum of table rows = chart total
+        const empTotalsMap: Record<string, any> = {};
+        const headerSums = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
+        for (const row of allRows) {
+          const t = row.data?.totals || {};
+          const empT = {
+            views: Number(t.views || 0),
+            likes: Number(t.likes || 0),
+            comments: Number(t.comments || 0),
+            shares: Number(t.shares || 0),
+            saves: Number(t.saves || 0),
+            posts: Number(t.posts || 0),
+          };
+          empTotalsMap[row.id] = empT;
+          headerSums.views += empT.views;
+          headerSums.likes += empT.likes;
+          headerSums.comments += empT.comments;
+          headerSums.shares += empT.shares;
+          headerSums.saves += empT.saves;
+          headerSums.posts += empT.posts;
+        }
+        setEmpMetricsTotals(empTotalsMap);
+        setMemberGroupTotals(headerSums);
         setMetrics({ series_total, series_tiktok, series_instagram, series_youtube, totals: headerSums, interval: chartInterval });
 
         // Per-employee overlay: use subset of already-fetched data
@@ -444,10 +463,12 @@ export default function CampaignsPage() {
     });
     const sm = sortMetric; const so = sortOrder;
     return list.sort((a:any,b:any)=>{
-      const av = Number(a.totals?.[sm]||a[sm]||0); const bv = Number(b.totals?.[sm]||b[sm]||0);
+      const at = empMetricsTotals[a.id] || a.totals || {};
+      const bt = empMetricsTotals[b.id] || b.totals || {};
+      const av = Number(at[sm]||0); const bv = Number(bt[sm]||0);
       return so==='desc' ? (bv-av) : (av-bv);
     });
-  }, [participants, participantSearch, sortMetric, sortOrder]);
+  }, [participants, participantSearch, sortMetric, sortOrder, empMetricsTotals]);
 
   const createCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -875,11 +896,13 @@ export default function CampaignsPage() {
                           {p.is_head && <span className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-400/10 border border-yellow-400/20">HEAD</span>}
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.views||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.likes||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.comments||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.shares||0).toLocaleString('id-ID')}</td>
-                      <td className="px-2 py-2 text-right">{Number(p.totals?.posts||0).toLocaleString('id-ID')}</td>
+                      {(() => { const t = empMetricsTotals[p.id] || p.totals || {}; return (<>
+                      <td className="px-2 py-2 text-right">{Number(t.views||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.likes||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.comments||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.shares||0).toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-2 text-right">{Number(t.posts||0).toLocaleString('id-ID')}</td>
+                      </>); })()}
                     </tr>
                   ))}
                   {(participants.length===0) && (

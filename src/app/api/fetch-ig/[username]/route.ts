@@ -276,14 +276,22 @@ export async function GET(req: Request, context: any) {
           
           // Save to database
           if (upserts.length > 0) {
-            // Split rows: those with caption vs without, so we don't overwrite existing captions with null
-            const withCaption = upserts.filter((r: any) => r.caption);
-            const withoutCaption = upserts.filter((r: any) => !r.caption).map(({ caption, ...rest }: any) => rest);
-            for (const batch of [withCaption, withoutCaption]) {
+            // Split rows by optional fields to avoid overwriting existing DB values with null
+            // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
+            const groups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+            for (const r of upserts) {
+              const hasCap = !!r.caption;
+              const hasTA = !!r.taken_at;
+              if (hasCap && hasTA) groups[0].push(r);
+              else if (hasCap && !hasTA) groups[1].push(({ caption: r.caption, ...(() => { const { taken_at, post_date, ...rest } = r; return rest; })() }));
+              else if (!hasCap && hasTA) groups[2].push((() => { const { caption, ...rest } = r; return rest; })());
+              else groups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+            }
+            for (const batch of groups) {
               if (batch.length === 0) continue;
               const { error: upErr } = await supa.from('instagram_posts_daily').upsert(batch, { onConflict: 'id' });
               if (upErr) {
-                console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message, `(hasCaption=${batch === withCaption})`);
+                console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message);
               }
             }
             const totalViews = upserts.reduce((s, u) => s + (Number(u.play_count) || 0), 0);
@@ -685,14 +693,22 @@ export async function GET(req: Request, context: any) {
         }
       }
       
-      // Split rows: those with caption vs without, so we don't overwrite existing captions with null
-      const withCaption = upserts.filter((r: any) => r.caption);
-      const withoutCaption = upserts.filter((r: any) => !r.caption).map(({ caption, ...rest }: any) => rest);
+      // Split rows by optional fields to avoid overwriting existing DB values with null
+      // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
+      const upsertGroups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+      for (const r of upserts) {
+        const hasCap = !!r.caption;
+        const hasTA = !!r.taken_at;
+        if (hasCap && hasTA) upsertGroups[0].push(r);
+        else if (hasCap && !hasTA) upsertGroups[1].push((() => { const { taken_at, post_date, ...rest } = r; return rest; })());
+        else if (!hasCap && hasTA) upsertGroups[2].push((() => { const { caption, ...rest } = r; return rest; })());
+        else upsertGroups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+      }
       const chunk = 500;
       let totalSaved = 0;
       let totalErrors = 0;
 
-      for (const batch of [withCaption, withoutCaption]) {
+      for (const batch of upsertGroups) {
         for (let i=0; i<batch.length; i+=chunk) {
           const part = batch.slice(i, i+chunk);
           const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
@@ -705,7 +721,6 @@ export async function GET(req: Request, context: any) {
               hint: upsertError.hint,
               username: norm,
               chunk_size: part.length,
-              hasCaption: batch === withCaption
             });
             totalErrors += part.length;
           } else {
@@ -714,7 +729,7 @@ export async function GET(req: Request, context: any) {
         }
       }
 
-      console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total (${withCaption.length} with caption, ${withoutCaption.length} without)`);
+      console.log(`[Instagram] Save summary for ${norm}: ✅ ${totalSaved} saved, ❌ ${totalErrors} failed out of ${upserts.length} total`);
     }
 
     const totals = upserts.reduce((a, r)=>({
