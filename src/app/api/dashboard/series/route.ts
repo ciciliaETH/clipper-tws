@@ -280,18 +280,23 @@ export async function GET(req: Request) {
     const groupRtIG = new Map<string, Map<string, {views:number;likes:number;comments:number}>>();
     const groupRtYT = new Map<string, Map<string, {views:number;likes:number;comments:number}>>();
 
+    // IMPORTANT: Always fetch ALL realtime data from cutoff to TODAY (not endISO)
+    // This ensures the same weekly bucket always gets the same value regardless of
+    // the user-selected date range. We filter to the requested keys afterwards.
+    const todayISO = new Date().toISOString().slice(0,10);
     if (new Date(endISO+'T23:59:59Z') >= cutoffDate) {
       const rtStartISO = (new Date(startISO+'T00:00:00Z') < cutoffDate) ? historicalCutoffISO : startISO;
+      // Always fetch up to today so that dedup/bucketing is stable
+      const rtFetchEndISO = todayISO > endISO ? todayISO : endISO;
       if (handlesTT.size) {
         const { data: rows } = await supa
           .from('tiktok_posts_daily')
           .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count')
           .in('username', Array.from(handlesTT))
           .gte('taken_at', rtStartISO+'T00:00:00Z')
-          .lte('taken_at', endISO+'T23:59:59Z')
-          .order('play_count', { ascending: false })
+          .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
           .limit(50000);
-        // Deduplicate by video_id
+        // Deduplicate by video_id (PK, defensive)
         const seenTT = new Map<string, any>();
         for (const r of rows||[]) {
           const vid = String((r as any).video_id || '');
@@ -299,6 +304,8 @@ export async function GET(req: Request) {
         }
         for (const r of seenTT.values()) {
           const k = keyFor(String((r as any).taken_at).slice(0,10));
+          // Skip if bucket falls outside the requested key range
+          if (k > endISO) continue;
           const v = Number((r as any).play_count)||0;
           const l = Number((r as any).digg_count)||0;
           const c = Number((r as any).comment_count)||0;
@@ -327,8 +334,7 @@ export async function GET(req: Request) {
           .select('id, code, username, taken_at, play_count, like_count, comment_count')
           .in('username', Array.from(handlesIG))
           .gte('taken_at', rtStartISO+'T00:00:00Z')
-          .lte('taken_at', endISO+'T23:59:59Z')
-          .order('play_count', { ascending: false })
+          .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
           .limit(50000);
         // Deduplicate by id/code
         const seenIG = new Map<string, any>();
@@ -338,6 +344,7 @@ export async function GET(req: Request) {
         }
         for (const r of seenIG.values()) {
           const k = keyFor(String((r as any).taken_at).slice(0,10));
+          if (k > endISO) continue;
           const v = Number((r as any).play_count)||0;
           const l = Number((r as any).like_count)||0;
           const c = Number((r as any).comment_count)||0;
@@ -364,17 +371,32 @@ export async function GET(req: Request) {
           .select('video_id, channel_id, post_date, views, likes, comments')
           .in('channel_id', Array.from(handlesYT))
           .gte('post_date', rtStartISO)
-          .lte('post_date', endISO)
-          .order('views', { ascending: false })
+          .lte('post_date', rtFetchEndISO)
           .limit(50000);
-        // Deduplicate by video_id
+        // Deduplicate by video_id — keep EARLIEST post_date per video so it stays
+        // in the correct weekly bucket regardless of later scrapes
         const seenYT = new Map<string, any>();
         for (const r of rows||[]) {
           const vid = String((r as any).video_id || '');
-          if (vid && !seenYT.has(vid)) seenYT.set(vid, r);
+          if (!vid) continue;
+          const existing = seenYT.get(vid);
+          if (!existing) {
+            seenYT.set(vid, r);
+          } else {
+            // Keep the entry with earliest post_date (original publication)
+            // but prefer higher view count if same date
+            const existDate = String((existing as any).post_date||'').slice(0,10);
+            const newDate = String((r as any).post_date||'').slice(0,10);
+            if (newDate < existDate) {
+              seenYT.set(vid, r);
+            } else if (newDate === existDate && (Number((r as any).views)||0) > (Number((existing as any).views)||0)) {
+              seenYT.set(vid, r);
+            }
+          }
         }
         for (const r of seenYT.values()) {
           const k = keyFor(String((r as any).post_date).slice(0,10));
+          if (k > endISO) continue;
           const v = Number((r as any).views)||0;
           const l = Number((r as any).likes)||0;
           const c = Number((r as any).comments)||0;
