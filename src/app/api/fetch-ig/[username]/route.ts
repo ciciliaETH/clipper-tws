@@ -30,6 +30,51 @@ function admin() {
   return createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 }
 
+// ============================================
+// MERGE HELPER: Preserve existing DB values on refresh
+// If the DB already has taken_at/caption/code, NEVER overwrite with NULL.
+// Only update metrics (play_count, like_count, comment_count).
+// ============================================
+const PROTECTED_FIELDS = ['taken_at', 'post_date', 'caption', 'code'] as const;
+
+async function mergeWithExisting(supa: ReturnType<typeof admin>, records: any[]): Promise<any[]> {
+  if (records.length === 0) return records;
+
+  const ids = records.map(r => String(r.id)).filter(Boolean);
+  if (ids.length === 0) return records;
+
+  // Fetch existing protected-field values in chunks of 500
+  const existingMap = new Map<string, any>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const { data } = await supa
+      .from('instagram_posts_daily')
+      .select('id, taken_at, post_date, caption, code')
+      .in('id', chunk);
+    for (const row of (data || [])) {
+      existingMap.set(String(row.id), row);
+    }
+  }
+
+  if (existingMap.size === 0) return records; // all new, nothing to merge
+
+  return records.map(r => {
+    const ex = existingMap.get(String(r.id));
+    if (!ex) return r; // new record → use as-is
+
+    const merged = { ...r };
+    for (const field of PROTECTED_FIELDS) {
+      const newVal = merged[field];
+      const oldVal = ex[field];
+      // If new value is null/empty BUT DB already has data → keep DB value
+      if ((newVal === null || newVal === undefined || newVal === '') && oldVal) {
+        merged[field] = oldVal;
+      }
+    }
+    return merged;
+  });
+}
+
 // Helper to fetch taken_at from RapidAPI media/shortcode_reels endpoint
 async function fetchTakenAt(code: string): Promise<number | null> {
   if (!code) return null;
@@ -276,10 +321,13 @@ export async function GET(req: Request, context: any) {
           
           // Save to database
           if (upserts.length > 0) {
-            // Strip null optional fields to prevent overwriting existing DB values with null.
+            // MERGE with existing DB data: preserve taken_at/caption/code if already in DB
+            const merged = await mergeWithExisting(supa, upserts);
+            console.log(`[IG Fetch] Merged ${merged.length} records (preserved existing DB values for protected fields)`);
+
             // Group by column set so each PostgREST batch has consistent columns.
             const colGroups = new Map<string, any[]>();
-            for (const r of upserts) {
+            for (const r of merged) {
               const clean: any = {};
               for (const [k, v] of Object.entries(r)) {
                 if ((k === 'taken_at' || k === 'post_date' || k === 'caption' || k === 'code') && (v === null || v === undefined || v === '')) continue;
@@ -694,10 +742,13 @@ export async function GET(req: Request, context: any) {
         }
       }
       
-      // Strip null optional fields to prevent overwriting existing DB values with null.
+      // MERGE with existing DB data: preserve taken_at/caption/code if already in DB
+      const mergedUpserts = await mergeWithExisting(supa, upserts);
+      console.log(`[Instagram] Merged ${mergedUpserts.length} records (preserved existing DB values for protected fields)`);
+
       // Group by column set so each PostgREST batch has consistent columns.
       const upsertGroups = new Map<string, any[]>();
-      for (const r of upserts) {
+      for (const r of mergedUpserts) {
         const clean: any = {};
         for (const [k, v] of Object.entries(r)) {
           if ((k === 'taken_at' || k === 'post_date' || k === 'caption' || k === 'code') && (v === null || v === undefined || v === '')) continue;
