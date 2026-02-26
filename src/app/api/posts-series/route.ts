@@ -12,13 +12,13 @@ function supabaseAdmin() {
   );
 }
 
-// GET: Get posts count per day based on taken_at
+// GET: Get posts count per day based on taken_at (with fallbacks)
 export async function GET(req: Request) {
   try {
     const supabase = supabaseAdmin();
     const { searchParams } = new URL(req.url);
-    const startDate = searchParams.get('start') || '2026-01-01'; // Default: 1 Januari 2026
-    const endDate = searchParams.get('end') || new Date().toISOString().slice(0, 10); // Default: hari ini
+    const startDate = searchParams.get('start') || '2026-01-01';
+    const endDate = searchParams.get('end') || new Date().toISOString().slice(0, 10);
     const campaignId = searchParams.get('campaign_id') || '';
     const platform = (searchParams.get('platform') || 'all').toLowerCase();
 
@@ -27,14 +27,12 @@ export async function GET(req: Request) {
     let requiredHashtags: string[] | null = null;
 
     if (campaignId) {
-      // Get employees from campaign
       const { data: employees } = await supabase
         .from('employee_groups')
         .select('employee_id')
         .eq('campaign_id', campaignId);
       employeeIds = (employees || []).map((e: any) => e.employee_id);
-      
-      // Get campaign hashtags
+
       const { data: campaign } = await supabase
         .from('campaigns')
         .select('required_hashtags')
@@ -42,7 +40,6 @@ export async function GET(req: Request) {
         .single();
       requiredHashtags = (campaign as any)?.required_hashtags || null;
     } else {
-      // All employees
       const { data: emps } = await supabase
         .from('users')
         .select('id')
@@ -67,7 +64,7 @@ export async function GET(req: Request) {
         tiktokUsernames.add(u.tiktok_username.toLowerCase().replace(/^@+/, ''));
       }
     }
-    
+
     const { data: ttParticipants } = await supabase
       .from('employee_participants')
       .select('tiktok_username')
@@ -85,7 +82,7 @@ export async function GET(req: Request) {
         instagramUsernames.add(u.instagram_username.toLowerCase().replace(/^@+/, ''));
       }
     }
-    
+
     const { data: igParticipants } = await supabase
       .from('employee_instagram_participants')
       .select('instagram_username')
@@ -96,7 +93,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // Get YouTube channel IDs (from user_youtube_channels)
+    // Get YouTube channel IDs (from user_youtube_channels) - only for employees
     const youtubeChannels = new Set<string>();
     const { data: ytChannelRows } = await supabase
       .from('user_youtube_channels')
@@ -118,7 +115,8 @@ export async function GET(req: Request) {
       postsByDate.set(dateStr, { tiktok: 0, instagram: 0, youtube: 0, total: 0 });
     }
 
-    // Query TikTok posts - count each video only on its FIRST snapshot date
+    // ─── TikTok ───
+    // tiktok_posts_daily has video_id as PK (one row per video), taken_at is always set
     if ((platform === 'all' || platform === 'tiktok') && tiktokUsernames.size > 0) {
       const { data: ttPosts } = await supabase
         .from('tiktok_posts_daily')
@@ -126,21 +124,19 @@ export async function GET(req: Request) {
         .in('username', Array.from(tiktokUsernames))
         .gte('taken_at', startDate + 'T00:00:00Z')
         .lte('taken_at', endDate + 'T23:59:59Z')
-        .order('taken_at', { ascending: true });
+        .order('taken_at', { ascending: true })
+        .limit(50000);
 
-      // Find earliest date per video_id, then count per date
       const videoFirstDate = new Map<string, { date: string; title: string | null }>();
       for (const row of ttPosts || []) {
         const vid = String(row.video_id);
-        if (videoFirstDate.has(vid)) continue; // already saw this video earlier
+        if (videoFirstDate.has(vid)) continue;
         const date = new Date(row.taken_at).toISOString().slice(0, 10);
         videoFirstDate.set(vid, { date, title: row.title });
       }
 
-      // Group by first-seen date, count unique videos
       const videosByDate = new Map<string, Set<string>>();
       for (const [vid, info] of videoFirstDate.entries()) {
-        // Apply hashtag filter
         if (requiredHashtags && requiredHashtags.length > 0) {
           if (!hasRequiredHashtag(info.title, requiredHashtags)) continue;
         }
@@ -148,7 +144,6 @@ export async function GET(req: Request) {
         videosByDate.get(info.date)!.add(vid);
       }
 
-      // Add to postsByDate
       for (const [date, videos] of videosByDate.entries()) {
         const entry = postsByDate.get(date) || { tiktok: 0, instagram: 0, youtube: 0, total: 0 };
         entry.tiktok = videos.size;
@@ -157,36 +152,64 @@ export async function GET(req: Request) {
       }
     }
 
-    // Query Instagram posts - count each post only on its FIRST snapshot date
+    // ─── Instagram ───
+    // instagram_posts_daily has id as PK (one row per post)
+    // BUG FIX: taken_at can be NULL when aggregator doesn't return timestamps.
+    // Use two queries: one for posts with taken_at, one for posts without (fallback to created_at).
     if ((platform === 'all' || platform === 'instagram') && instagramUsernames.size > 0) {
-      const { data: igPosts } = await supabase
+      const igUsernamesArr = Array.from(instagramUsernames);
+      const postFirstDate = new Map<string, { date: string; caption: string | null }>();
+
+      // Query 1: Posts WITH taken_at (use taken_at for date)
+      const { data: igPostsWithDate } = await supabase
         .from('instagram_posts_daily')
         .select('id, username, taken_at, caption')
-        .in('username', Array.from(instagramUsernames))
+        .in('username', igUsernamesArr)
+        .not('taken_at', 'is', null)
         .gte('taken_at', startDate + 'T00:00:00Z')
         .lte('taken_at', endDate + 'T23:59:59Z')
-        .order('taken_at', { ascending: true });
+        .order('taken_at', { ascending: true })
+        .limit(50000);
 
-      // Find earliest date per post id
-      const postFirstDate = new Map<string, { date: string; caption: string | null }>();
-      for (const row of igPosts || []) {
+      for (const row of igPostsWithDate || []) {
         const pid = String((row as any).id);
         if (postFirstDate.has(pid)) continue;
         const date = new Date((row as any).taken_at).toISOString().slice(0, 10);
         postFirstDate.set(pid, { date, caption: (row as any).caption });
       }
 
-      // Group by first-seen date
+      // Query 2: Posts WITHOUT taken_at (fallback to created_at)
+      const { data: igPostsNoDate } = await supabase
+        .from('instagram_posts_daily')
+        .select('id, username, caption, created_at')
+        .in('username', igUsernamesArr)
+        .is('taken_at', null)
+        .gte('created_at', startDate + 'T00:00:00Z')
+        .lte('created_at', endDate + 'T23:59:59Z')
+        .order('created_at', { ascending: true })
+        .limit(50000);
+
+      for (const row of igPostsNoDate || []) {
+        const pid = String((row as any).id);
+        if (postFirstDate.has(pid)) continue; // already counted from query 1
+        const date = new Date((row as any).created_at).toISOString().slice(0, 10);
+        postFirstDate.set(pid, { date, caption: (row as any).caption });
+      }
+
+      console.log(`[posts-series] Instagram: ${(igPostsWithDate||[]).length} with taken_at, ${(igPostsNoDate||[]).length} without (using created_at)`);
+
+      // Group by date, apply hashtag filter
       const postIdsByDate = new Map<string, Set<string>>();
       for (const [pid, info] of postFirstDate.entries()) {
         if (requiredHashtags && requiredHashtags.length > 0) {
           if (!hasRequiredHashtag(info.caption, requiredHashtags)) continue;
         }
+        // Only count if date falls within requested range
+        if (info.date < startDate || info.date > endDate) continue;
         if (!postIdsByDate.has(info.date)) postIdsByDate.set(info.date, new Set());
         postIdsByDate.get(info.date)!.add(pid);
       }
 
-      // Add to postsByDate
       for (const [date, posts] of postIdsByDate.entries()) {
         const entry = postsByDate.get(date) || { tiktok: 0, instagram: 0, youtube: 0, total: 0 };
         entry.instagram = posts.size;
@@ -195,7 +218,9 @@ export async function GET(req: Request) {
       }
     }
 
-    // Query YouTube posts - count each video only on its FIRST snapshot date
+    // ─── YouTube ───
+    // youtube_posts_daily has composite PK (id=user_id, video_id) - multiple rows per video.
+    // Dedup by video_id to count unique videos only.
     if ((platform === 'all' || platform === 'youtube') && youtubeChannels.size > 0) {
       const { data: ytPosts } = await supabase
         .from('youtube_posts_daily')
@@ -203,18 +228,24 @@ export async function GET(req: Request) {
         .in('channel_id', Array.from(youtubeChannels))
         .gte('post_date', startDate)
         .lte('post_date', endDate)
-        .order('post_date', { ascending: true });
+        .order('post_date', { ascending: true })
+        .limit(50000);
 
-      // Find earliest date per video_id
+      // Dedup by video_id - keep earliest post_date per unique video
       const ytFirstDate = new Map<string, { date: string; title: string | null }>();
       for (const row of ytPosts || []) {
         const vid = String((row as any).video_id);
-        if (ytFirstDate.has(vid)) continue;
+        if (!vid) continue;
         const date = String((row as any).post_date).slice(0, 10);
-        ytFirstDate.set(vid, { date, title: (row as any).title });
+        const existing = ytFirstDate.get(vid);
+        if (!existing || date < existing.date) {
+          ytFirstDate.set(vid, { date, title: (row as any).title });
+        }
       }
 
-      // Group by first-seen date
+      console.log(`[posts-series] YouTube: ${(ytPosts||[]).length} rows → ${ytFirstDate.size} unique videos`);
+
+      // Group by date, apply hashtag filter
       const ytVideosByDate = new Map<string, Set<string>>();
       for (const [vid, info] of ytFirstDate.entries()) {
         if (requiredHashtags && requiredHashtags.length > 0) {
@@ -224,7 +255,6 @@ export async function GET(req: Request) {
         ytVideosByDate.get(info.date)!.add(vid);
       }
 
-      // Add to postsByDate
       for (const [date, videos] of ytVideosByDate.entries()) {
         const entry = postsByDate.get(date) || { tiktok: 0, instagram: 0, youtube: 0, total: 0 };
         entry.youtube = videos.size;
