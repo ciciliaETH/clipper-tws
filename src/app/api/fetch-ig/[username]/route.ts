@@ -276,19 +276,20 @@ export async function GET(req: Request, context: any) {
           
           // Save to database
           if (upserts.length > 0) {
-            // Split rows by optional fields to avoid overwriting existing DB values with null
-            // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
-            const groups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+            // Strip null optional fields to prevent overwriting existing DB values with null.
+            // Group by column set so each PostgREST batch has consistent columns.
+            const colGroups = new Map<string, any[]>();
             for (const r of upserts) {
-              const hasCap = !!r.caption;
-              const hasTA = !!r.taken_at;
-              if (hasCap && hasTA) groups[0].push(r);
-              else if (hasCap && !hasTA) groups[1].push(({ caption: r.caption, ...(() => { const { taken_at, post_date, ...rest } = r; return rest; })() }));
-              else if (!hasCap && hasTA) groups[2].push((() => { const { caption, ...rest } = r; return rest; })());
-              else groups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+              const clean: any = {};
+              for (const [k, v] of Object.entries(r)) {
+                if ((k === 'taken_at' || k === 'post_date' || k === 'caption' || k === 'code') && (v === null || v === undefined || v === '')) continue;
+                clean[k] = v;
+              }
+              const key = Object.keys(clean).sort().join(',');
+              if (!colGroups.has(key)) colGroups.set(key, []);
+              colGroups.get(key)!.push(clean);
             }
-            for (const batch of groups) {
-              if (batch.length === 0) continue;
+            for (const batch of colGroups.values()) {
               const { error: upErr } = await supa.from('instagram_posts_daily').upsert(batch, { onConflict: 'id' });
               if (upErr) {
                 console.warn('[IG Fetch] upsert instagram_posts_daily failed:', upErr.message);
@@ -693,22 +694,24 @@ export async function GET(req: Request, context: any) {
         }
       }
       
-      // Split rows by optional fields to avoid overwriting existing DB values with null
-      // Group by (hasCaption, hasTakenAt) so each batch has consistent columns
-      const upsertGroups: any[][] = [[], [], [], []]; // [cap+ta, cap+!ta, !cap+ta, !cap+!ta]
+      // Strip null optional fields to prevent overwriting existing DB values with null.
+      // Group by column set so each PostgREST batch has consistent columns.
+      const upsertGroups = new Map<string, any[]>();
       for (const r of upserts) {
-        const hasCap = !!r.caption;
-        const hasTA = !!r.taken_at;
-        if (hasCap && hasTA) upsertGroups[0].push(r);
-        else if (hasCap && !hasTA) upsertGroups[1].push((() => { const { taken_at, post_date, ...rest } = r; return rest; })());
-        else if (!hasCap && hasTA) upsertGroups[2].push((() => { const { caption, ...rest } = r; return rest; })());
-        else upsertGroups[3].push((() => { const { caption, taken_at, post_date, ...rest } = r; return rest; })());
+        const clean: any = {};
+        for (const [k, v] of Object.entries(r)) {
+          if ((k === 'taken_at' || k === 'post_date' || k === 'caption' || k === 'code') && (v === null || v === undefined || v === '')) continue;
+          clean[k] = v;
+        }
+        const key = Object.keys(clean).sort().join(',');
+        if (!upsertGroups.has(key)) upsertGroups.set(key, []);
+        upsertGroups.get(key)!.push(clean);
       }
       const chunk = 500;
       let totalSaved = 0;
       let totalErrors = 0;
 
-      for (const batch of upsertGroups) {
+      for (const batch of upsertGroups.values()) {
         for (let i=0; i<batch.length; i+=chunk) {
           const part = batch.slice(i, i+chunk);
           const { error: upsertError } = await supa.from('instagram_posts_daily').upsert(part, { onConflict: 'id' });
