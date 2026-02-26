@@ -1527,15 +1527,20 @@ export default function DashboardTotalPage() {
 
       {/* Controls: move Mode to the left, Interval to the center, Metric to the right */}
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-xs">
-        {/* Left: Mode (+ accrual window when applicable) */}
+        {/* Left: Mode + Posts toggle */}
         <div className="flex items-center gap-2 justify-start">
           <span className="text-white/60">Mode:</span>
           <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
+          <button
+            className={`px-2 py-1 rounded flex items-center gap-1 ${showPosts?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`}
+            onClick={()=>setShowPosts(!showPosts)}
+          >
+            <span className="text-[#a855f7]">●</span> Posts
+          </button>
         </div>
 
-        {/* Center: Interval removed - historical data is weekly only */}
+        {/* Center: empty */}
         <div className="flex items-center gap-2 justify-center">
-          {/* Interval dihapus - data historical mingguan saja */}
         </div>
 
         {/* Right: Metric */}
@@ -1547,15 +1552,6 @@ export default function DashboardTotalPage() {
         </div>
       </div>
       
-      {/* Posts toggle */}
-      <div className="mb-3 flex items-center gap-2 text-xs flex-wrap">
-        <button
-          className={`px-2 py-1 rounded flex items-center gap-1 ${showPosts?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`}
-          onClick={()=>setShowPosts(!showPosts)}
-        >
-          <span className="text-[#a855f7]">●</span> Posts
-        </button>
-      </div>
 
       <div className="glass rounded-2xl p-4 md:p-6 border border-white/10 overflow-x-auto">
         {loading && <p className="text-white/60">Memuat…</p>}
