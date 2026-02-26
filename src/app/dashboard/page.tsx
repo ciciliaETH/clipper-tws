@@ -36,6 +36,10 @@ export default function DashboardTotalPage() {
   const [platformFilter, setPlatformFilter] = useState<'all'|'tiktok'|'instagram'>('all');
   const [showHistorical, setShowHistorical] = useState<boolean>(true); // Changed to true
   const [showPosts, setShowPosts] = useState<boolean>(false); // Show posts line on chart
+  const [postsShowTotal, setPostsShowTotal] = useState<boolean>(true);
+  const [postsShowTikTok, setPostsShowTikTok] = useState<boolean>(true);
+  const [postsShowInstagram, setPostsShowInstagram] = useState<boolean>(true);
+  const [postsShowYouTube, setPostsShowYouTube] = useState<boolean>(true);
   const [historicalData, setHistoricalData] = useState<any[]>([]);
   const [postsData, setPostsData] = useState<any[]>([]); // Posts per day/period
   const [data, setData] = useState<any | null>(null);
@@ -1349,66 +1353,73 @@ export default function DashboardTotalPage() {
   const postsChartData = useMemo(() => {
     if (!postsData || postsData.length === 0 || !chartData) return null;
 
-    // Build posts map: date string -> count
-    const postsMap = new Map<string, number>();
-    postsData.forEach((p: any) => postsMap.set(String(p.date), Number(p.posts || 0)));
+    // Build per-platform maps: date string -> count
+    const buildMap = (key: string) => {
+      const m = new Map<string, number>();
+      postsData.forEach((p: any) => m.set(String(p.date), Number(p[key] || 0)));
+      return m;
+    };
+    const totalMap = buildMap('posts');
+    const tiktokMap = buildMap('posts_tiktok');
+    const instagramMap = buildMap('posts_instagram');
+    const youtubeMap = buildMap('posts_youtube');
 
-    // Reuse labels from main chart
     const labels = chartData.labels;
-
-    // We need to figure out what date ranges each label covers
-    // Use the same source data to build weekly/period bins
     const totalSeries = data?.total || [];
 
-    let values: number[];
-    if (interval === 'daily' || (!data?.total?.length)) {
-      // Daily: direct map
-      values = totalSeries.map((t: any) => postsMap.get(String(t.date)) || 0);
-    } else if (interval === 'weekly') {
-      // Weekly: each entry in total covers 7 days starting from entry.date
-      values = totalSeries.map((t: any) => {
-        const startDate = new Date(String(t.date) + 'T00:00:00Z');
-        const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate() + 6);
-        let sum = 0;
-        for (const [ds, c] of postsMap.entries()) {
-          const d = new Date(ds + 'T00:00:00Z');
-          if (d >= startDate && d <= endDate) sum += c;
-        }
-        return sum;
-      });
-    } else {
-      // Monthly: group by month
-      values = totalSeries.map((t: any) => {
-        const d = new Date(String(t.date) + 'T00:00:00Z');
-        const m = d.getUTCMonth(); const y = d.getUTCFullYear();
-        let sum = 0;
-        for (const [ds, c] of postsMap.entries()) {
-          const pd = new Date(ds + 'T00:00:00Z');
-          if (pd.getUTCMonth() === m && pd.getUTCFullYear() === y) sum += c;
-        }
-        return sum;
-      });
-    }
-
-    // For postdate weekly with historical data, labels may be longer than totalSeries
-    // In that case, pad values at the beginning with zeros for historical periods
-    if (labels.length > values.length) {
-      const pad = new Array(labels.length - values.length).fill(0);
-      values = [...pad, ...values];
-    }
-
-    return {
-      labels,
-      datasets: [{
-        label: 'Posts',
-        data: values,
-        borderColor: '#a855f7',
-        backgroundColor: 'rgba(168, 85, 247, 0.15)',
-        fill: true,
-        tension: 0.35,
-      }]
+    // Aggregate a map into values aligned with chart labels
+    const aggregate = (postsMap: Map<string, number>) => {
+      let values: number[];
+      if (interval === 'daily' || (!data?.total?.length)) {
+        values = totalSeries.map((t: any) => postsMap.get(String(t.date)) || 0);
+      } else if (interval === 'weekly') {
+        values = totalSeries.map((t: any) => {
+          const startDate = new Date(String(t.date) + 'T00:00:00Z');
+          const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate() + 6);
+          let sum = 0;
+          for (const [ds, c] of postsMap.entries()) {
+            const d = new Date(ds + 'T00:00:00Z');
+            if (d >= startDate && d <= endDate) sum += c;
+          }
+          return sum;
+        });
+      } else {
+        values = totalSeries.map((t: any) => {
+          const d = new Date(String(t.date) + 'T00:00:00Z');
+          const m = d.getUTCMonth(); const y = d.getUTCFullYear();
+          let sum = 0;
+          for (const [ds, c] of postsMap.entries()) {
+            const pd = new Date(ds + 'T00:00:00Z');
+            if (pd.getUTCMonth() === m && pd.getUTCFullYear() === y) sum += c;
+          }
+          return sum;
+        });
+      }
+      if (labels.length > values.length) {
+        const pad = new Array(labels.length - values.length).fill(0);
+        values = [...pad, ...values];
+      }
+      return values;
     };
-  }, [postsData, chartData, data, interval]);
+
+    const datasets: any[] = [];
+    if (postsShowTotal) {
+      datasets.push({ label: 'Total Posts', data: aggregate(totalMap), borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.15)', fill: true, tension: 0.35 });
+    }
+    if (postsShowTikTok) {
+      datasets.push({ label: 'TikTok', data: aggregate(tiktokMap), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.10)', fill: false, tension: 0.35 });
+    }
+    if (postsShowInstagram) {
+      datasets.push({ label: 'Instagram', data: aggregate(instagramMap), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.10)', fill: false, tension: 0.35 });
+    }
+    if (postsShowYouTube) {
+      datasets.push({ label: 'YouTube', data: aggregate(youtubeMap), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.10)', fill: false, tension: 0.35 });
+    }
+
+    if (datasets.length === 0) return null;
+
+    return { labels, datasets };
+  }, [postsData, chartData, data, interval, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
 
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
@@ -1539,8 +1550,14 @@ export default function DashboardTotalPage() {
           </button>
         </div>
 
-        {/* Center: empty */}
+        {/* Center: Posts platform toggles (visible when Posts mode is on) */}
         <div className="flex items-center gap-2 justify-center">
+          {showPosts && (<>
+            <button onClick={()=>setPostsShowTotal(v=>!v)} className={`px-2 py-1 rounded border ${postsShowTotal?'bg-[#a855f7]/20 text-[#a855f7] border-[#a855f7]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>Total</button>
+            <button onClick={()=>setPostsShowTikTok(v=>!v)} className={`px-2 py-1 rounded border ${postsShowTikTok?'bg-[#38bdf8]/20 text-[#38bdf8] border-[#38bdf8]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>TikTok</button>
+            <button onClick={()=>setPostsShowInstagram(v=>!v)} className={`px-2 py-1 rounded border ${postsShowInstagram?'bg-[#f43f5e]/20 text-[#f43f5e] border-[#f43f5e]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>Instagram</button>
+            <button onClick={()=>setPostsShowYouTube(v=>!v)} className={`px-2 py-1 rounded border ${postsShowYouTube?'bg-[#ef4444]/20 text-[#ef4444] border-[#ef4444]/30':'text-white/40 border-white/10 hover:bg-white/10'}`}>YouTube</button>
+          </>)}
         </div>
 
         {/* Right: Metric */}
