@@ -573,6 +573,12 @@ export async function GET(req: Request, context: any) {
         const useYT = assignedYT.length ? assignedYT : (campaignYT.length ? campaignYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean))));
         for (const u of useYT) ytNeed.add(u);
       }
+      // Always include campaign-level participants for accurate group totals.
+      // Without this, campaign usernames are only included for employees without
+      // explicit assignments, causing groupTotals to undercount.
+      for (const u of campaignTT) tikNeed.add(u);
+      for (const u of campaignIG) igNeed.add(u);
+      for (const u of campaignYT) ytNeed.add(u);
       if (tikNeed.size > 0) {
         const { data: rows } = await supabase
           .from('tiktok_posts_daily')
@@ -838,15 +844,49 @@ export async function GET(req: Request, context: any) {
       });
     }
 
-    // also aggregate group totals
-    const groupTotals = results.reduce((acc:any, r:any) => ({
-      views: acc.views + (r.totals?.views||0),
-      likes: acc.likes + (r.totals?.likes||0),
-      comments: acc.comments + (r.totals?.comments||0),
-      shares: acc.shares + (r.totals?.shares||0),
-      saves: 0,
-      posts: acc.posts + (r.totals?.posts||0),
-    }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 });
+    // Compute group totals from globally-deduplicated per-username sums to prevent
+    // double-counting when multiple employees share the same campaign-level usernames.
+    // Previously this summed per-employee totals, which inflated numbers when employees
+    // without explicit assignments all received the campaign-wide username list.
+    let groupTotals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
+    if (sumsByUsername || sumsByUsernameIG || sumsByChannelYT) {
+      if (sumsByUsername) {
+        for (const m of Object.values(sumsByUsername) as any[]) {
+          groupTotals.views += m.views || 0;
+          groupTotals.likes += m.likes || 0;
+          groupTotals.comments += m.comments || 0;
+          groupTotals.shares += m.shares || 0;
+          groupTotals.saves += m.saves || 0;
+          groupTotals.posts += m.posts || 0;
+        }
+      }
+      if (sumsByUsernameIG) {
+        for (const m of Object.values(sumsByUsernameIG) as any[]) {
+          groupTotals.views += m.views || 0;
+          groupTotals.likes += m.likes || 0;
+          groupTotals.comments += m.comments || 0;
+          groupTotals.posts += m.posts || 0;
+        }
+      }
+      if (sumsByChannelYT) {
+        for (const m of Object.values(sumsByChannelYT) as any[]) {
+          groupTotals.views += m.views || 0;
+          groupTotals.likes += m.likes || 0;
+          groupTotals.comments += m.comments || 0;
+          groupTotals.posts += m.posts || 0;
+        }
+      }
+    } else {
+      // Fallback: sum individual employee totals (only when no daily data available)
+      groupTotals = results.reduce((acc:any, r:any) => ({
+        views: acc.views + (r.totals?.views||0),
+        likes: acc.likes + (r.totals?.likes||0),
+        comments: acc.comments + (r.totals?.comments||0),
+        shares: acc.shares + (r.totals?.shares||0),
+        saves: 0,
+        posts: acc.posts + (r.totals?.posts||0),
+      }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 });
+    }
 
     return NextResponse.json({ members: results, groupTotals, assignmentByUsername });
   } catch (e: any) {

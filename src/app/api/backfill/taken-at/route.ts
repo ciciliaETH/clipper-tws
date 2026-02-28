@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createClient as createSSR } from '@/lib/supabase/server';
 import { rapidApiRequest } from '@/lib/rapidapi';
+import http from 'node:http';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minutes
@@ -27,8 +28,9 @@ async function isAuthorized(req: Request) {
   return false;
 }
 
-const IG_HOST = process.env.RAPIDAPI_INSTAGRAM_HOST || 'instagram120.p.rapidapi.com';
-const IG_MEDIA_API = 'instagram-media-api.p.rapidapi.com'; // Primary API for media details
+// Port 5000 aggregator for /instagram/reels/info (has taken_at data)
+const AGG_INFO_BASE = process.env.AGGREGATOR_BACKFILL_BASE || 'http://202.10.44.90:5000/api/v1';
+const AGG_TIMEOUT = Math.max(3000, Number(process.env.AGGREGATOR_BACKFILL_TIMEOUT || 8000));
 const TT_HOST = process.env.RAPIDAPI_TIKTOK_HOST || 'tiktok-scraper7.p.rapidapi.com';
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -44,6 +46,54 @@ function parseMs(v: any): number | null {
   return null;
 }
 
+/**
+ * Use Node.js native http.request instead of fetch().
+ * fetch() in Node.js can hang on certain servers (port 5000 aggregator).
+ * http.request is more reliable for raw HTTP calls.
+ */
+function httpGet(urlStr: string, timeoutMs: number): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(urlStr);
+    const options: http.RequestOptions = {
+      hostname: parsed.hostname,
+      port: parsed.port || 80,
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      timeout: timeoutMs,
+      headers: {
+        'Accept': 'application/json',
+        'Connection': 'close',
+      }
+    };
+
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 0, body: data });
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`HTTP timeout after ${timeoutMs}ms`));
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+
+    // Hard timeout safety net
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`Hard timeout after ${timeoutMs + 2000}ms`));
+    }, timeoutMs + 2000);
+
+    req.on('close', () => clearTimeout(timer));
+    req.end();
+  });
+}
+
 export async function POST(req: Request) {
   try {
     if (!(await isAuthorized(req))) {
@@ -53,14 +103,15 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const body = await req.json().catch(() => ({}));
     const limitParam = Number(url.searchParams.get('limit') || body.limit || 20);
-    const platformParam = url.searchParams.get('platform') || body.platform || 'all'; // 'instagram', 'tiktok', 'all'
+    const platformParam = url.searchParams.get('platform') || body.platform || 'all';
     const usernameFilter = url.searchParams.get('username') || body.username || null;
 
     const supa = admin();
     const startTime = Date.now();
-    const TIMEOUT_LIMIT = 50000; // Reduced to 50s to avoid Vercel hard limit (60s)
+    const TIMEOUT_LIMIT = 50000;
     let totalUpdated = 0;
     let totalFailed = 0;
+    let aggConsecutiveFails = 0;
     const allResults: any[] = [];
 
     // ============ INSTAGRAM ============
@@ -73,8 +124,7 @@ export async function POST(req: Request) {
       if (usernameFilter) {
         query = query.eq('username', usernameFilter.toLowerCase().replace(/^@/, ''));
       }
-      
-      // Apply ordering and limit AFTER filters
+
       query = query
         .order('play_count', { ascending: false })
         .limit(limitParam);
@@ -87,130 +137,78 @@ export async function POST(req: Request) {
         const code = post.code;
         if (!code) {
           totalFailed++;
+          allResults.push({ platform: 'instagram', id: post.id, code: null, error: 'no shortcode', status: 'failed' });
+          continue;
+        }
+
+        // Skip aggregator if it failed 3+ times in a row (server down)
+        if (aggConsecutiveFails >= 3) {
+          totalFailed++;
+          allResults.push({ platform: 'instagram', id: post.id, code, error: 'aggregator down, skipped', status: 'skipped' });
           continue;
         }
 
         try {
           let takenAt: string | null = null;
-          
-            // 0. AGGREGATOR (First Priority) - Port 5000
+          let resolveSource = '';
+          let aggError = '';
+
+          // AGGREGATOR via Node.js http.request (NOT fetch)
           try {
-            const aggBase = 'http://202.10.44.90:5000/api/v1';
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2500);
-            
-            try {
-              console.log(`[Backfill] Fetching Aggregator: ${code}`);
-              const aggRes = await fetch(`${aggBase}/instagram/reels/info?shortcode=${code}`, {
-                signal: controller.signal,
-                cache: 'no-store',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Connection': 'close',
-                  'User-Agent': 'Mozilla/5.0 (Vercel-Worker-Client)'
-                }
-              });
+            const aggUrl = `${AGG_INFO_BASE}/instagram/reels/info?shortcode=${code}`;
+            console.log(`[Backfill] http.request → ${aggUrl} (timeout ${AGG_TIMEOUT}ms)`);
 
-              if (aggRes.ok) {
-                const text = await aggRes.text();
-                let json;
-                try {
-                  json = JSON.parse(text);
-                } catch (e) {
-                  console.error(`[Backfill] Failed to parse JSON for ${code}: ${text.substring(0, 100)}`);
-                }
+            const resp = await httpGet(aggUrl, AGG_TIMEOUT);
+            console.log(`[Backfill] Response: status=${resp.status}, body=${resp.body.substring(0, 120)}`);
 
-                if (json && json.status === 'success' && json.data) {
-                  console.log(`[Backfill] Aggregator Success for ${code}`);
-                  // Determine timestamp logic: explicit timestamp string > taken_at number (seconds)
-                  let ts = null;
-                  if (json.data.taken_at_timestamp) {
-                    ts = Date.parse(json.data.taken_at_timestamp);
-                  } else if (json.data.taken_at) {
-                    ts = Number(json.data.taken_at) * 1000;
-                  }
-                  
-                  if (ts && !isNaN(ts)) {
-                    takenAt = new Date(ts).toISOString();
-                    console.log(`[Backfill] Found takenAt: ${takenAt}`);
-                  }
+            if (resp.status === 200) {
+              const json = JSON.parse(resp.body);
+              if (json && json.status === 'success' && json.data) {
+                let ts = null;
+                if (json.data.taken_at_timestamp) {
+                  ts = Date.parse(json.data.taken_at_timestamp);
+                } else if (json.data.taken_at) {
+                  ts = Number(json.data.taken_at) * 1000;
+                }
+                if (ts && !isNaN(ts)) {
+                  takenAt = new Date(ts).toISOString();
+                  resolveSource = 'aggregator';
+                  aggConsecutiveFails = 0;
                 }
               } else {
-                console.log(`[Backfill] Aggregator Status: ${aggRes.status}`);
+                aggError = `response: ${resp.body.substring(0, 100)}`;
               }
-            } finally {
-              clearTimeout(timeoutId);
+            } else {
+              aggError = `HTTP ${resp.status}`;
             }
           } catch (err: any) {
-            console.warn(`[Backfill] Aggregator failed/timeout (${err.message}). Switching to RapidAPI...`);
-          }
-
-          // PRIMARY RAPIDAPI: Use instagram-media-api.p.rapidapi.com/media/shortcode_reels endpoint (POST)
-          if (!takenAt) {
-            try {
-              const j = await rapidApiRequest<any>({
-                url: `https://${IG_MEDIA_API}/media/shortcode_reels`,
-                method: 'POST',
-                rapidApiHost: IG_MEDIA_API,
-                body: { shortcode: code, proxy: '' },
-                timeoutMs: 12000
-              });
-            // Response: data.xdt_api__v1__media__shortcode__web_info.items[0].taken_at
-            const items = j?.data?.xdt_api__v1__media__shortcode__web_info?.items || j?.items || [];
-            const item = items[0] || j;
-            const ts = parseMs(item?.taken_at) || parseMs(item?.taken_at_timestamp);
-            if (ts) {
-              takenAt = new Date(ts).toISOString();
-            }
-          } catch {}
-          }
-
-          // FALLBACK: Try older endpoints
-          if (!takenAt) {
-            const endpoints = [
-              `https://${IG_HOST}/api/instagram/media_info?code=${encodeURIComponent(code)}`,
-              `https://${IG_HOST}/api/instagram/post_info?code=${encodeURIComponent(code)}`,
-            ];
-
-            for (const endpoint of endpoints) {
-              try {
-                const j = await rapidApiRequest<any>({
-                  url: endpoint,
-                  method: 'GET',
-                  rapidApiHost: IG_HOST,
-                  timeoutMs: 15000
-                });
-                const m = j?.result?.items?.[0] || j?.result?.media || j?.result || j?.item || j;
-                const ts = parseMs(m?.taken_at) || parseMs(m?.taken_at_ms) || parseMs(m?.caption?.created_at);
-                if (ts) {
-                  takenAt = new Date(ts).toISOString();
-                  break;
-                }
-              } catch {}
-            }
+            aggConsecutiveFails++;
+            aggError = err.message;
+            console.warn(`[Backfill] Aggregator fail #${aggConsecutiveFails} for ${code}: ${err.message}`);
           }
 
           if (takenAt) {
             const { error: upErr } = await supa
               .from('instagram_posts_daily')
-              .update({ 
-                taken_at: takenAt
-              })
+              .update({ taken_at: takenAt })
               .eq('id', post.id);
 
             if (!upErr) {
               totalUpdated++;
-              allResults.push({ platform: 'instagram', id: post.id, code, taken_at: takenAt, status: 'updated' });
+              allResults.push({ platform: 'instagram', id: post.id, code, taken_at: takenAt, source: resolveSource, status: 'updated' });
             } else {
               totalFailed++;
+              allResults.push({ platform: 'instagram', id: post.id, code, error: upErr.message, status: 'db_error' });
             }
           } else {
             totalFailed++;
+            allResults.push({ platform: 'instagram', id: post.id, code, error: aggError || 'no timestamp', status: 'failed' });
           }
 
-          await sleep(500);
+          await sleep(300);
         } catch (err: any) {
           totalFailed++;
+          allResults.push({ platform: 'instagram', id: post.id, code, error: err.message, status: 'exception' });
         }
       }
     }
@@ -225,7 +223,7 @@ export async function POST(req: Request) {
       if (usernameFilter) {
         query = query.eq('username', usernameFilter.toLowerCase().replace(/^@/, ''));
       }
-      
+
       query = query
         .order('play_count', { ascending: false })
         .limit(limitParam);
@@ -242,16 +240,13 @@ export async function POST(req: Request) {
         }
 
         try {
-          // Try to get video info from TikTok API
-          const endpoint = `https://${TT_HOST}/video/info?video_id=${encodeURIComponent(videoId)}`;
-          
           let takenAt: string | null = null;
           try {
             const j = await rapidApiRequest<any>({
-              url: endpoint,
+              url: `https://${TT_HOST}/video/info?video_id=${encodeURIComponent(videoId)}`,
               method: 'GET',
               rapidApiHost: TT_HOST,
-              timeoutMs: 15000
+              timeoutMs: 5000
             });
             const v = j?.data || j?.aweme_detail || j?.itemInfo?.itemStruct || j;
             const ts = parseMs(v?.create_time) || parseMs(v?.createTime) || parseMs(v?.create_time_utc);
@@ -263,9 +258,7 @@ export async function POST(req: Request) {
           if (takenAt) {
             const { error: upErr } = await supa
               .from('tiktok_posts_daily')
-              .update({ 
-                taken_at: takenAt
-              })
+              .update({ taken_at: takenAt })
               .eq('video_id', videoId);
 
             if (!upErr) {
@@ -302,7 +295,11 @@ export async function POST(req: Request) {
       platform: platformParam,
       remaining,
       completed: remaining === 0,
-      results: allResults.slice(0, 20)
+      aggregator_url: AGG_INFO_BASE,
+      aggregator_timeout_ms: AGG_TIMEOUT,
+      aggregator_consecutive_fails: aggConsecutiveFails,
+      duration_ms: Date.now() - startTime,
+      results: allResults.slice(0, 50)
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

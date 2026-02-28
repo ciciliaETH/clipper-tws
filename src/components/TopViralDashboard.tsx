@@ -103,19 +103,19 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
 
   if (loading) {
     return (
-      <div className="glass p-6 rounded-2xl">
-        <div className="flex items-center gap-3 mb-6">
-          <TrendingUp className="w-6 h-6 text-pink-500" />
-          <h2 className="text-xl font-bold text-white">Top {limit} Video FYP</h2>
-          <span className="text-sm text-white/60">(bulan ini)</span>
+      <div className="glass p-3 sm:p-4 md:p-6 rounded-2xl">
+        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+          <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-pink-500" />
+          <h2 className="text-base sm:text-xl font-bold text-white">Top {limit} Video FYP</h2>
+          <span className="text-xs sm:text-sm text-white/60">(bulan ini)</span>
         </div>
-        
-        <div className="space-y-4">
+
+        <div className="space-y-3 sm:space-y-4">
           {[...Array(limit)].map((_, i) => (
-            <div key={i} className="glass-card p-4 rounded-xl animate-pulse">
-              <div className="flex gap-4">
-                <div className="w-24 h-24 bg-white/10 rounded-lg" />
-                <div className="flex-1 space-y-2">
+            <div key={i} className="glass-card p-3 sm:p-4 rounded-xl animate-pulse">
+              <div className="flex gap-3 sm:gap-4">
+                <div className="w-16 h-16 sm:w-24 sm:h-24 bg-white/10 rounded-lg flex-shrink-0" />
+                <div className="flex-1 space-y-2 min-w-0">
                   <div className="h-4 bg-white/10 rounded w-3/4" />
                   <div className="h-3 bg-white/10 rounded w-1/2" />
                   <div className="h-3 bg-white/10 rounded w-1/4" />
@@ -130,10 +130,10 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
 
   if (error) {
     return (
-      <div className="glass p-6 rounded-2xl border border-red-500/30">
-        <div className="flex items-center gap-3 mb-4">
-          <TrendingUp className="w-6 h-6 text-red-500" />
-          <h2 className="text-xl font-bold text-white">Top {limit} Video FYP</h2>
+      <div className="glass p-3 sm:p-4 md:p-6 rounded-2xl border border-red-500/30">
+        <div className="flex items-center gap-2 sm:gap-3 mb-4">
+          <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+          <h2 className="text-base sm:text-xl font-bold text-white">Top {limit} Video FYP</h2>
         </div>
         <p className="text-red-400 text-sm">{error}</p>
       </div>
@@ -142,11 +142,11 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
 
   if (videos.length === 0) {
     return (
-      <div className="glass p-6 rounded-2xl">
-        <div className="flex items-center gap-3 mb-4">
-          <TrendingUp className="w-6 h-6 text-white/60" />
-          <h2 className="text-xl font-bold text-white">Top {limit} Video FYP</h2>
-          <span className="text-sm text-white/60">(bulan ini)</span>
+      <div className="glass p-3 sm:p-4 md:p-6 rounded-2xl">
+        <div className="flex items-center gap-2 sm:gap-3 mb-4">
+          <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-white/60" />
+          <h2 className="text-base sm:text-xl font-bold text-white">Top {limit} Video FYP</h2>
+          <span className="text-xs sm:text-sm text-white/60">(bulan ini)</span>
         </div>
         <p className="text-white/60 text-sm">Belum ada data video</p>
       </div>
@@ -154,50 +154,49 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
   }
 
   return (
-    <div className="glass p-6 rounded-2xl">
-      <div className="flex items-center justify-between gap-3 mb-6">
-        <TrendingUp className="w-6 h-6 text-pink-500" />
-        <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-white">Top {limit} Video FYP</h2>
-          <span className="text-sm text-white/60">
-            {rangeMode === 'calendar' ? '(bulan ini)' : `(${selectedDays} hari terakhir)`}
+    <div className="glass p-3 sm:p-4 md:p-6 rounded-2xl">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 mb-4 sm:mb-6">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-pink-500 flex-shrink-0" />
+          <h2 className="text-base sm:text-xl font-bold text-white">Top {limit} Video FYP</h2>
+          <span className="text-xs sm:text-sm text-white/60">
+            {rangeMode === 'calendar' ? '(bulan ini)' : `(${selectedDays}d)`}
           </span>
         </div>
         {/* Platform + Range controls */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 mr-3">
-            {(['all','tiktok','instagram','youtube'] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => setPlatform(p)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs border transition ${platform===p ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
-              >{p==='all'?'ALL': p==='tiktok'?'TikTok': p==='instagram'?'Instagram':'YouTube'}</button>
-            ))}
-          </div>
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {(['all','tiktok','instagram','youtube'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPlatform(p)}
+              className={`px-1.5 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs border transition ${platform===p ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+            >{p==='all'?'ALL': p==='tiktok'?'TT': p==='instagram'?'IG':'YT'}</button>
+          ))}
+          <span className="hidden sm:inline text-white/20">|</span>
           <button
             onClick={() => { setRangeMode('days'); setSelectedDays(7); }}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition ${rangeMode==='days' && selectedDays===7 ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
-          >7 hari</button>
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-sm border transition ${rangeMode==='days' && selectedDays===7 ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+          >7d</button>
           <button
             onClick={() => { setRangeMode('days'); setSelectedDays(30); }}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition ${rangeMode==='days' && selectedDays===30 ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
-          >30 hari</button>
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-sm border transition ${rangeMode==='days' && selectedDays===30 ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+          >30d</button>
           <button
             onClick={() => setRangeMode('calendar')}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition ${rangeMode==='calendar' ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
-          >Bulan ini</button>
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-sm border transition ${rangeMode==='calendar' ? 'bg-white/20 text-white border-white/30' : 'bg-white/10 text-white/80 border-white/10 hover:bg-white/15'}`}
+          ><span className="hidden sm:inline">Bulan ini</span><span className="sm:hidden">Bln</span></button>
           {/* Campaign hashtag filter */}
           {campaigns.length > 0 && (
             <select
               value={filterMode}
               onChange={(e) => setFilterMode(e.target.value)}
-              className="px-3 py-1.5 rounded-lg text-xs bg-white/10 border border-white/20 text-white appearance-none cursor-pointer hover:bg-white/15 focus:outline-none focus:ring-1 focus:ring-white/30 ml-2"
+              className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs bg-white/10 border border-white/20 text-white appearance-none cursor-pointer hover:bg-white/15 focus:outline-none focus:ring-1 focus:ring-white/30"
             >
               <option value="all" className="bg-gray-900 text-white">Semua</option>
               {campaigns.map((c: any) => (
                 <option key={c.id} value={c.id} className="bg-gray-900 text-white">{c.name}</option>
               ))}
-              <option value="no_campaign" className="bg-gray-900 text-white">Semua No Campaign</option>
+              <option value="no_campaign" className="bg-gray-900 text-white">No Campaign</option>
             </select>
           )}
         </div>
@@ -222,17 +221,17 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
         </div>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         {videos.map((video, index) => (
           <div
             key={`${video.platform}-${video.video_id}`}
-            className="glass-card p-4 rounded-xl hover:bg-white/10 transition-all group"
+            className="glass-card p-3 sm:p-4 rounded-xl hover:bg-white/10 transition-all group"
           >
-            <div className="flex gap-4">
+            <div className="flex gap-2 sm:gap-4">
               {/* Rank Badge */}
               <div className="flex-shrink-0">
                 <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold ${
+                  className={`w-9 h-9 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-lg sm:text-2xl font-bold ${
                     index === 0
                       ? 'bg-gradient-to-br from-yellow-400 to-yellow-600 text-yellow-900'
                       : index === 1
@@ -249,11 +248,11 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
               {/* Video Info */}
               <div className="flex-1 min-w-0">
                 {/* Header */}
-                <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-start justify-between gap-2 sm:gap-3 mb-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                        className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium ${
                           video.platform === 'tiktok'
                             ? 'bg-black text-white'
                             : video.platform === 'instagram'
@@ -261,11 +260,11 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
                               : 'bg-red-600 text-white'
                         }`}
                       >
-                        {video.platform === 'tiktok' ? '🎵 TikTok' : video.platform === 'instagram' ? '📸 Instagram' : '▶️ YouTube'}
+                        {video.platform === 'tiktok' ? '🎵 TT' : video.platform === 'instagram' ? '📸 IG' : '▶️ YT'}
                       </span>
                     </div>
-                    <h3 className="text-white font-semibold truncate">{video.owner_name}</h3>
-                    <p className="text-white/60 text-sm truncate">@{video.username}</p>
+                    <h3 className="text-white font-semibold truncate text-sm sm:text-base">{video.owner_name}</h3>
+                    <p className="text-white/60 text-xs sm:text-sm truncate">@{video.username}</p>
                   </div>
 
                   {/* Link Button */}
@@ -273,45 +272,45 @@ export default function TopViralDashboard({ campaignId, days = 30, limit = 5 }: 
                     href={video.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-all text-white text-sm font-medium group-hover:scale-105"
+                    className="flex-shrink-0 inline-flex items-center gap-1 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-all text-white text-xs sm:text-sm font-medium group-hover:scale-105"
                   >
-                    <span>Lihat</span>
-                    <ExternalLink className="w-4 h-4" />
+                    <span className="hidden sm:inline">Lihat</span>
+                    <ExternalLink className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </a>
                 </div>
 
                 {/* Metrics Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-                  <div className="flex items-center gap-2">
-                    <Eye className="w-4 h-4 text-blue-400" />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mt-2 sm:mt-3">
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400 flex-shrink-0" />
                     <div>
-                      <p className="text-xs text-white/60">Views</p>
-                      <p className="text-white font-semibold">{formatNumber(video.metrics.views)}</p>
+                      <p className="text-[10px] sm:text-xs text-white/60">Views</p>
+                      <p className="text-white font-semibold text-xs sm:text-base">{formatNumber(video.metrics.views)}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <Heart className="w-4 h-4 text-red-400" />
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <Heart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400 flex-shrink-0" />
                     <div>
-                      <p className="text-xs text-white/60">Likes</p>
-                      <p className="text-white font-semibold">{formatNumber(video.metrics.likes)}</p>
+                      <p className="text-[10px] sm:text-xs text-white/60">Likes</p>
+                      <p className="text-white font-semibold text-xs sm:text-base">{formatNumber(video.metrics.likes)}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <MessageCircle className="w-4 h-4 text-green-400" />
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <MessageCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400 flex-shrink-0" />
                     <div>
-                      <p className="text-xs text-white/60">Comments</p>
-                      <p className="text-white font-semibold">{formatNumber(video.metrics.comments)}</p>
+                      <p className="text-[10px] sm:text-xs text-white/60">Comments</p>
+                      <p className="text-white font-semibold text-xs sm:text-base">{formatNumber(video.metrics.comments)}</p>
                     </div>
                   </div>
 
                   {video.platform === 'tiktok' && (
-                    <div className="flex items-center gap-2">
-                      <Share2 className="w-4 h-4 text-purple-400" />
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400 flex-shrink-0" />
                       <div>
-                        <p className="text-xs text-white/60">Shares</p>
-                        <p className="text-white font-semibold">{formatNumber(video.metrics.shares)}</p>
+                        <p className="text-[10px] sm:text-xs text-white/60">Shares</p>
+                        <p className="text-white font-semibold text-xs sm:text-base">{formatNumber(video.metrics.shares)}</p>
                       </div>
                     </div>
                   )}

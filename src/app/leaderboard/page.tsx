@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { FaExternalLinkAlt } from 'react-icons/fa';
 type Row = {
   username: string;
   views: number;
@@ -134,39 +136,37 @@ export default function LeaderboardPage() {
   return (
     <div className="min-h-screen p-4 md:p-8">
       <div className="mb-4">
-        <div className="mb-3 flex items-center gap-3 text-xs flex-wrap">
-          <span className="text-white/60">Periode:</span>
-          <button className={`px-2 py-1 rounded ${interval==='days7'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days7')}>7 hari</button>
-          <button className={`px-2 py-1 rounded ${interval==='days28'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days28')}>28 hari</button>
-          
-          <div className="ml-4 flex items-center gap-2">
-            <label className="flex items-center gap-2 cursor-pointer text-white/80">
-              <input 
-                type="checkbox" 
-                checked={useCustomDates} 
+        <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-xs flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-white/60">Periode:</span>
+            <button className={`px-2 py-1 rounded ${interval==='days7'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days7')}>7 hari</button>
+            <button className={`px-2 py-1 rounded ${interval==='days28'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setIntervalVal('days28')}>28 hari</button>
+            <label className="flex items-center gap-2 cursor-pointer text-white/80 ml-2 sm:ml-4">
+              <input
+                type="checkbox"
+                checked={useCustomDates}
                 onChange={(e)=>setUseCustomDates(e.target.checked)}
                 className="w-4 h-4"
               />
-              <span className="text-xs">Custom Date</span>
+              <span className="text-xs">Custom</span>
             </label>
           </div>
-          
           {useCustomDates && (
-            <>
+            <div className="flex items-center gap-1.5 w-full sm:w-auto">
               <input
                 type="date"
                 value={customStart}
                 onChange={(e)=>setCustomStart(e.target.value)}
-                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs"
+                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs flex-1 sm:flex-none min-w-0"
               />
               <span className="text-white/60">→</span>
               <input
                 type="date"
                 value={customEnd}
                 onChange={(e)=>setCustomEnd(e.target.value)}
-                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs"
+                className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white text-xs flex-1 sm:flex-none min-w-0"
               />
-            </>
+            </div>
           )}
         </div>
 
@@ -227,33 +227,33 @@ export default function LeaderboardPage() {
             
 
           <div className="glass rounded-2xl border border-white/10 overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-xs sm:text-sm">
               <thead>
                 <tr className="text-left text-white/60 bg-white/5">
-                  <th className="py-3 px-4">#</th>
-                  <th className="py-3 px-4">Karyawan</th>
-                  <th className="py-3 px-4">Views</th>
-                  <th className="py-3 px-4">Likes</th>
-                  <th className="py-3 px-4">Comments</th>
-                  <th className="py-3 px-4">Shares</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">#</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Karyawan</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Views</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Likes</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Comments</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Shares</th>
                   {/* Saves removed */}
-                  <th className="py-3 px-4">Total</th>
+                  <th className="py-2 sm:py-3 px-2 sm:px-4">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {rest.map((r, i) => (
                   <tr key={r.username} className="border-t border-white/10 hover:bg-white/5 cursor-pointer" onClick={()=>{ setSelectedName(r.username); setSelectedAvatar(getAvatar(r.username)); setSelectedRow(r); setSelectedUser(findUser(r.username)); }}>
-                    <td className="py-2 px-4 text-white/60">{i+4}</td>
-                    <td className="py-2 px-4 text-white/90 flex items-center gap-2">
+                    <td className="py-2 px-2 sm:px-4 text-white/60">{i+4}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/90 flex items-center gap-2">
                       {(() => { const url=getAvatar(r.username); return url? (<img src={url} alt="avatar" className="w-6 h-6 rounded-full object-cover border border-white/20" />): (<span className="w-6 h-6 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-[10px] text-white/70">{r.username.charAt(0).toUpperCase()}</span>) })()}
                       <span>{r.username}</span>
                     </td>
-                    <td className="py-2 px-4 text-white/80">{format(r.views)}</td>
-                    <td className="py-2 px-4 text-white/80">{format(r.likes)}</td>
-                    <td className="py-2 px-4 text-white/80">{format(r.comments)}</td>
-                    <td className="py-2 px-4 text-white/80">{format(r.shares)}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/80">{format(r.views)}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/80">{format(r.likes)}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/80">{format(r.comments)}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/80">{format(r.shares)}</td>
                     {/* Saves removed */}
-                    <td className="py-2 px-4 text-white/90 font-medium">{format(r.total!)}</td>
+                    <td className="py-2 px-2 sm:px-4 text-white/90 font-medium">{format(r.total!)}</td>
                   </tr>
                 ))}
                 {!rows.length && (
@@ -265,8 +265,8 @@ export default function LeaderboardPage() {
             </table>
           </div>
           {selectedName && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={()=>{ setSelectedName(null); setSelectedAvatar(null); setSelectedRow(null); setSelectedUser(null); }}>
-              <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-6" onClick={(e)=>e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60" onClick={()=>{ setSelectedName(null); setSelectedAvatar(null); setSelectedRow(null); setSelectedUser(null); }}>
+              <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-4 sm:p-6 max-h-[90vh] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
                     {(() => {
@@ -291,6 +291,18 @@ export default function LeaderboardPage() {
                     <div className="glass rounded-xl p-3 border border-white/10"><div className="text-white/60">Likes</div><div className="text-white text-lg">{new Intl.NumberFormat('id-ID').format(Math.round(selectedRow.likes||0))}</div></div>
                     <div className="glass rounded-xl p-3 border border-white/10"><div className="text-white/60">Comments</div><div className="text-white text-lg">{new Intl.NumberFormat('id-ID').format(Math.round(selectedRow.comments||0))}</div></div>
                     <div className="glass rounded-xl p-3 border border-white/10"><div className="text-white/60">Shares</div><div className="text-white text-lg">{new Intl.NumberFormat('id-ID').format(Math.round(selectedRow.shares||0))}</div></div>
+                  </div>
+                )}
+                {selectedName && (
+                  <div className="mt-4">
+                    <Link
+                      href={`/leaderboard/employee/${encodeURIComponent(selectedName)}`}
+                      target="_blank"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/20 border border-blue-500/30 text-blue-300 hover:bg-blue-500/30 hover:text-blue-200 transition-colors text-sm"
+                    >
+                      <FaExternalLinkAlt className="w-3 h-3" />
+                      Lihat Detail Video
+                    </Link>
                   </div>
                 )}
                 {selectedUser && (

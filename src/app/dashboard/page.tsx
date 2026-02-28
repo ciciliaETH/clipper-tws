@@ -47,6 +47,11 @@ export default function DashboardTotalPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeCampaignName, setActiveCampaignName] = useState<string | null>(null);
+  const [videoTotals, setVideoTotals] = useState<{ views: number; likes: number; comments: number } | null>(null);
+  const [videoSeriesData, setVideoSeriesData] = useState<{
+    total: any[]; tiktok: any[]; instagram: any[]; youtube: any[];
+    groups: Array<{ id: string; name: string; series: any[]; series_tiktok: any[]; series_instagram: any[]; series_youtube: any[] }>;
+  } | null>(null);
   const accrualCutoff = (process.env.NEXT_PUBLIC_ACCRUAL_CUTOFF_DATE as string) || '2026-01-02';
 
   const palette = ['#3b82f6','#ef4444','#22c55e','#eab308','#8b5cf6','#06b6d4','#f97316','#f43f5e','#10b981'];
@@ -423,7 +428,78 @@ export default function DashboardTotalPage() {
   };
 
   useEffect(()=>{ load(); }, [start, end, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, activeCampaignId]);
-  
+
+  // Fetch totals + series from the videos API for all campaigns — ensures header
+  // numbers AND chart data match the "Lihat Semua Video" detail pages exactly.
+  useEffect(() => {
+    const loadVideoTotals = async () => {
+      try {
+        const effStart = mode === 'accrual' ? (useCustomAccrualDates ? accrualCustomStart : start) : start;
+        const effEnd = mode === 'accrual' ? (useCustomAccrualDates ? accrualCustomEnd : end) : end;
+        // Get all campaigns
+        const campRes = await fetch('/api/campaigns', { cache: 'no-store' });
+        const campaigns = await campRes.json();
+        if (!Array.isArray(campaigns) || !campaigns.length) { setVideoTotals(null); setVideoSeriesData(null); return; }
+        // Fetch summary + series for each campaign in parallel
+        const results = await Promise.all(campaigns.map(async (c: any) => {
+          try {
+            const url = new URL(`/api/campaigns/${c.id}/videos`, window.location.origin);
+            url.searchParams.set('start', effStart);
+            url.searchParams.set('end', effEnd);
+            url.searchParams.set('summary', '1');
+            const res = await fetch(url.toString(), { cache: 'no-store' });
+            const json = await res.json();
+            return res.ok ? { id: c.id, name: c.name, json } : null;
+          } catch { return null; }
+        }));
+        // Sum totals
+        const sum = { views: 0, likes: 0, comments: 0 };
+        // Merge series across all campaigns
+        const mergeMap = (target: Map<string, any>, arr: any[]) => {
+          for (const s of arr || []) {
+            const k = String(s.date);
+            const cur = target.get(k) || { views: 0, likes: 0, comments: 0 };
+            cur.views += Number(s.views || 0);
+            cur.likes += Number(s.likes || 0);
+            cur.comments += Number(s.comments || 0);
+            target.set(k, cur);
+          }
+        };
+        const totalMap = new Map<string, any>();
+        const ttMap = new Map<string, any>();
+        const igMap = new Map<string, any>();
+        const ytMap = new Map<string, any>();
+        const groupsList: Array<{ id: string; name: string; series: any[] }> = [];
+
+        for (const r of results) {
+          if (!r) continue;
+          const t = r.json.totals;
+          if (t) {
+            sum.views += Number(t.views || 0);
+            sum.likes += Number(t.likes || 0);
+            sum.comments += Number(t.comments || 0);
+          }
+          mergeMap(totalMap, r.json.series_total || []);
+          mergeMap(ttMap, r.json.series_tiktok || []);
+          mergeMap(igMap, r.json.series_instagram || []);
+          mergeMap(ytMap, r.json.series_youtube || []);
+          groupsList.push({ id: r.id, name: r.name, series: r.json.series_total || [], series_tiktok: r.json.series_tiktok || [], series_instagram: r.json.series_instagram || [], series_youtube: r.json.series_youtube || [] });
+        }
+        const toArr = (m: Map<string, any>) =>
+          Array.from(m.entries()).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date));
+        setVideoTotals(sum);
+        setVideoSeriesData({
+          total: toArr(totalMap),
+          tiktok: toArr(ttMap),
+          instagram: toArr(igMap),
+          youtube: toArr(ytMap),
+          groups: groupsList,
+        });
+      } catch { setVideoTotals(null); setVideoSeriesData(null); }
+    };
+    loadVideoTotals();
+  }, [start, end, mode, accrualCustomStart, accrualCustomEnd, useCustomAccrualDates]);
+
   // Load historical data (weekly_historical_data) — skip if date range is entirely in realtime
   useEffect(() => {
     const loadHistorical = async () => {
@@ -561,8 +637,23 @@ export default function DashboardTotalPage() {
   }, [lastUpdated]);
 
   const chartData = useMemo(()=>{
-    if (!data) return null;
-    
+    if (!data && !videoSeriesData) return null;
+
+    // Prefer videoSeriesData (videos API, deduplicated per-video) over data (/api/dashboard/series)
+    const src = {
+      total: videoSeriesData?.total || data?.total || [],
+      total_tiktok: videoSeriesData?.tiktok || data?.total_tiktok || [],
+      total_instagram: videoSeriesData?.instagram || data?.total_instagram || [],
+      total_youtube: videoSeriesData?.youtube || data?.total_youtube || [],
+      groups: videoSeriesData?.groups?.map(g => ({
+        name: g.name,
+        series: g.series,
+        series_tiktok: g.series_tiktok || [],
+        series_instagram: g.series_instagram || [],
+        series_youtube: g.series_youtube || [],
+      })) || data?.groups || [],
+    };
+
     // Helper: merge historical data into series
     const mergeHistoricalData = (currentData: any) => {
       console.log('[MERGE] Starting merge, showHistorical:', showHistorical);
@@ -685,7 +776,7 @@ export default function DashboardTotalPage() {
       };
     };
     
-    const mergedData = mergeHistoricalData(data);
+    const mergedData = mergeHistoricalData(data || {});
     
     // Helper: group data by week
     const groupByWeek = (series: any[], startDate: string) => {
@@ -805,7 +896,7 @@ export default function DashboardTotalPage() {
       console.log('[WEEKLY VIEW] Range:', accrualCustomStart, 'to', accrualCustomEnd);
       console.log('[WEEKLY VIEW] Historical cutoff:', HISTORICAL_CUTOFF);
       console.log('[WEEKLY VIEW] Historical periods loaded:', histPeriods.length);
-      console.log('[WEEKLY VIEW] Real-time daily entries:', (data.total || []).length);
+      console.log('[WEEKLY VIEW] Real-time daily entries:', (src.total || []).length);
       
       // Step 1: Add historical periods directly (they are already weekly)
       // Only add periods that overlap with selected range
@@ -827,9 +918,9 @@ export default function DashboardTotalPage() {
       
       // Step 2: Add real-time weekly data (only for dates >= REALTIME_START)
       // Filter real-time data to only include dates after historical cutoff
-      const realtimeData = (data.total || []).filter((d: any) => String(d.date) >= REALTIME_START);
-      const realtimeTT = (data.total_tiktok || []).filter((d: any) => String(d.date) >= REALTIME_START);
-      const realtimeIG = (data.total_instagram || []).filter((d: any) => String(d.date) >= REALTIME_START);
+      const realtimeData = (src.total || []).filter((d: any) => String(d.date) >= REALTIME_START);
+      const realtimeTT = (src.total_tiktok || []).filter((d: any) => String(d.date) >= REALTIME_START);
+      const realtimeIG = (src.total_instagram || []).filter((d: any) => String(d.date) >= REALTIME_START);
       
       console.log('[WEEKLY VIEW] Real-time entries after cutoff:', realtimeData.length);
       
@@ -838,7 +929,7 @@ export default function DashboardTotalPage() {
         const weeklyTotal = groupByWeek(realtimeData, REALTIME_START);
         const weeklyTT = groupByWeek(realtimeTT, REALTIME_START);
         const weeklyIG = groupByWeek(realtimeIG, REALTIME_START);
-        const realtimeYT = (data.total_youtube || []).filter((d: any) => String(d.date) >= REALTIME_START);
+        const realtimeYT = (src.total_youtube || []).filter((d: any) => String(d.date) >= REALTIME_START);
         const weeklyYT = groupByWeek(realtimeYT, REALTIME_START);
         
         console.log('[WEEKLY VIEW] Real-time weeks:', weeklyTotal.length);
@@ -853,8 +944,8 @@ export default function DashboardTotalPage() {
         
         // Get groups weekly data for real-time
         const groupsWeekly: any[] = [];
-        if (data.groups && data.groups.length > 0) {
-          data.groups.forEach((group: any) => {
+        if (src.groups && src.groups.length > 0) {
+          src.groups.forEach((group: any) => {
             let groupSeries = (group.series || []).filter((d: any) => String(d.date) >= REALTIME_START);
             
             if (platformFilter === 'tiktok' && group.series_tiktok) {
@@ -1119,8 +1210,8 @@ export default function DashboardTotalPage() {
       }
       
       // Per group lines - extract from allPeriods
-      if (data.groups && data.groups.length > 0) {
-        data.groups.forEach((group: any, idx: number) => {
+      if (src.groups && src.groups.length > 0) {
+        src.groups.forEach((group: any, idx: number) => {
           const groupVals = allPeriods.map((p: any) => {
             // Find matching group data in this period
             const groupData = p.groups && p.groups.find((g: any) => g.name === group.name);
@@ -1176,25 +1267,25 @@ export default function DashboardTotalPage() {
           groups: []
         });
       }
-      // 2) Realtime weekly from data.total* (daily) starting at REALTIME_START
+      // 2) Realtime weekly from src series (daily) starting at REALTIME_START
       const sumSeries = (arr:any[] = [], key:'views'|'likes'|'comments') => arr.reduce((acc:Map<number,number>, s:any)=>{
         const d = new Date(String(s.date)+'T00:00:00Z');
         if (d < anchor) return acc; // ignore pre-cutoff realtime
         const idx = Math.floor((d.getTime()-anchor.getTime())/(7*24*60*60*1000));
         const cur = acc.get(idx)||0; acc.set(idx, cur + Number(s[key]||0)); return acc;
       }, new Map<number,number>());
-      const mapViews = sumSeries(data.total||[], 'views');
-      const mapLikes = sumSeries(data.total||[], 'likes');
-      const mapComments = sumSeries(data.total||[], 'comments');
-      const mapTTViews = sumSeries(data.total_tiktok||[], 'views');
-      const mapTTLikes = sumSeries(data.total_tiktok||[], 'likes');
-      const mapTTComments = sumSeries(data.total_tiktok||[], 'comments');
-      const mapIGViews = sumSeries(data.total_instagram||[], 'views');
-      const mapIGLikes = sumSeries(data.total_instagram||[], 'likes');
-      const mapIGComments = sumSeries(data.total_instagram||[], 'comments');
-      const mapYTViews = sumSeries(data.total_youtube||[], 'views');
-      const mapYTLikes = sumSeries(data.total_youtube||[], 'likes');
-      const mapYTComments = sumSeries(data.total_youtube||[], 'comments');
+      const mapViews = sumSeries(src.total||[], 'views');
+      const mapLikes = sumSeries(src.total||[], 'likes');
+      const mapComments = sumSeries(src.total||[], 'comments');
+      const mapTTViews = sumSeries(src.total_tiktok||[], 'views');
+      const mapTTLikes = sumSeries(src.total_tiktok||[], 'likes');
+      const mapTTComments = sumSeries(src.total_tiktok||[], 'comments');
+      const mapIGViews = sumSeries(src.total_instagram||[], 'views');
+      const mapIGLikes = sumSeries(src.total_instagram||[], 'likes');
+      const mapIGComments = sumSeries(src.total_instagram||[], 'comments');
+      const mapYTViews = sumSeries(src.total_youtube||[], 'views');
+      const mapYTLikes = sumSeries(src.total_youtube||[], 'likes');
+      const mapYTComments = sumSeries(src.total_youtube||[], 'comments');
       const rtPeriods: any[] = [];
       const indices = Array.from(new Set([ ...mapViews.keys(), ...mapLikes.keys(), ...mapComments.keys() ])).sort((a,b)=> a-b);
       for (const idx of indices) {
@@ -1240,13 +1331,13 @@ export default function DashboardTotalPage() {
       }
 
       // Per-group lines (realtime only; historical buckets remain zero)
-      if (Array.isArray(data.groups) && data.groups.length) {
+      if (Array.isArray(src.groups) && src.groups.length) {
         const histLen = histPeriods.length;
         // Build map of weekNum -> position index within realtime segment
         const idxToPos = new Map<number, number>();
         indices.forEach((wIdx:number, pos:number)=> idxToPos.set(wIdx, pos));
-        for (let gi=0; gi<data.groups.length; gi++) {
-          const g = data.groups[gi];
+        for (let gi=0; gi<src.groups.length; gi++) {
+          const g = src.groups[gi];
           let series: any[] = (g.series||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
           if (platformFilter==='tiktok' && g.series_tiktok) series = (g.series_tiktok||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
           else if (platformFilter==='instagram' && g.series_instagram) series = (g.series_instagram||[]).filter((d:any)=> String(d.date) >= REALTIME_START);
@@ -1271,7 +1362,7 @@ export default function DashboardTotalPage() {
 
     // Postdate view: build labels based on interval
     if (interval === 'weekly') {
-      labels = (data.total || []).map((s:any)=>{
+      labels = (src.total || []).map((s:any)=>{
         const start = parseISO(s.date);
         const end = new Date(start.getTime()); end.setUTCDate(end.getUTCDate()+6);
         const ds = start.getUTCDate();
@@ -1280,54 +1371,54 @@ export default function DashboardTotalPage() {
         return `${ds}-${de} ${tail}`;
       });
     } else if (interval === 'monthly') {
-      labels = (data.total || []).map((s:any)=> format(parseISO(s.date),'MMM yyyy', {locale: localeID}));
+      labels = (src.total || []).map((s:any)=> format(parseISO(s.date),'MMM yyyy', {locale: localeID}));
     } else {
-      labels = (data.total || []).map((s:any)=> format(parseISO(s.date),'d MMM', {locale: localeID}));
+      labels = (src.total || []).map((s:any)=> format(parseISO(s.date),'d MMM', {locale: localeID}));
     }
     const datasets:any[] = [];
-    
+
     // Total first (filtered by platform)
-    let totalSeries = data.total || [];
-    if (platformFilter === 'tiktok' && Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
-      totalSeries = data.total_tiktok;
-    } else if (platformFilter === 'instagram' && Array.isArray(data.total_instagram) && data.total_instagram.length) {
-      totalSeries = data.total_instagram;
-    } else if (platformFilter === 'youtube' && Array.isArray(data.total_youtube) && data.total_youtube.length) {
-      totalSeries = data.total_youtube;
+    let totalSeries = src.total || [];
+    if (platformFilter === 'tiktok' && Array.isArray(src.total_tiktok) && src.total_tiktok.length) {
+      totalSeries = src.total_tiktok;
+    } else if (platformFilter === 'instagram' && Array.isArray(src.total_instagram) && src.total_instagram.length) {
+      totalSeries = src.total_instagram;
+    } else if (platformFilter === 'youtube' && Array.isArray(src.total_youtube) && src.total_youtube.length) {
+      totalSeries = src.total_youtube;
     }
-    
+
     const totalVals = totalSeries.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-    datasets.push({ 
+    datasets.push({
       label: platformFilter === 'all' ? 'Total' : platformFilter === 'tiktok' ? 'TikTok' : platformFilter === 'instagram' ? 'Instagram' : 'YouTube',
-      data: totalVals, 
-      borderColor: palette[0], 
-      backgroundColor: palette[0]+'33', 
-      fill: true, 
+      data: totalVals,
+      borderColor: palette[0],
+      backgroundColor: palette[0]+'33',
+      fill: true,
       tension: 0.35,
       yAxisID: 'y'
     });
-    
+
     // Platform breakdown if available (only when 'all' selected)
     if (platformFilter === 'all') {
-      if (Array.isArray(data.total_tiktok) && data.total_tiktok.length) {
-        const ttVals = data.total_tiktok.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+      if (Array.isArray(src.total_tiktok) && src.total_tiktok.length) {
+        const ttVals = src.total_tiktok.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
         datasets.push({ label:'TikTok', data: ttVals, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
-      if (Array.isArray(data.total_instagram) && data.total_instagram.length) {
-        const igVals = data.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+      if (Array.isArray(src.total_instagram) && src.total_instagram.length) {
+        const igVals = src.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
         datasets.push({ label:'Instagram', data: igVals, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
-      if (Array.isArray(data.total_youtube) && data.total_youtube.length) {
-        const ytVals = data.total_youtube.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
+      if (Array.isArray(src.total_youtube) && src.total_youtube.length) {
+        const ytVals = src.total_youtube.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
         datasets.push({ label:'YouTube', data: ytVals, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
     }
-    
+
     // Per group lines (filter by platform)
-    for (let i=0;i<(data.groups||[]).length;i++){
-      const g = data.groups[i];
+    for (let i=0;i<(src.groups||[]).length;i++){
+      const g = src.groups[i];
       let seriesToUse = g.series || [];
-      
+
       if (platformFilter === 'tiktok' && g.series_tiktok) {
         seriesToUse = g.series_tiktok;
       } else if (platformFilter === 'instagram' && g.series_instagram) {
@@ -1335,19 +1426,19 @@ export default function DashboardTotalPage() {
       } else if (platformFilter === 'youtube' && g.series_youtube) {
         seriesToUse = g.series_youtube;
       }
-      
-      const map:Record<string,any> = {}; 
+
+      const map:Record<string,any> = {};
       seriesToUse.forEach((s:any)=>{ map[String(s.date)] = s; });
-      const vals = (totalSeries).map((t:any)=>{ 
-        const it = map[String(t.date)] || { views:0, likes:0, comments:0 }; 
-        return metric==='likes'? it.likes : metric==='comments'? it.comments : it.views; 
+      const vals = (totalSeries).map((t:any)=>{
+        const it = map[String(t.date)] || { views:0, likes:0, comments:0 };
+        return metric==='likes'? it.likes : metric==='comments'? it.comments : it.views;
       });
       const color = palette[(i+1)%palette.length];
       datasets.push({ label: g.name, data: vals, borderColor: color, backgroundColor: color+'33', fill: false, tension:0.35, yAxisID: 'y' });
     }
     
     return { labels, datasets };
-  }, [data, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
+  }, [data, videoSeriesData, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
 
   // Posts chart data - separate chart, uses same labels/periods as main chart
   const postsChartData = useMemo(() => {
@@ -1504,43 +1595,40 @@ export default function DashboardTotalPage() {
   return (
     <div className="min-h-screen p-4 md:p-8">
       {/* Header with totals */}
-      <div className="glass rounded-2xl p-4 border border-white/10 mb-4">
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/70">
+      <div className="glass rounded-2xl p-3 sm:p-4 border border-white/10 mb-4">
+        <div className="flex flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-white/70">
           {data && (
             <>
-              <span>Views: <strong className="text-white">{Number(grandTotals.views).toLocaleString('id-ID')}</strong></span>
-              <span>Likes: <strong className="text-white">{Number(grandTotals.likes).toLocaleString('id-ID')}</strong></span>
-              <span>Comments: <strong className="text-white">{Number(grandTotals.comments).toLocaleString('id-ID')}</strong></span>
+              <span>Views: <strong className="text-white">{Number(videoTotals?.views ?? grandTotals.views).toLocaleString('id-ID')}</strong></span>
+              <span>Likes: <strong className="text-white">{Number(videoTotals?.likes ?? grandTotals.likes).toLocaleString('id-ID')}</strong></span>
+              <span>Comments: <strong className="text-white">{Number(videoTotals?.comments ?? grandTotals.comments).toLocaleString('id-ID')}</strong></span>
               <span>Posts: <strong className="text-white">{postsData.reduce((sum, p: any) => sum + Number(p.posts || 0), 0).toLocaleString('id-ID')}</strong></span>
               {lastUpdatedHuman && (
-                <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
+                <span className="sm:ml-auto text-white/60 w-full sm:w-auto mt-1 sm:mt-0">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
               )}
             </>
           )}
         </div>
-        <div className="mt-3 flex justify-between items-center">
+        <div className="mt-3">
           {mode === 'postdate' ? (
-            <div className="flex items-center gap-2">
-              <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-              <span className="text-white/50">s/d</span>
-              <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+            <div className="flex items-center gap-1.5 sm:gap-2 w-full">
+              <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
+              <span className="text-white/50 text-xs">s/d</span>
+              <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-              <span className="text-white/50">→</span>
-              <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+            <div className="flex items-center gap-1.5 sm:gap-2 w-full">
+              <input type="date" value={accrualCustomStart} onChange={(e)=>setAccrualCustomStart(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
+              <span className="text-white/50 text-xs">→</span>
+              <input type="date" value={accrualCustomEnd} onChange={(e)=>setAccrualCustomEnd(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
             </div>
           )}
-          {/* Tampilan selalu mingguan, checkbox dihapus */}
         </div>
       </div>
 
-      {/* Controls: move Mode to the left, Interval to the center, Metric to the right */}
-      <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-xs">
-        {/* Left: Mode + Posts toggle */}
-        <div className="flex items-center gap-2 justify-start">
-          <span className="text-white/60">Mode:</span>
+      {/* Controls: Mode + Posts on left, Metric on right */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-2">
           <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
           <button
             className={`px-2 py-1 rounded flex items-center gap-1 ${showPosts?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`}
@@ -1549,14 +1637,8 @@ export default function DashboardTotalPage() {
             <span className="text-[#a855f7]">●</span> Posts
           </button>
         </div>
-
-        {/* Center: empty */}
-        <div className="flex items-center gap-2 justify-center">
-        </div>
-
-        {/* Right: Metric */}
-        <div className="flex items-center gap-2 justify-end">
-          <span className="text-white/60">Metric:</span>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="text-white/60 hidden sm:inline">Metric:</span>
           <button className={`px-2 py-1 rounded ${metric==='views'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('views')}>Views</button>
           <button className={`px-2 py-1 rounded ${metric==='likes'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('likes')}>Likes</button>
           <button className={`px-2 py-1 rounded ${metric==='comments'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('comments')}>Comments</button>
