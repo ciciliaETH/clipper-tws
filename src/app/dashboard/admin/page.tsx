@@ -687,106 +687,106 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="p-8 min-h-screen" style={{ colorScheme: 'dark' }}>
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Manajemen Karyawan</h1>
-        <div className="flex items-center gap-3">
+    <div className="p-3 sm:p-4 md:p-8 min-h-screen" style={{ colorScheme: 'dark' }}>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4 sm:mb-8">
+        <h1 className="text-xl sm:text-2xl md:text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Manajemen Karyawan</h1>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {/* Platform selector for taken_at backfill */}
           <select
             value={takenAtPlatform}
             onChange={(e) => setTakenAtPlatform(e.target.value as 'instagram' | 'tiktok' | 'all')}
-            className="rounded-lg px-3 py-2 bg-gray-800 text-white border border-white/20 text-sm"
+            className="rounded-lg px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-800 text-white border border-white/20 text-xs sm:text-sm"
           >
-            <option value="instagram">Instagram</option>
-            <option value="tiktok">TikTok</option>
+            <option value="instagram">IG</option>
+            <option value="tiktok">TT</option>
             <option value="all">Semua</option>
           </select>
-          <button 
+          <button
             onClick={runTakenAtBackfill}
             disabled={runningTakenAt || refreshingTikTok || refreshingIG}
-            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-lg hover:shadow-xl transition-all border border-white/10 disabled:opacity-50"
+            className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-2.5 sm:px-5 py-1.5 sm:py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-lg hover:shadow-xl transition-all border border-white/10 disabled:opacity-50 text-xs sm:text-sm"
             title="Backfill taken_at (tanggal upload video) untuk posts yang belum ada"
           >
-            <span className="text-lg">📅</span>
-            <span className="font-medium">{runningTakenAt ? 'Processing...' : 'Backfill Taken At'}</span>
+            <span className="text-sm sm:text-lg">📅</span>
+            <span className="font-medium">{runningTakenAt ? '...' : <span className="hidden sm:inline">Backfill Taken At</span>}{!runningTakenAt && <span className="sm:hidden">Backfill</span>}</span>
           </button>
           {/* Manual TikTok refresh hidden per request */}
-          <button 
+          <button
             onClick={() => {
               setAutoTikTokMode(true); // AUTO MODE - NO STOP!
               runTikTokBatch(false);
-            }} 
+            }}
             disabled={refreshingTikTok}
-            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse"
+            className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-2.5 sm:px-5 py-1.5 sm:py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse text-xs sm:text-sm"
             title="AUTO MODE: Refresh semua akun tanpa henti sampai selesai!"
           >
-            <span className="text-lg">🚀</span>
-            <span className="font-medium">{autoTikTokMode ? '⚡ AUTO RUNNING...' : '⚡ AUTO ALL'}</span>
+            <span className="text-sm sm:text-lg">🚀</span>
+            <span className="font-medium">{autoTikTokMode ? '⚡ AUTO...' : <><span className="hidden sm:inline">⚡ AUTO ALL</span><span className="sm:hidden">⚡ TT</span></>}</span>
           </button>
           {/* Manual Instagram refresh hidden per request */}
-          <button 
+          <button
             onClick={() => {
               setAutoIGMode(true); // AUTO MODE - NO STOP!
               runIGBatch(false);
-            }} 
+            }}
             disabled={refreshingIG}
-            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse"
+            className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-2.5 sm:px-5 py-1.5 sm:py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse text-xs sm:text-sm"
             title="AUTO MODE: Refresh semua akun Instagram tanpa henti sampai selesai!"
           >
-            <span className="text-lg">🚀</span>
-            <span className="font-medium">{autoIGMode ? '⚡ AUTO RUNNING...' : '⚡ AUTO ALL IG'}</span>
+            <span className="text-sm sm:text-lg">🚀</span>
+            <span className="font-medium">{autoIGMode ? '⚡ AUTO...' : <><span className="hidden sm:inline">⚡ AUTO ALL IG</span><span className="sm:hidden">⚡ IG</span></>}</span>
           </button>
-          <button 
+          <button
             onClick={() => {
               setAutoYouTubeMode(true); // AUTO MODE - NO STOP!
               runYouTubeBatch(false);
-            }} 
+            }}
             disabled={refreshingYouTube}
-            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse"
+            className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-2.5 sm:px-5 py-1.5 sm:py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 animate-pulse text-xs sm:text-sm"
             title="AUTO MODE: Refresh semua channel YouTube tanpa henti sampai selesai!"
           >
-            <span className="text-lg">▶️</span>
-            <span className="font-medium">{autoYouTubeMode ? '⚡ AUTO RUNNING...' : '⚡ AUTO ALL YT'}</span>
+            <span className="text-sm sm:text-lg">▶️</span>
+            <span className="font-medium">{autoYouTubeMode ? '⚡ AUTO...' : <><span className="hidden sm:inline">⚡ AUTO ALL YT</span><span className="sm:hidden">⚡ YT</span></>}</span>
           </button>
-          <button 
-            onClick={runResolveIG} 
+          <button
+            onClick={runResolveIG}
             disabled={resolvingIG}
-            className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
+            className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-2.5 sm:px-5 py-1.5 sm:py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 text-xs sm:text-sm"
           >
-            <span className="text-lg">🔍</span>
-            <span className="font-medium">{resolvingIG ? 'Resolving...' : 'Resolve Akun Instagram'}</span>
+            <span className="text-sm sm:text-lg">🔍</span>
+            <span className="font-medium">{resolvingIG ? '...' : <><span className="hidden sm:inline">Resolve Akun Instagram</span><span className="sm:hidden">Resolve IG</span></>}</span>
           </button>
-          <button onClick={openModalForCreate} className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/20">
+          <button onClick={openModalForCreate} className="inline-flex items-center gap-1 sm:gap-2 rounded-xl px-3 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/20 text-xs sm:text-sm">
             <FaPlus />
-            <span>Tambah Karyawan</span>
+            <span><span className="hidden sm:inline">Tambah Karyawan</span><span className="sm:hidden">Tambah</span></span>
           </button>
         </div>
       </div>
 
       {/* Progress Indicators */}
       {(igProgress || tikTokProgress || resolveMsg) && (
-        <div className="mb-6 space-y-3">
+        <div className="mb-4 sm:mb-6 space-y-3">
           {igProgress && (
-            <div className="glass rounded-xl border border-pink-500/30 p-4">
+            <div className="glass rounded-xl border border-pink-500/30 p-3 sm:p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl">📸</span>
-                  <h3 className="font-semibold text-white">Instagram Progress</h3>
+                  <span className="text-lg sm:text-2xl">📸</span>
+                  <h3 className="font-semibold text-white text-sm sm:text-base">Instagram Progress</h3>
                 </div>
-                <span className="text-sm text-white/70">{igProgress.current} akun diproses</span>
+                <span className="text-xs sm:text-sm text-white/70">{igProgress.current} akun</span>
               </div>
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-2">
-                  <div className="text-xs text-green-300/70">Berhasil</div>
-                  <div className="text-xl font-bold text-green-400">{igProgress.success}</div>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-3">
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-1.5 sm:p-2">
+                  <div className="text-[10px] sm:text-xs text-green-300/70">Berhasil</div>
+                  <div className="text-base sm:text-xl font-bold text-green-400">{igProgress.success}</div>
                 </div>
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2">
-                  <div className="text-xs text-red-300/70">Gagal</div>
-                  <div className="text-xl font-bold text-red-400">{igProgress.failed}</div>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-1.5 sm:p-2">
+                  <div className="text-[10px] sm:text-xs text-red-300/70">Gagal</div>
+                  <div className="text-base sm:text-xl font-bold text-red-400">{igProgress.failed}</div>
                 </div>
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-2">
-                  <div className="text-xs text-blue-300/70">Total</div>
-                  <div className="text-xl font-bold text-blue-400">{igProgress.total}</div>
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-1.5 sm:p-2">
+                  <div className="text-[10px] sm:text-xs text-blue-300/70">Total</div>
+                  <div className="text-base sm:text-xl font-bold text-blue-400">{igProgress.total}</div>
                 </div>
               </div>
               {igResults && (
@@ -837,7 +837,7 @@ export default function AdminPage() {
       {/* Instagram Continue Dialog */}
       {showIgContinueDialog && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="glass border border-pink-500/30 p-8 rounded-2xl max-w-lg w-full glow-border">
+          <div className="glass border border-pink-500/30 p-4 sm:p-6 md:p-8 rounded-2xl max-w-lg w-full glow-border max-h-[90vh] overflow-y-auto">
             <div className="text-center mb-6">
               <div className="text-6xl mb-4">📸</div>
               <h2 className="text-2xl font-bold text-white mb-2">Batch Instagram Selesai!</h2>
@@ -886,7 +886,7 @@ export default function AdminPage() {
       {/* TikTok Continue Dialog */}
       {showTikTokContinueDialog && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="glass border border-gray-500/30 p-8 rounded-2xl max-w-lg w-full glow-border">
+          <div className="glass border border-gray-500/30 p-4 sm:p-6 md:p-8 rounded-2xl max-w-lg w-full glow-border max-h-[90vh] overflow-y-auto">
             <div className="text-center mb-6">
               <div className="text-6xl mb-4">🎵</div>
               <h2 className="text-2xl font-bold text-white mb-2">Batch TikTok Selesai!</h2>
@@ -935,7 +935,7 @@ export default function AdminPage() {
       {/* YouTube Continue Dialog */}
       {showYouTubeContinueDialog && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="glass border border-red-500/30 p-8 rounded-2xl max-w-lg w-full glow-border">
+          <div className="glass border border-red-500/30 p-4 sm:p-6 md:p-8 rounded-2xl max-w-lg w-full glow-border max-h-[90vh] overflow-y-auto">
             <div className="text-center mb-6">
               <div className="text-6xl mb-4">▶️</div>
               <h2 className="text-2xl font-bold text-white mb-2">Batch YouTube Selesai!</h2>
@@ -994,9 +994,9 @@ export default function AdminPage() {
       )}
 
       {/* Edit Hadiah Leaderboard (Active Campaign) */}
-      <div className="glass rounded-2xl border border-white/10 p-6 mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Set Hadiah Juara</h2>
+      <div className="glass rounded-2xl border border-white/10 p-3 sm:p-4 md:p-6 mb-4 sm:mb-8">
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
+          <h2 className="text-base sm:text-lg md:text-xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Set Hadiah Juara</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -1021,73 +1021,75 @@ export default function AdminPage() {
 
       {loading && <p className="text-white/60">Memuat...</p>}
 
-      <div className="glass rounded-2xl border border-white/10 overflow-x-auto">
-        <div className="p-4 flex items-center gap-3">
+      <div className="glass rounded-2xl border border-white/10">
+        <div className="p-3 sm:p-4 flex items-center gap-3">
           <input
             value={searchName}
             onChange={(e)=> setSearchName(e.target.value)}
             placeholder="Cari nama lengkap…"
-            className="w-full max-w-md px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white"
+            className="w-full max-w-md px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white text-sm"
           />
         </div>
-        <table className="min-w-full">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wider text-white/60">
-              <th className="px-6 py-3">Nama Lengkap</th>
-              <th className="px-6 py-3">Username</th>
-              <th className="px-6 py-3">TikTok Usernames</th>
-              <th className="px-6 py-3">Instagram Usernames</th>
-              <th className="px-6 py-3">YouTube Channels</th>
-              <th className="px-6 py-3">Peran</th>
-              <th className="px-6 py-3">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.filter(u => !searchName || String(u.full_name||'').toLowerCase().includes(searchName.toLowerCase())).map(user => (
-              <tr key={user.id} className="border-t border-white/10 hover:bg-white/5">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/90">
-                  <div className="flex items-center gap-3">
-                    {(user as any)?.profile_picture_url ? (
-                      <img 
-                        src={(user as any).profile_picture_url} 
-                        alt={user.full_name} 
-                        className="w-10 h-10 rounded-full object-cover border border-white/20 cursor-pointer hover:border-white/40 transition-all"
-                        onClick={() => {
-                          setSelectedPictureUrl((user as any).profile_picture_url);
-                          setShowPictureModal(true);
-                        }}
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20 text-white/80 text-xs">—</div>
-                    )}
-                    <span>{user.full_name}</span>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{user.username}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.tiktok_username, ...(((user as any).extra_tiktok_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[((user as any).instagram_username), ...(((user as any).extra_instagram_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-white/70">{[user.youtube_channel_id, ...(user.extra_youtube_channel_ids||[])].filter(Boolean).join(', ') || '-'}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
-                    user.role === 'admin' 
-                      ? 'border-red-500/30 text-red-300 bg-red-500/10' 
-                      : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
-                  }`}>
-                    {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'karyawan' : user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <button onClick={() => openModalForEdit(user)} className="text-blue-300 hover:text-blue-200 mr-4">
-                    <FaEdit />
-                  </button>
-                  <button onClick={() => handleDelete(user.id)} className="text-red-300 hover:text-red-200">
-                    <FaTrash />
-                  </button>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-[640px] w-full">
+            <thead>
+              <tr className="text-left text-[10px] sm:text-xs uppercase tracking-wider text-white/60">
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Nama Lengkap</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Username</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">TikTok</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Instagram</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">YouTube</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Peran</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Aksi</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.filter(u => !searchName || String(u.full_name||'').toLowerCase().includes(searchName.toLowerCase())).map(user => (
+                <tr key={user.id} className="border-t border-white/10 hover:bg-white/5">
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-white/90">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      {(user as any)?.profile_picture_url ? (
+                        <img
+                          src={(user as any).profile_picture_url}
+                          alt={user.full_name}
+                          className="w-8 h-8 sm:w-10 sm:h-10 rounded-full object-cover border border-white/20 cursor-pointer hover:border-white/40 transition-all flex-shrink-0"
+                          onClick={() => {
+                            setSelectedPictureUrl((user as any).profile_picture_url);
+                            setShowPictureModal(true);
+                          }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20 text-white/80 text-xs flex-shrink-0">—</div>
+                      )}
+                      <span className="truncate max-w-[100px] sm:max-w-none">{user.full_name}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-white/70">{user.username}</td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 text-xs sm:text-sm text-white/70 max-w-[120px] truncate">{[user.tiktok_username, ...(((user as any).extra_tiktok_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 text-xs sm:text-sm text-white/70 max-w-[120px] truncate">{[((user as any).instagram_username), ...(((user as any).extra_instagram_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 text-xs sm:text-sm text-white/70 max-w-[120px] truncate">{[user.youtube_channel_id, ...(user.extra_youtube_channel_ids||[])].filter(Boolean).join(', ') || '-'}</td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-xs sm:text-sm">
+                    <span className={`px-2 inline-flex text-[10px] sm:text-xs leading-5 font-semibold rounded-full border ${
+                      user.role === 'admin'
+                        ? 'border-red-500/30 text-red-300 bg-red-500/10'
+                        : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'
+                    }`}>
+                      {user.role === 'super_admin' ? 'super admin' : user.role === 'leader' ? 'karyawan' : user.role}
+                    </span>
+                  </td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-sm font-medium">
+                    <button onClick={() => openModalForEdit(user)} className="text-blue-300 hover:text-blue-200 mr-2 sm:mr-4">
+                      <FaEdit />
+                    </button>
+                    <button onClick={() => handleDelete(user.id)} className="text-red-300 hover:text-red-200">
+                      <FaTrash />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Profile Picture Modal */}
@@ -1112,16 +1114,16 @@ export default function AdminPage() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4" onClick={closeModal}>
-          <div className="glass border border-white/10 p-8 rounded-2xl w-full max-w-2xl glow-border" onClick={(e)=>e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">{isEditing ? 'Edit Karyawan' : 'Tambah Karyawan Baru'}</h2>
+          <div className="glass border border-white/10 p-4 sm:p-6 md:p-8 rounded-2xl w-full max-w-2xl glow-border max-h-[90vh] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4 sm:mb-6">
+              <h2 className="text-lg sm:text-xl md:text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">{isEditing ? 'Edit Karyawan' : 'Tambah Karyawan Baru'}</h2>
               <button type="button" onClick={closeModal} className="text-white/60 hover:text-white">
                 <FaTimes size={20} />
               </button>
             </div>
             <form onSubmit={handleSubmit}>
               {error && <p className="text-red-300 bg-red-500/10 border border-red-500/30 p-3 rounded-md mb-4">{error}</p>}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 {/* Kolom Kiri */}
                 <div>
                   {/* Avatar uploader */}
@@ -1289,7 +1291,7 @@ export default function AdminPage() {
                   <div className="text-xs text-white/50">Tekan Enter untuk menambah. Masukkan Username (contoh: @jokowi).</div>
                 </div>
               </div>
-              <div className="mt-8 flex justify-end gap-3">
+              <div className="mt-4 sm:mt-8 flex justify-end gap-3">
                 <button type="button" onClick={closeModal} className="px-4 py-2 rounded-xl border border-white/10 text-white/80 hover:bg-white/5">Batal</button>
                 <button type="submit" className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-lg shadow-blue-600/20">{isEditing ? 'Simpan Perubahan' : 'Buat Karyawan'}</button>
               </div>

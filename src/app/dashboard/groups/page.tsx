@@ -48,6 +48,8 @@ export default function CampaignsPage() {
   const [participants, setParticipants] = useState<any[]>([]);
   const [assignmentByUsername, setAssignmentByUsername] = useState<Record<string, { employee_id: string, name: string }>>({});
   const [memberGroupTotals, setMemberGroupTotals] = useState<any | null>(null);
+  const [videoTotals, setVideoTotals] = useState<{ views: number; likes: number; comments: number } | null>(null);
+  const [videoSeries, setVideoSeries] = useState<{ total: any[]; tiktok: any[]; instagram: any[]; youtube: any[] } | null>(null);
   const [empMetricsTotals, setEmpMetricsTotals] = useState<Record<string, any>>({});
   const [showManage, setShowManage] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
@@ -203,8 +205,7 @@ export default function CampaignsPage() {
         const series_instagram = toArr(igMap);
         const series_youtube = toArr(ytMap);
 
-        // Compute group totals from each employee's API totals (same source as chart series)
-        // This guarantees summary bar = sum of table rows = chart total
+        // Compute per-employee totals for the employee table (individual rows)
         const empTotalsMap: Record<string, any> = {};
         const headerSums = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
         for (const row of allRows) {
@@ -226,7 +227,10 @@ export default function CampaignsPage() {
           headerSums.posts += empT.posts;
         }
         setEmpMetricsTotals(empTotalsMap);
-        setMemberGroupTotals(headerSums);
+        // Don't overwrite memberGroupTotals here — the members API provides
+        // globally-deduplicated group totals that prevent double-counting when
+        // multiple employees share campaign-level usernames. headerSums is only
+        // used as a fallback via metrics.totals if members API hasn't loaded yet.
         setMetrics({ series_total, series_tiktok, series_instagram, series_youtube, totals: headerSums, interval: chartInterval });
 
         // Per-employee overlay: use subset of already-fetched data
@@ -264,7 +268,30 @@ export default function CampaignsPage() {
         if (data.groupTotals) setMemberGroupTotals(data.groupTotals);
       }
     };
+    // Fetch totals from the videos API — this is the same API that powers the
+    // "Lihat Semua Video" detail page, so the header numbers will match exactly.
+    const loadVideoTotals = async () => {
+      if (!selected) { setVideoTotals(null); setVideoSeries(null); return; }
+      try {
+        const url = new URL(`/api/campaigns/${selected.id}/videos`, window.location.origin);
+        url.searchParams.set('start', groupStart);
+        url.searchParams.set('end', groupEnd);
+        url.searchParams.set('summary', '1');
+        const res = await fetch(url.toString(), { cache: 'no-store' });
+        const json = await res.json();
+        if (res.ok && json.totals) {
+          setVideoTotals(json.totals);
+          setVideoSeries({
+            total: json.series_total || [],
+            tiktok: json.series_tiktok || [],
+            instagram: json.series_instagram || [],
+            youtube: json.series_youtube || [],
+          });
+        }
+      } catch {}
+    };
     loadMembers();
+    loadVideoTotals();
   }, [selected, groupStart, groupEnd]);
 
   // No explicit UI for toggling; overlays will default to first few employees when chartCompareIds is empty (handled in loadMetrics)
@@ -342,19 +369,27 @@ export default function CampaignsPage() {
   }, [participants]);
 
   const chartData = useMemo(() => {
-    if (!metrics) return null;
-    // Use total series as base labels
-    const base = (metrics.series_total || metrics.series || []) as any[];
+    // Prefer videoSeries (from videos API — consistent with header totals).
+    // Fall back to per-employee-sum metrics only if videoSeries isn't ready yet.
+    const useSeries = videoSeries || (metrics ? {
+      total: metrics.series_total || [],
+      tiktok: metrics.series_tiktok || [],
+      instagram: metrics.series_instagram || [],
+      youtube: metrics.series_youtube || [],
+    } : null);
+    if (!useSeries || !useSeries.total.length) return null;
+
+    const base = useSeries.total;
     const labels = base.map((s: any) => {
       const d = parseISO(s.date);
       if (chartInterval === 'monthly') return format(d, 'MMM yyyy', { locale: localeID });
       return format(d, 'd MMM', { locale: localeID });
     });
     const pick = (s:any)=> compareMetric==='likes' ? s.likes : (compareMetric==='comments' ? s.comments : s.views);
-    const dataTotal = (metrics.series_total || base).map((s:any)=> pick(s));
-    const dataTikTok = (metrics.series_tiktok || []).map((s:any)=> pick(s));
-    const dataInstagram = (metrics.series_instagram || []).map((s:any)=> pick(s));
-    const dataYouTube = (metrics.series_youtube || []).map((s:any)=> pick(s));
+    const dataTotal = base.map((s:any)=> pick(s));
+    const dataTikTok = (useSeries.tiktok || []).map((s:any)=> pick(s));
+    const dataInstagram = (useSeries.instagram || []).map((s:any)=> pick(s));
+    const dataYouTube = (useSeries.youtube || []).map((s:any)=> pick(s));
 
     const datasets: any[] = [
       { label: 'Total', data: dataTotal, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.2)', fill: true, tension: 0.35, hidden: !showTotal },
@@ -363,9 +398,8 @@ export default function CampaignsPage() {
       { label: 'YouTube', data: dataYouTube, borderColor: '#FF0000', backgroundColor: 'rgba(255,0,0,0.15)', fill: false, tension: 0.35, hidden: !showYouTube },
     ];
 
-    // Add overlay datasets for selected employees
+    // Add overlay datasets for selected employees (still from per-employee metrics)
     if (compareData.length > 0) {
-      // Map label dates for quick lookup
       const labelKeys = base.map((s:any)=> String(s.date));
       for (let i=0;i<compareData.length;i++) {
         const row = compareData[i];
@@ -380,7 +414,7 @@ export default function CampaignsPage() {
       }
     }
     return { labels, datasets };
-  }, [metrics, compareData, chartInterval, compareMetric, employeeColor]);
+  }, [videoSeries, metrics, compareData, chartInterval, compareMetric, employeeColor]);
 
   // UX: value panel (no need to hover to see values)
   const chartRef = useRef<any>(null);
@@ -719,7 +753,7 @@ export default function CampaignsPage() {
         {/* Sidebar list */}
         <div className="lg:col-span-1 glass rounded-2xl p-4 border border-white/10">
           <h2 className="text-sm font-medium text-white/70 mb-3">Daftar Group</h2>
-          <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
+          <div className="space-y-2 max-h-[40vh] lg:max-h-[60vh] overflow-auto pr-1">
             {campaigns.map(c => {
               const todayStr = new Date().toISOString().slice(0,10)
               const isEnded = !!c.end_date && c.end_date < todayStr
@@ -749,24 +783,34 @@ export default function CampaignsPage() {
         {/* Main panel */}
   <div className="lg:col-span-3 space-y-6 min-w-0">
           {/* Header totals then refresh button below */}
-          <div className="glass rounded-2xl p-4 border border-white/10">
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/70">
-              {(memberGroupTotals || metrics) && (
+          <div className="glass rounded-2xl p-3 sm:p-4 border border-white/10">
+            <div className="flex flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-white/70">
+              {(videoTotals || memberGroupTotals || metrics) && (
                 <>
-                  <span>Views: <strong className="text-white">{(memberGroupTotals?.views ?? metrics?.totals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Likes: <strong className="text-white">{(memberGroupTotals?.likes ?? metrics?.totals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Comments: <strong className="text-white">{(memberGroupTotals?.comments ?? metrics?.totals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Views: <strong className="text-white">{(videoTotals?.views ?? memberGroupTotals?.views ?? metrics?.totals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Likes: <strong className="text-white">{(videoTotals?.likes ?? memberGroupTotals?.likes ?? metrics?.totals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Comments: <strong className="text-white">{(videoTotals?.comments ?? memberGroupTotals?.comments ?? metrics?.totals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
                   {lastUpdatedHuman && (
                     <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
                   )}
                 </>
               )}
             </div>
-            <div className="mt-3 flex justify-end">
-              <div className="flex items-center gap-2 mr-2">
-                <input type="date" value={groupStart} onChange={(e)=>setGroupStart(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
-                <span className="text-white/50">s/d</span>
-                <input type="date" value={groupEnd} onChange={(e)=>setGroupEnd(e.target.value)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-sm"/>
+            <div className="mt-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+              {selected && (
+                <Link
+                  href={`/dashboard/groups/${selected.id}/videos?start=${groupStart}&end=${groupEnd}`}
+                  target="_blank"
+                  className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs sm:text-sm transition-colors border border-blue-500/30 self-start"
+                >
+                  <FaExternalLinkAlt className="w-3 h-3" />
+                  Lihat Semua Video
+                </Link>
+              )}
+              <div className="flex items-center gap-1.5 sm:gap-2 sm:ml-auto w-full sm:w-auto">
+                <input type="date" value={groupStart} onChange={(e)=>setGroupStart(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
+                <span className="text-white/50 text-xs">s/d</span>
+                <input type="date" value={groupEnd} onChange={(e)=>setGroupEnd(e.target.value)} className="px-2 sm:px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white/80 text-xs sm:text-sm flex-1 sm:flex-none min-w-0"/>
               </div>
             </div>
           </div>
@@ -774,20 +818,10 @@ export default function CampaignsPage() {
           {/* Chart */}
           <div className="glass rounded-2xl p-4 md:p-6 border border-white/10 overflow-x-auto">
             {/* Re-layout controls: Mode on the left, Interval centered, Metric on the right */}
-            <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-xs">
-              {/* Left: Mode removed - always Post Date weekly */}
-              <div className="flex items-center gap-2 justify-start flex-wrap">
-                <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
-              </div>
-
-              {/* Center: Interval removed - historical data is weekly only */}
-              <div className="flex items-center justify-center gap-2">
-                {/* Interval dihapus - data historical mingguan saja */}
-              </div>
-
-              {/* Right: Metric */}
-              <div className="flex items-center gap-2 justify-end">
-                <span className="text-white/60">Metric:</span>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="px-2 py-1 rounded bg-white/20 text-white">Post Date</span>
+              <div className="flex items-center gap-1 sm:gap-2">
+                <span className="text-white/60 hidden sm:inline">Metric:</span>
                 <button className={`px-2 py-1 rounded ${compareMetric==='views'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setCompareMetric('views')}>Views</button>
                 <button className={`px-2 py-1 rounded ${compareMetric==='likes'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setCompareMetric('likes')}>Likes</button>
                 <button className={`px-2 py-1 rounded ${compareMetric==='comments'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setCompareMetric('comments')}>Comments</button>
@@ -872,8 +906,8 @@ export default function CampaignsPage() {
                 </select>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-white/80">
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <table className="w-full text-xs sm:text-sm text-white/80 min-w-[480px]">
                 <thead>
                   <tr className="text-white/60">
                     <th className="text-left px-2 py-2">Employee</th>
@@ -916,13 +950,13 @@ export default function CampaignsPage() {
 
       {/* Manage Members Modal */}
       {showManage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="glass rounded-2xl border border-white/10 w-full max-w-3xl p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-3xl p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-white">Kelola Karyawan</h2>
+              <h2 className="text-lg sm:text-xl font-semibold text-white">Kelola Karyawan</h2>
               <button onClick={() => setShowManage(false)} className="text-white/70 hover:text-white">✕</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
               <div>
                 <h4 className="text-sm text-white/80 mb-2">Pilih Karyawan</h4>
                 
@@ -1140,7 +1174,7 @@ export default function CampaignsPage() {
                           ×
                         </button>
                       </div>
-                      <div className="text-white text-sm font-medium pr-24 flex items-center gap-2">
+                      <div className="text-white text-sm font-medium pr-8 sm:pr-24 flex items-center gap-2">
                         {p.name || `@${p.tiktok_username || ''}`}
                         {p.is_head && <span className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-400/10 border border-yellow-400/20">HEAD</span>}
                       </div>
@@ -1177,10 +1211,10 @@ export default function CampaignsPage() {
 
       {/* Create Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="glass rounded-2xl border border-white/10 w-full max-w-lg p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-lg p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-white">Buat Group</h2>
+              <h2 className="text-lg sm:text-xl font-semibold text-white">Buat Group</h2>
               <button onClick={() => setShowModal(false)} className="text-white/70 hover:text-white">✕</button>
             </div>
             {error && <p className="mb-3 border border-red-500/30 bg-red-500/10 text-red-300 rounded-lg p-3">{error}</p>}
@@ -1222,10 +1256,10 @@ export default function CampaignsPage() {
 
       {/* Edit Modal */}
       {showEdit && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="glass rounded-2xl border border-white/10 w-full max-w-lg p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-lg p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-white">Edit Group</h2>
+              <h2 className="text-lg sm:text-xl font-semibold text-white">Edit Group</h2>
               <button onClick={() => setShowEdit(false)} className="text-white/70 hover:text-white">✕</button>
             </div>
             <div className="space-y-4">
@@ -1279,8 +1313,8 @@ export default function CampaignsPage() {
 
       {/* Participant Detail Modal */}
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={()=>setSelectedUser(null)}>
-          <div className="glass rounded-2xl border border-white/10 w-full max-w-3xl p-6" onClick={(e)=>e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60" onClick={()=>setSelectedUser(null)}>
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-3xl p-4 sm:p-6 max-h-[90vh] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 {(() => {

@@ -5,6 +5,7 @@ import { rapidApiRequest } from '@/lib/rapidapi';
 import { parseMs, resolveTimestamp, resolveCounts } from './helpers';
 import { fetchAllProviders, fetchProfileData, fetchLinksData, IG_HOST, IG_SCRAPER_HOST } from './providers';
 import { resolveUserIdViaLink, resolveUserId } from './resolvers';
+import http from 'node:http';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60s - fit Vercel Hobby limit
@@ -12,8 +13,8 @@ export const maxDuration = 60; // 60s - fit Vercel Hobby limit
 // ============================================
 // AGGREGATOR API CONFIGURATION (Instagram)
 // ============================================
-// Allow both AGGREGATOR_API_BASE and AGGREGATOR_BASE env names
-const AGG_BASE = process.env.AGGREGATOR_API_BASE || process.env.AGGREGATOR_BASE || 'http://202.10.44.90/api/v1';
+// v3 aggregator (port 80) - separate env var so old v1 env vars don't interfere
+const AGG_BASE = process.env.AGGREGATOR_V3_BASE || 'http://202.10.44.90/api/v3';
 const AGG_IG_ENABLED = (process.env.AGGREGATOR_ENABLED !== '0');
 const AGG_IG_UNLIMITED = (process.env.AGGREGATOR_UNLIMITED !== '0');
 // Reduce default max pages to ensure we never exceed 60s per request
@@ -22,6 +23,41 @@ const AGG_IG_RATE_MS = Number(process.env.AGGREGATOR_RATE_MS || 500);
 const AGG_IG_PAGE_SIZE = Number(process.env.AGGREGATOR_PAGE_SIZE || 50); // use larger page size to minimize pagination
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// Convert Instagram shortcode to numeric media ID (base64-like)
+const SHORTCODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function shortcodeToId(code: string): string {
+  let id = BigInt(0);
+  for (const c of code) {
+    id = id * BigInt(64) + BigInt(SHORTCODE_CHARS.indexOf(c));
+  }
+  return id.toString();
+}
+
+// Node.js native http.request - more reliable than fetch() for port 5000
+function httpGet(urlStr: string, timeoutMs: number): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(urlStr);
+    const options: http.RequestOptions = {
+      hostname: parsed.hostname,
+      port: parsed.port || 80,
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      timeout: timeoutMs,
+      headers: { 'Accept': 'application/json', 'Connection': 'close' }
+    };
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: data }));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error(`HTTP timeout after ${timeoutMs}ms`)); });
+    req.on('error', (err) => reject(err));
+    const timer = setTimeout(() => { req.destroy(); reject(new Error(`Hard timeout after ${timeoutMs + 2000}ms`)); }, timeoutMs + 2000);
+    req.on('close', () => clearTimeout(timer));
+    req.end();
+  });
+}
 
 // RapidAPI host for media details (for getting taken_at)
 const IG_MEDIA_API = 'instagram-media-api.p.rapidapi.com';
@@ -148,34 +184,20 @@ export async function GET(req: Request, context: any) {
   
   try {
     // ============================================
-    // STEP 1: Try AGGREGATOR FIRST (UNLIMITED PAGINATION)
+    // STEP 1: Try AGGREGATOR v3 (port 5000, includes taken_at)
     // ============================================
     if (AGG_BASE && AGG_IG_ENABLED) {
       try {
-        console.log(`[IG Fetch] 🎯 Starting Aggregator unlimited fetch for @${norm}`);
-        
+        console.log(`[IG Fetch] Starting Aggregator v3 fetch for @${norm}`);
+
         const startTs = Date.now();
         const allReels: any[] = [];
-        const seenIds = new Set<string>();
-        let currentCursor: string | null = null;
+        const seenCodes = new Set<string>();
+        let currentMaxId: string | null = null;
         let pageNum = 0;
-        let stopEarly = false;
-        let consecutiveSameCursor = 0;
-        let lastCursor: string | null = null;
-
-        // Try to prefetch shortcode->timestamp map via public page scraping
-        const linksMap = new Map<string, number>();
-        try {
-          const linksArr = await fetchLinksData(`https://www.instagram.com/${norm}/reels/`);
-          for (const it of linksArr) {
-            const sc = String(it?.shortcode || it?.meta?.shortcode || '');
-            const ts = parseMs(it?.takenAt || it?.meta?.takenAt);
-            if (sc && ts) linksMap.set(sc, ts);
-          }
-        } catch {}
-        
-        // Try to pre-resolve user_id for aggregator (improves hit rate)
         let aggUserId: string | null = null;
+
+        // Pre-resolve user_id from DB (improves aggregator hit rate)
         try {
           const { data: row } = await admin()
             .from('instagram_user_ids')
@@ -187,138 +209,141 @@ export async function GET(req: Request, context: any) {
         if (!aggUserId) {
           try { aggUserId = await resolveUserIdViaLink(norm, admin()) || null; } catch {}
         }
+        console.log(`[IG Fetch] Pre-resolved user_id for @${norm}: ${aggUserId || 'none'}`);
 
-        // Unlimited pagination loop
+        // Pagination loop (v3 uses max_id instead of end_cursor)
         while (pageNum < maxPages) {
           pageNum++;
-          
-          // Build URL with cursor if available
-          let aggUrl = `${AGG_BASE}/instagram/reels?username=${encodeURIComponent(norm)}&page_size=${pageSize}`;
+
+          let aggUrl = `${AGG_BASE}/instagram/reels?username=${encodeURIComponent(norm)}`;
           if (aggUserId) aggUrl += `&user_id=${encodeURIComponent(aggUserId)}`;
-          if (currentCursor) {
-            aggUrl += `&end_cursor=${encodeURIComponent(currentCursor)}`;
+          if (currentMaxId) {
+            aggUrl += `&max_id=${encodeURIComponent(currentMaxId)}`;
           }
-          
-          console.log(`[IG Fetch] 📄 Page ${pageNum}: Fetching from Aggregator...`);
-          
+
+          console.log(`[IG Fetch] Page ${pageNum}: GET ${aggUrl}`);
+
           // Respect overall time budget per request
           const elapsed = Date.now() - startTs;
           const remaining = Math.max(0, budgetMs - elapsed);
           if (remaining < 3000) {
-            console.log(`[IG Fetch] ⏱️ Budget nearly exhausted (${elapsed}ms used), stopping pagination`);
+            console.log(`[IG Fetch] Budget nearly exhausted (${elapsed}ms used), stopping pagination`);
             break;
           }
 
-          const aggController = new AbortController();
           const perPageTimeout = Math.min(50000, Math.max(2500, remaining - 1000));
-          const aggTimeout = setTimeout(() => aggController.abort(), perPageTimeout);
-          
-          const aggResp = await fetch(aggUrl, { 
-            signal: aggController.signal,
-            headers: { 'Content-Type': 'application/json' }
-          });
-          clearTimeout(aggTimeout);
-          
-          if (!aggResp.ok) {
-            console.log(`[IG Fetch] ✗ Aggregator HTTP ${aggResp.status} on page ${pageNum}`);
-            break;
-          }
-          
-          const aggData = await aggResp.json();
-          // New Aggregator shape (Dec 9, 2025):
-          // data.xdt_api__v1__clips__user__connection_v2.edges[].node.media
-          const conn = aggData?.data?.xdt_api__v1__clips__user__connection_v2 || {};
-          const edges: any[] = Array.isArray(conn?.edges) ? conn.edges : [];
-          const pageInfo = conn?.page_info || {};
-          const hasNextPage = !!(pageInfo?.has_next_page);
-          const nextCursor = pageInfo?.end_cursor || null;
-          
-          // Process reels from this page
-          let newReelsCount = 0;
-          let olderCount = 0;
-          for (const e of edges) {
-            const node = e?.node || {};
-            const media = node?.media || node;
-            const rawId = String(media?.pk || media?.id || '');
-            if (!rawId) continue;
-            if (seenIds.has(rawId)) continue;
-            seenIds.add(rawId);
-            newReelsCount++;
 
-            const code = String(media?.code || '');
-            // Derive taken_at: prefer aggregator timestamp, then linksMap, fallback to NULL (backfill will fix)
-            let ms: number | null = null;
-            // Try to get taken_at directly from media object first (most reliable)
-            const takenAt = media?.taken_at || media?.taken_at_timestamp || node?.taken_at || node?.taken_at_timestamp;
-            if (takenAt) {
-              ms = parseMs(takenAt);
-            }
-            if (!ms && code && linksMap.has(code)) ms = linksMap.get(code)!;
-            // NO RAPIDAPI! If no timestamp, set NULL - backfill endpoint will fix it later
-            const taken_at = ms ? new Date(ms).toISOString() : null; // NULL = backfill later!
-            
-            const caption = extractCaption(media, node);
-            const play = Number(media?.play_count ?? media?.view_count ?? media?.video_view_count ?? 0) || 0;
-            const like = Number(media?.like_count ?? 0) || 0;
-            const comment = Number(media?.comment_count ?? 0) || 0;
-
-            allReels.push({ 
-              id: rawId, 
-              code: code || null, 
-              caption: caption || null, 
-              username: norm, 
-              taken_at, // Actual timestamp or NULL
-              post_date: taken_at ? new Date(taken_at).toISOString().slice(0, 10) : null, // Derive date from taken_at
-              play_count: play, 
-              like_count: like, 
-              comment_count: comment 
-            });
-          }
-          
-          console.log(`[IG Fetch] ✓ Page ${pageNum}: +${newReelsCount} new reels (total: ${allReels.length}) (older=${olderCount})`);
-          
-          // Check for termination conditions
-          if (!hasNextPage || !nextCursor || olderCount >= Math.max(10, Math.floor(pageSize/2))) {
-            console.log(`[IG Fetch] ✅ Completed: No more pages (hasNextPage=${hasNextPage}, cursor=${nextCursor})`);
-            break;
-          }
-          
-          // Same cursor detection (prevent infinite loops)
-          if (nextCursor === lastCursor) {
-            consecutiveSameCursor++;
-            if (consecutiveSameCursor >= 2) {
-              console.log(`[IG Fetch] ⚠️ Same cursor detected ${consecutiveSameCursor} times, stopping`);
+          // Use Node.js http.request instead of fetch() (fetch hangs on port 5000)
+          let respBody: string;
+          try {
+            const resp = await httpGet(aggUrl, perPageTimeout);
+            console.log(`[IG Fetch] httpGet response: status=${resp.status}, bodyLen=${resp.body.length}, body=${resp.body.substring(0, 150)}`);
+            if (resp.status !== 200) {
+              console.log(`[IG Fetch] Aggregator HTTP ${resp.status} on page ${pageNum}`);
               break;
             }
-          } else {
-            consecutiveSameCursor = 0;
+            respBody = resp.body;
+          } catch (httpErr: any) {
+            console.warn(`[IG Fetch] Aggregator httpGet FAILED on page ${pageNum}:`, httpErr.message);
+            break;
           }
-          
-          lastCursor = currentCursor;
-          currentCursor = nextCursor;
-          
+
+          let aggJson: any;
+          try {
+            aggJson = JSON.parse(respBody);
+          } catch (parseErr: any) {
+            console.warn(`[IG Fetch] JSON parse failed on page ${pageNum}:`, parseErr.message, 'body:', respBody.substring(0, 200));
+            break;
+          }
+          if (aggJson?.status !== 'success' || !aggJson?.data) {
+            console.log(`[IG Fetch] Aggregator returned non-success on page ${pageNum}: ${respBody.substring(0, 200)}`);
+            break;
+          }
+          console.log(`[IG Fetch] Parsed OK: reels=${aggJson.data.reels?.length}, user_id=${aggJson.data.user_id}, hasMore=${aggJson.data.pagination?.has_more}`);
+
+          const aggData = aggJson.data;
+          const reels: any[] = Array.isArray(aggData.reels) ? aggData.reels : [];
+          const pagination = aggData.pagination || {};
+          const hasMore = !!pagination.has_more;
+          const nextMaxId = pagination.max_id || null;
+
+          // Save user_id from v3 response
+          if (aggData.user_id && !aggUserId) {
+            aggUserId = String(aggData.user_id);
+          }
+
+          // Process reels from this page
+          let newCount = 0;
+          for (const reel of reels) {
+            const code = String(reel.code || '');
+            if (!code || seenCodes.has(code)) continue;
+            seenCodes.add(code);
+            newCount++;
+
+            // Convert shortcode to numeric ID for DB (onConflict: 'id')
+            const numericId = shortcodeToId(code);
+
+            // v3 returns taken_at as unix seconds
+            const takenAtSec = Number(reel.taken_at);
+            const taken_at = (!isNaN(takenAtSec) && takenAtSec > 0)
+              ? new Date(takenAtSec * 1000).toISOString()
+              : null;
+
+            allReels.push({
+              id: numericId,
+              code,
+              caption: reel.caption || null,
+              username: norm,
+              taken_at,
+              post_date: taken_at ? taken_at.slice(0, 10) : null,
+              play_count: Number(reel.views) || 0,
+              like_count: Number(reel.likes) || 0,
+              comment_count: Number(reel.comments) || 0
+            });
+          }
+
+          console.log(`[IG Fetch] Page ${pageNum}: +${newCount} new reels (total: ${allReels.length})`);
+
+          // Check for termination conditions
+          if (!hasMore || !nextMaxId) {
+            console.log(`[IG Fetch] Completed: No more pages (hasMore=${hasMore})`);
+            break;
+          }
+
+          currentMaxId = nextMaxId;
+
           // Rate limiting
-          // Rate limiting, ensure we don't overshoot budget
           const postElapsed = Date.now() - startTs;
           if (postElapsed + AGG_IG_RATE_MS > budgetMs) {
-            console.log(`[IG Fetch] ⏱️ Budget would be exceeded by next delay, stopping at page ${pageNum}`);
+            console.log(`[IG Fetch] Budget would be exceeded by next delay, stopping at page ${pageNum}`);
             break;
           }
           await sleep(AGG_IG_RATE_MS);
         }
-        
+
+        // Save user_id to instagram_user_ids table
+        if (aggUserId) {
+          try {
+            await supa.from('instagram_user_ids').upsert({
+              instagram_username: norm,
+              instagram_user_id: aggUserId,
+              created_at: new Date().toISOString()
+            }, { onConflict: 'instagram_username' });
+          } catch {}
+        }
+
         if (allReels.length > 0) {
-          console.log(`[IG Fetch] ✅ Aggregator COMPLETE: ${allReels.length} reels, ${pageNum} pages`);
-          
+          console.log(`[IG Fetch] Aggregator v3 COMPLETE: ${allReels.length} reels, ${pageNum} pages`);
+
           upserts.push(...allReels);
-          source = 'aggregator';
+          source = 'aggregator_v3';
           fetchTelemetry = {
-            source: 'aggregator',
+            source: 'aggregator_v3',
             totalReels: allReels.length,
             pagesProcessed: pageNum,
             success: true
           };
-          
+
           // Save to database
           if (upserts.length > 0) {
             // MERGE with existing DB data: preserve taken_at/caption/code if already in DB
@@ -346,11 +371,11 @@ export async function GET(req: Request, context: any) {
             const totalViews = upserts.reduce((s, u) => s + (Number(u.play_count) || 0), 0);
             const totalLikes = upserts.reduce((s, u) => s + (Number(u.like_count) || 0), 0);
             const totalComments = upserts.reduce((s, u) => s + (Number(u.comment_count) || 0), 0);
-            return NextResponse.json({ 
-              success: true, 
-              source, 
-              username: norm, 
-              inserted: upserts.length, 
+            return NextResponse.json({
+              success: true,
+              source,
+              username: norm,
+              inserted: upserts.length,
               total_views: totalViews,
               total_likes: totalLikes,
               total_comments: totalComments,
@@ -358,23 +383,12 @@ export async function GET(req: Request, context: any) {
             });
           }
         } else {
-          console.log(`[IG Fetch] ⚠️ Aggregator returned 0 reels after ${pageNum} pages - NO RAPIDAPI FALLBACK!`);
-          // NO RAPIDAPI FALLBACK! Return empty result
-          return NextResponse.json({ 
-            success: true, 
-            source: 'aggregator', 
-            username: norm, 
-            inserted: 0, 
-            total_views: 0,
-            total_likes: 0,
-            total_comments: 0,
-            message: 'Aggregator returned 0 reels - no data available',
-            telemetry: { source: 'aggregator', totalReels: 0, pagesProcessed: pageNum, success: true }
-          });
+          console.log(`[IG Fetch] Aggregator v3 returned 0 reels after ${pageNum} pages — falling through to RapidAPI`);
+          // Don't return early! Fall through to STEP 2 (RapidAPI fallback)
         }
       } catch (aggErr: any) {
         // Fallback to RapidAPI instead of failing
-        console.warn(`[IG Fetch] ⚠️ Aggregator error, falling back to RapidAPI:`, aggErr.message);
+        console.warn(`[IG Fetch] Aggregator v3 error, falling back to RapidAPI:`, aggErr.message);
       }
     }
 
