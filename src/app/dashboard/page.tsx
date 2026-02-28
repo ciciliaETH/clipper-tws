@@ -1207,9 +1207,9 @@ export default function DashboardTotalPage() {
         });
       }
       
-      return { labels, datasets };
+      return { labels, datasets, _periods: allPeriods.map((p:any) => ({ start: p.startDate.toISOString().slice(0,10), end: p.endDate.toISOString().slice(0,10) })) };
     }
-    
+
     // Postdate Weekly: build from historical periods (DB) then realtime weekly starting 2026-02-05
     if (mode==='postdate' && interval==='weekly') {
       const REALTIME_START = '2026-02-05';
@@ -1330,7 +1330,7 @@ export default function DashboardTotalPage() {
         }
       }
 
-      return { labels, datasets };
+      return { labels, datasets, _periods: allPeriods.map((p:any) => ({ start: p.startDate.toISOString().slice(0,10), end: p.endDate.toISOString().slice(0,10) })) };
     }
 
     // Postdate view: build labels based on interval
@@ -1410,10 +1410,25 @@ export default function DashboardTotalPage() {
       datasets.push({ label: g.name, data: vals, borderColor: color, backgroundColor: color+'33', fill: false, tension:0.35, yAxisID: 'y' });
     }
     
-    return { labels, datasets };
+    // Build _periods for Posts chart alignment
+    const _periods = (src.total || []).map((s:any) => {
+      const d = String(s.date);
+      if (interval === 'weekly') {
+        const sd = new Date(d + 'T00:00:00Z');
+        const ed = new Date(sd.getTime()); ed.setUTCDate(ed.getUTCDate() + 6);
+        return { start: d, end: ed.toISOString().slice(0,10) };
+      } else if (interval === 'monthly') {
+        const sd = new Date(d + 'T00:00:00Z');
+        const ed = new Date(sd.getTime()); ed.setUTCMonth(ed.getUTCMonth() + 1); ed.setUTCDate(ed.getUTCDate() - 1);
+        return { start: d, end: ed.toISOString().slice(0,10) };
+      }
+      return { start: d, end: d };
+    });
+    return { labels, datasets, _periods };
   }, [data, videoSeriesData, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
 
   // Posts chart data - derived from videos API (same source of truth as detail video page)
+  // Uses _periods from chartData to align with main chart's weekly/monthly bucketing
   const postsChartData = useMemo(() => {
     if (!postsData || postsData.length === 0 || !chartData) return null;
 
@@ -1428,43 +1443,25 @@ export default function DashboardTotalPage() {
     const instagramMap = buildMap('posts_instagram');
     const youtubeMap = buildMap('posts_youtube');
 
-    const labels = chartData.labels;
-    // Use videoSeriesData as primary source (same as main chart), fallback to data
-    const totalSeries = videoSeriesData?.total || data?.total || [];
+    const labels = chartData.labels as string[];
+    const periods = (chartData as any)._periods as Array<{ start: string; end: string }> | null;
 
-    // Aggregate a map into values aligned with chart labels
+    // Aggregate posts per chart period (aligned with main chart labels)
     const aggregate = (postsMap: Map<string, number>) => {
-      let values: number[];
-      if (interval === 'daily' || (!totalSeries.length)) {
-        values = totalSeries.map((t: any) => postsMap.get(String(t.date)) || 0);
-      } else if (interval === 'weekly') {
-        values = totalSeries.map((t: any) => {
-          const startDate = new Date(String(t.date) + 'T00:00:00Z');
-          const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate() + 6);
-          let sum = 0;
-          for (const [ds, c] of postsMap.entries()) {
-            const d = new Date(ds + 'T00:00:00Z');
-            if (d >= startDate && d <= endDate) sum += c;
-          }
-          return sum;
-        });
-      } else {
-        values = totalSeries.map((t: any) => {
-          const d = new Date(String(t.date) + 'T00:00:00Z');
-          const m = d.getUTCMonth(); const y = d.getUTCFullYear();
-          let sum = 0;
-          for (const [ds, c] of postsMap.entries()) {
-            const pd = new Date(ds + 'T00:00:00Z');
-            if (pd.getUTCMonth() === m && pd.getUTCFullYear() === y) sum += c;
-          }
-          return sum;
+      if (!periods || periods.length === 0) {
+        // Fallback: 1:1 daily mapping
+        return Array.from({ length: labels.length }, (_, i) => {
+          const entries = Array.from(postsMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+          return entries[i] ? entries[i][1] : 0;
         });
       }
-      if (labels.length > values.length) {
-        const pad = new Array(labels.length - values.length).fill(0);
-        values = [...pad, ...values];
-      }
-      return values;
+      return periods.map((p) => {
+        let sum = 0;
+        for (const [ds, count] of postsMap.entries()) {
+          if (ds >= p.start && ds <= p.end) sum += count;
+        }
+        return sum;
+      });
     };
 
     const datasets: any[] = [];
@@ -1484,7 +1481,7 @@ export default function DashboardTotalPage() {
     if (datasets.length === 0) return null;
 
     return { labels, datasets };
-  }, [postsData, chartData, data, videoSeriesData, interval, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
+  }, [postsData, chartData, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
 
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
@@ -1511,7 +1508,40 @@ export default function DashboardTotalPage() {
       return sumArr(data.total || []);
     }
   }, [data, platformFilter]);
-  
+
+  // Combined totals: historical (pre-cutoff) + realtime (post-cutoff) to avoid double-counting
+  const combinedTotals = useMemo(() => {
+    const HIST_CUTOFF = '2026-02-05';
+    const result = { views: 0, likes: 0, comments: 0 };
+
+    // 1. Sum historical data (weekly_historical_data, covers Aug 2025 → Feb 4 2026)
+    if (showHistorical && historicalData.length > 0) {
+      for (const h of historicalData) {
+        result.views += Number(h.views || 0);
+        result.likes += Number(h.likes || 0);
+        result.comments += Number(h.comments || 0);
+      }
+    }
+
+    // 2. Sum realtime data from videoSeriesData, only dates >= cutoff to avoid overlap
+    if (videoSeriesData?.total) {
+      for (const s of videoSeriesData.total) {
+        const date = String(s.date);
+        if (showHistorical && historicalData.length > 0 && date < HIST_CUTOFF) continue;
+        result.views += Number(s.views || 0);
+        result.likes += Number(s.likes || 0);
+        result.comments += Number(s.comments || 0);
+      }
+    } else if (videoTotals) {
+      // Fallback if no series data: use videoTotals directly
+      result.views += videoTotals.views;
+      result.likes += videoTotals.likes;
+      result.comments += videoTotals.comments;
+    }
+
+    return result;
+  }, [historicalData, showHistorical, videoSeriesData, videoTotals]);
+
   const crosshairPlugin = useMemo(()=>({
     id: 'crosshairPlugin',
     afterDraw(chart:any){
@@ -1573,9 +1603,9 @@ export default function DashboardTotalPage() {
         <div className="flex flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-white/70">
           {data && (
             <>
-              <span>Views: <strong className="text-white">{Number(videoTotals?.views ?? grandTotals.views).toLocaleString('id-ID')}</strong></span>
-              <span>Likes: <strong className="text-white">{Number(videoTotals?.likes ?? grandTotals.likes).toLocaleString('id-ID')}</strong></span>
-              <span>Comments: <strong className="text-white">{Number(videoTotals?.comments ?? grandTotals.comments).toLocaleString('id-ID')}</strong></span>
+              <span>Views: <strong className="text-white">{Number(combinedTotals.views).toLocaleString('id-ID')}</strong></span>
+              <span>Likes: <strong className="text-white">{Number(combinedTotals.likes).toLocaleString('id-ID')}</strong></span>
+              <span>Comments: <strong className="text-white">{Number(combinedTotals.comments).toLocaleString('id-ID')}</strong></span>
               <span>Posts: <strong className="text-white">{postsData.reduce((sum, p: any) => sum + Number(p.posts || 0), 0).toLocaleString('id-ID')}</strong></span>
               {lastUpdatedHuman && (
                 <span className="sm:ml-auto text-white/60 w-full sm:w-auto mt-1 sm:mt-0">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
