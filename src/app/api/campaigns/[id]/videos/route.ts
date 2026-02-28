@@ -265,10 +265,10 @@ export async function GET(req: Request, context: any) {
 
     // Compute totals + daily time series (bucketed by date and platform)
     const totals = { views: 0, likes: 0, comments: 0, shares: 0 }
-    const totalByDate = new Map<string, { views: number; likes: number; comments: number }>()
-    const ttByDate = new Map<string, { views: number; likes: number; comments: number }>()
-    const igByDate = new Map<string, { views: number; likes: number; comments: number }>()
-    const ytByDate = new Map<string, { views: number; likes: number; comments: number }>()
+    const totalByDate = new Map<string, { views: number; likes: number; comments: number; posts: number }>()
+    const ttByDate = new Map<string, { views: number; likes: number; comments: number; posts: number }>()
+    const igByDate = new Map<string, { views: number; likes: number; comments: number; posts: number }>()
+    const ytByDate = new Map<string, { views: number; likes: number; comments: number; posts: number }>()
 
     for (const v of videos) {
       const views = Number(v.views || 0)
@@ -283,14 +283,14 @@ export async function GET(req: Request, context: any) {
       if (!date) continue
 
       // Total series
-      const tc = totalByDate.get(date) || { views: 0, likes: 0, comments: 0 }
-      tc.views += views; tc.likes += likes; tc.comments += comments
+      const tc = totalByDate.get(date) || { views: 0, likes: 0, comments: 0, posts: 0 }
+      tc.views += views; tc.likes += likes; tc.comments += comments; tc.posts += 1
       totalByDate.set(date, tc)
 
       // Platform series
       const pMap = v.platform === 'tiktok' ? ttByDate : v.platform === 'instagram' ? igByDate : ytByDate
-      const pc = pMap.get(date) || { views: 0, likes: 0, comments: 0 }
-      pc.views += views; pc.likes += likes; pc.comments += comments
+      const pc = pMap.get(date) || { views: 0, likes: 0, comments: 0, posts: 0 }
+      pc.views += views; pc.likes += likes; pc.comments += comments; pc.posts += 1
       pMap.set(date, pc)
     }
 

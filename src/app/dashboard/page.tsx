@@ -458,10 +458,11 @@ export default function DashboardTotalPage() {
         const mergeMap = (target: Map<string, any>, arr: any[]) => {
           for (const s of arr || []) {
             const k = String(s.date);
-            const cur = target.get(k) || { views: 0, likes: 0, comments: 0 };
+            const cur = target.get(k) || { views: 0, likes: 0, comments: 0, posts: 0 };
             cur.views += Number(s.views || 0);
             cur.likes += Number(s.likes || 0);
             cur.comments += Number(s.comments || 0);
+            cur.posts += Number(s.posts || 0);
             target.set(k, cur);
           }
         };
@@ -495,6 +496,15 @@ export default function DashboardTotalPage() {
           youtube: toArr(ytMap),
           groups: groupsList,
         });
+        // Derive posts data from video series (same source of truth)
+        const postsFromVideos = toArr(totalMap).map((d: any) => ({
+          date: d.date,
+          posts: d.posts || 0,
+          posts_tiktok: (ttMap.get(d.date)?.posts || 0),
+          posts_instagram: (igMap.get(d.date)?.posts || 0),
+          posts_youtube: (ytMap.get(d.date)?.posts || 0),
+        }));
+        setPostsData(postsFromVideos);
       } catch { setVideoTotals(null); setVideoSeriesData(null); }
     };
     loadVideoTotals();
@@ -567,44 +577,7 @@ export default function DashboardTotalPage() {
     loadHistorical();
   }, [showHistorical, start]);
   
-  // Load posts data for chart
-  useEffect(() => {
-    const loadPosts = async () => {
-      if (!showPosts) {
-        setPostsData([]);
-        return;
-      }
-      
-      try {
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const effStart = mode === 'accrual' ? (useCustomAccrualDates ? accrualCustomStart : (() => { const d = new Date(); d.setUTCDate(d.getUTCDate() - (accrualWindow - 1)); return d.toISOString().slice(0, 10); })()) : start;
-        const effEnd = mode === 'accrual' ? (useCustomAccrualDates ? accrualCustomEnd : todayStr) : end;
-        
-        const url = new URL('/api/posts-series', window.location.origin);
-        url.searchParams.set('start', effStart);
-        url.searchParams.set('end', effEnd);
-        url.searchParams.set('platform', platformFilter);
-        
-        console.log('[POSTS] Fetching from:', url.toString());
-        
-        const res = await fetch(url.toString(), { cache: 'no-store' });
-        const json = await res.json();
-        
-        if (res.ok && json.series) {
-          console.log('[POSTS] Data loaded successfully, count:', json.series.length);
-          setPostsData(json.series);
-        } else {
-          console.error('[POSTS] Failed to load:', json.error);
-          setPostsData([]);
-        }
-      } catch (error) {
-        console.error('[POSTS] Exception:', error);
-        setPostsData([]);
-      }
-    };
-    
-    loadPosts();
-  }, [showPosts, mode, accrualWindow, useCustomAccrualDates, accrualCustomStart, accrualCustomEnd, start, end, platformFilter]);
+  // Posts data is now derived from videoSeriesData in loadVideoTotals (same source of truth as detail video page)
 
   // Header totals now use the same data source as the chart (data.total from dashboard/series API)
   // This ensures the header always matches the chart values exactly.
@@ -1440,7 +1413,7 @@ export default function DashboardTotalPage() {
     return { labels, datasets };
   }, [data, videoSeriesData, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
 
-  // Posts chart data - separate chart, uses same labels/periods as main chart
+  // Posts chart data - derived from videos API (same source of truth as detail video page)
   const postsChartData = useMemo(() => {
     if (!postsData || postsData.length === 0 || !chartData) return null;
 
@@ -1456,12 +1429,13 @@ export default function DashboardTotalPage() {
     const youtubeMap = buildMap('posts_youtube');
 
     const labels = chartData.labels;
-    const totalSeries = data?.total || [];
+    // Use videoSeriesData as primary source (same as main chart), fallback to data
+    const totalSeries = videoSeriesData?.total || data?.total || [];
 
     // Aggregate a map into values aligned with chart labels
     const aggregate = (postsMap: Map<string, number>) => {
       let values: number[];
-      if (interval === 'daily' || (!data?.total?.length)) {
+      if (interval === 'daily' || (!totalSeries.length)) {
         values = totalSeries.map((t: any) => postsMap.get(String(t.date)) || 0);
       } else if (interval === 'weekly') {
         values = totalSeries.map((t: any) => {
@@ -1510,7 +1484,7 @@ export default function DashboardTotalPage() {
     if (datasets.length === 0) return null;
 
     return { labels, datasets };
-  }, [postsData, chartData, data, interval, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
+  }, [postsData, chartData, data, videoSeriesData, interval, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
 
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
