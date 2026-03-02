@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Download } from 'lucide-react'
 import { useDebounce } from 'use-debounce'
+import { exportVideosToExcel } from '@/lib/export-excel'
 
 export default function ParticipantVideosPage() {
   const params = useParams()
@@ -98,7 +99,14 @@ export default function ParticipantVideosPage() {
                   <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
                       Total Views: <span className="text-white font-medium">{format(totals.views)}</span>
                   </div>
-                  {/* Removed user ID badge per request */}
+                  {data.videos?.length > 0 && (
+                    <button
+                      onClick={() => exportVideosToExcel(data.videos, { filename: data.fullName || decodeURIComponent(username as string) })}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/15 border border-green-500/30 text-green-300 hover:bg-green-500/25 transition-colors text-sm font-medium"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export Excel
+                    </button>
+                  )}
               </div>
             </div>
 

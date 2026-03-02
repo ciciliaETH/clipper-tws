@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, ExternalLink, Eye, Heart, MessageCircle, Share2, Filter, Search, SortDesc, Calendar, Hash, Video } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Eye, Heart, MessageCircle, Share2, Filter, Search, SortDesc, Calendar, Hash, Video, Download } from 'lucide-react'
 import { useDebounce } from 'use-debounce'
+import { exportVideosToExcel } from '@/lib/export-excel'
 
 export default function CampaignVideosPage() {
   const params = useParams()
@@ -114,6 +115,14 @@ export default function CampaignVideosPage() {
               </div>
             )}
           </div>
+          {sortedVideos.length > 0 && (
+            <button
+              onClick={() => exportVideosToExcel(sortedVideos, { filename: data.campaign?.name || 'Campaign Videos' })}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/15 border border-green-500/30 text-green-300 hover:bg-green-500/25 transition-colors text-xs sm:text-sm font-medium self-start"
+            >
+              <Download className="w-4 h-4" /> Export Excel
+            </button>
+          )}
         </div>
       </div>
 
