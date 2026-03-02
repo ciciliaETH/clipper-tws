@@ -40,6 +40,7 @@ export default function DashboardTotalPage() {
   const [postsShowTikTok, setPostsShowTikTok] = useState<boolean>(true);
   const [postsShowInstagram, setPostsShowInstagram] = useState<boolean>(true);
   const [postsShowYouTube, setPostsShowYouTube] = useState<boolean>(true);
+  const [hiddenPlatforms, setHiddenPlatforms] = useState<Set<string>>(new Set());
   const [historicalData, setHistoricalData] = useState<any[]>([]);
   const [postsData, setPostsData] = useState<any[]>([]); // Posts per day/period
   const [data, setData] = useState<any | null>(null);
@@ -1509,35 +1510,57 @@ export default function DashboardTotalPage() {
     }
   }, [data, platformFilter]);
 
-  // Combined totals: historical (pre-cutoff) + realtime (post-cutoff), filtered by date range
+  // Combined totals: historical (pre-cutoff) + realtime (post-cutoff), filtered by date range & visible platforms
   const combinedTotals = useMemo(() => {
     const HIST_CUTOFF = '2026-02-05';
     const effStart = mode === 'accrual' ? accrualCustomStart : start;
     const effEnd = mode === 'accrual' ? accrualCustomEnd : end;
     const result = { views: 0, likes: 0, comments: 0 };
 
+    // Check which platforms are visible (not hidden)
+    const showTT = !hiddenPlatforms.has('TikTok');
+    const showIG = !hiddenPlatforms.has('Instagram');
+    const showYT = !hiddenPlatforms.has('YouTube');
+
     // 1. Sum historical data only for periods that overlap with selected date range
     if (showHistorical && historicalData.length > 0) {
       for (const h of historicalData) {
         const hStart = String(h.start_date);
         const hEnd = String(h.end_date);
-        // Period overlaps with [effStart, effEnd] if hEnd >= effStart AND hStart <= effEnd
         if (hEnd < effStart || hStart > effEnd) continue;
-        result.views += Number(h.views || 0);
-        result.likes += Number(h.likes || 0);
-        result.comments += Number(h.comments || 0);
+        // Sum per-platform based on visibility
+        if (showTT) {
+          result.views += Number(h.tiktok || 0);
+          result.likes += Number(h.tiktok_likes || 0);
+          result.comments += Number(h.tiktok_comments || 0);
+        }
+        if (showIG) {
+          result.views += Number(h.instagram || 0);
+          result.likes += Number(h.instagram_likes || 0);
+          result.comments += Number(h.instagram_comments || 0);
+        }
+        if (showYT) {
+          result.views += Number(h.youtube || 0);
+          result.likes += Number(h.youtube_likes || 0);
+          result.comments += Number(h.youtube_comments || 0);
+        }
       }
     }
 
-    // 2. Sum realtime data from videoSeriesData (already filtered by API date range)
-    if (videoSeriesData?.total) {
-      for (const s of videoSeriesData.total) {
+    // 2. Sum realtime data per-platform based on visibility
+    const addSeries = (series: any[]) => {
+      for (const s of series) {
         const date = String(s.date);
         if (showHistorical && historicalData.length > 0 && date < HIST_CUTOFF) continue;
         result.views += Number(s.views || 0);
         result.likes += Number(s.likes || 0);
         result.comments += Number(s.comments || 0);
       }
+    };
+    if (videoSeriesData) {
+      if (showTT) addSeries(videoSeriesData.tiktok || []);
+      if (showIG) addSeries(videoSeriesData.instagram || []);
+      if (showYT) addSeries(videoSeriesData.youtube || []);
     } else if (videoTotals) {
       result.views += videoTotals.views;
       result.likes += videoTotals.likes;
@@ -1545,7 +1568,7 @@ export default function DashboardTotalPage() {
     }
 
     return result;
-  }, [historicalData, showHistorical, videoSeriesData, videoTotals, start, end, mode, accrualCustomStart, accrualCustomEnd]);
+  }, [historicalData, showHistorical, videoSeriesData, videoTotals, start, end, mode, accrualCustomStart, accrualCustomEnd, hiddenPlatforms]);
 
   const crosshairPlugin = useMemo(()=>({
     id: 'crosshairPlugin',
@@ -1611,7 +1634,13 @@ export default function DashboardTotalPage() {
               <span>Views: <strong className="text-white">{Number(combinedTotals.views).toLocaleString('id-ID')}</strong></span>
               <span>Likes: <strong className="text-white">{Number(combinedTotals.likes).toLocaleString('id-ID')}</strong></span>
               <span>Comments: <strong className="text-white">{Number(combinedTotals.comments).toLocaleString('id-ID')}</strong></span>
-              <span>Posts: <strong className="text-white">{postsData.reduce((sum, p: any) => sum + Number(p.posts || 0), 0).toLocaleString('id-ID')}</strong></span>
+              <span>Posts: <strong className="text-white">{postsData.reduce((sum, p: any) => {
+                let count = 0;
+                if (!hiddenPlatforms.has('TikTok')) count += Number(p.posts_tiktok || 0);
+                if (!hiddenPlatforms.has('Instagram')) count += Number(p.posts_instagram || 0);
+                if (!hiddenPlatforms.has('YouTube')) count += Number(p.posts_youtube || 0);
+                return sum + count;
+              }, 0).toLocaleString('id-ID')}</strong></span>
               {lastUpdatedHuman && (
                 <span className="sm:ml-auto text-white/60 w-full sm:w-auto mt-1 sm:mt-0">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
               )}
@@ -1663,7 +1692,26 @@ export default function DashboardTotalPage() {
             responsive:true,
             interaction:{ mode:'index', intersect:false },
             plugins:{
-              legend:{ labels:{ color:'rgba(255,255,255,0.8)'} },
+              legend:{
+                labels:{ color:'rgba(255,255,255,0.8)'},
+                onClick: (_e: any, legendItem: any, legend: any) => {
+                  // Default Chart.js toggle behavior
+                  const index = legendItem.datasetIndex;
+                  const ci = legend.chart;
+                  const meta = ci.getDatasetMeta(index);
+                  meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
+                  ci.update();
+                  // Track hidden platforms for header totals
+                  const label = legendItem.text;
+                  if (['TikTok', 'Instagram', 'YouTube'].includes(label)) {
+                    setHiddenPlatforms(prev => {
+                      const next = new Set(prev);
+                      if (meta.hidden) next.add(label); else next.delete(label);
+                      return next;
+                    });
+                  }
+                }
+              },
               tooltip: {
                 filter: function(tooltipItem: any) {
                   const label = tooltipItem.dataset.label || '';
