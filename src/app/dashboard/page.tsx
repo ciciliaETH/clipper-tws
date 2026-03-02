@@ -40,7 +40,7 @@ export default function DashboardTotalPage() {
   const [postsShowTikTok, setPostsShowTikTok] = useState<boolean>(true);
   const [postsShowInstagram, setPostsShowInstagram] = useState<boolean>(true);
   const [postsShowYouTube, setPostsShowYouTube] = useState<boolean>(true);
-  const [hiddenLegends, setHiddenPlatforms] = useState<Set<string>>(new Set());
+  const [hiddenLegends, setHiddenLegends] = useState<Set<string>>(new Set());
   const [historicalData, setHistoricalData] = useState<any[]>([]);
   const [postsData, setPostsData] = useState<any[]>([]); // Posts per day/period
   const [data, setData] = useState<any | null>(null);
@@ -1487,7 +1487,22 @@ export default function DashboardTotalPage() {
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  
+
+  // Re-apply hidden state to chart after React re-renders (Chart.js resets meta.hidden)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || hiddenLegends.size === 0) return;
+    let changed = false;
+    chart.data.datasets.forEach((_ds: any, i: number) => {
+      const meta = chart.getDatasetMeta(i);
+      const label = chart.data.datasets[i].label || '';
+      const shouldHide = hiddenLegends.has(label);
+      if (shouldHide && !meta.hidden) { meta.hidden = true; changed = true; }
+      if (!shouldHide && meta.hidden) { meta.hidden = null; changed = true; }
+    });
+    if (changed) chart.update('none');
+  }, [hiddenLegends, chartData]);
+
   // Calculate grand totals: prefer sum of all group totals (from members API) for consistency
   // with /dashboard/groups page. Fallback to series-based sum.
   const grandTotals = useMemo(() => {
@@ -1707,12 +1722,12 @@ export default function DashboardTotalPage() {
                   const meta = ci.getDatasetMeta(index);
                   meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
                   ci.update();
-                  // Track hidden legend items for header totals (platforms + campaigns/groups)
+                  // Track hidden legend items for header totals (simple toggle, don't rely on meta.hidden)
                   const label = legendItem.text;
                   if (label && label !== 'Total') {
                     setHiddenLegends(prev => {
                       const next = new Set(prev);
-                      if (meta.hidden) next.add(label); else next.delete(label);
+                      if (next.has(label)) next.delete(label); else next.add(label);
                       return next;
                     });
                   }
