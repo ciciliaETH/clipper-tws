@@ -69,6 +69,7 @@ export default function CampaignsPage() {
   const [showYouTube, setShowYouTube] = useState(true);
   const userChartRef = useRef<any>(null);
   const [userActiveIndex, setUserActiveIndex] = useState<number | null>(null);
+  const [hiddenLegends, setHiddenLegends] = useState<Set<string>>(new Set());
   // Manage members state
   const [groupParticipants, setGroupParticipants] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
@@ -421,6 +422,50 @@ export default function CampaignsPage() {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const formatNum = (n:number)=> new Intl.NumberFormat('id-ID').format(Math.round(n||0));
   const SHOW_VALUE_PANEL = false; // set true to re-enable chips panel above chart
+
+  // Combined totals that respect hidden legend items
+  const combinedTotals = useMemo(() => {
+    const result = { views: 0, likes: 0, comments: 0 };
+    const showTT = !hiddenLegends.has('TikTok');
+    const showIG = !hiddenLegends.has('Instagram');
+    const showYT = !hiddenLegends.has('YouTube');
+
+    if (videoSeries) {
+      const sumSeries = (series: any[]) => {
+        for (const s of series) {
+          result.views += Number(s.views || 0);
+          result.likes += Number(s.likes || 0);
+          result.comments += Number(s.comments || 0);
+        }
+      };
+      if (showTT) sumSeries(videoSeries.tiktok || []);
+      if (showIG) sumSeries(videoSeries.instagram || []);
+      if (showYT) sumSeries(videoSeries.youtube || []);
+    } else {
+      const src = memberGroupTotals || metrics?.totals;
+      if (src) {
+        result.views = Number(src.views || 0);
+        result.likes = Number(src.likes || 0);
+        result.comments = Number(src.comments || 0);
+      }
+    }
+    return result;
+  }, [videoSeries, memberGroupTotals, metrics, hiddenLegends]);
+
+  // Re-apply hidden state to chart after React re-renders
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || hiddenLegends.size === 0) return;
+    let changed = false;
+    chart.data.datasets.forEach((_ds: any, i: number) => {
+      const meta = chart.getDatasetMeta(i);
+      const label = chart.data.datasets[i].label || '';
+      const shouldHide = hiddenLegends.has(label);
+      if (shouldHide && !meta.hidden) { meta.hidden = true; changed = true; }
+      if (!shouldHide && meta.hidden) { meta.hidden = null; changed = true; }
+    });
+    if (changed) chart.update('none');
+  }, [hiddenLegends, chartData]);
 
   // Crosshair + floating value like stock chart
   const crosshairPlugin = useMemo(()=>({
@@ -787,9 +832,9 @@ export default function CampaignsPage() {
             <div className="flex flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-white/70">
               {(videoTotals || memberGroupTotals || metrics) && (
                 <>
-                  <span>Views: <strong className="text-white">{(videoTotals?.views ?? memberGroupTotals?.views ?? metrics?.totals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Likes: <strong className="text-white">{(videoTotals?.likes ?? memberGroupTotals?.likes ?? metrics?.totals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Comments: <strong className="text-white">{(videoTotals?.comments ?? memberGroupTotals?.comments ?? metrics?.totals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Views: <strong className="text-white">{Number(combinedTotals.views).toLocaleString('id-ID')}</strong></span>
+                  <span>Likes: <strong className="text-white">{Number(combinedTotals.likes).toLocaleString('id-ID')}</strong></span>
+                  <span>Comments: <strong className="text-white">{Number(combinedTotals.comments).toLocaleString('id-ID')}</strong></span>
                   {lastUpdatedHuman && (
                     <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
                   )}
@@ -854,7 +899,26 @@ export default function CampaignsPage() {
               <Line ref={chartRef} data={chartData} plugins={[crosshairPlugin]} options={{
                 responsive: true,
                 interaction: { mode: 'index', intersect: false },
-                plugins: { legend: { labels: { color: 'rgba(255,255,255,0.8)' } } },
+                plugins: {
+                  legend: {
+                    labels: { color: 'rgba(255,255,255,0.8)' },
+                    onClick: (_e: any, legendItem: any, legend: any) => {
+                      const index = legendItem.datasetIndex;
+                      const ci = legend.chart;
+                      const meta = ci.getDatasetMeta(index);
+                      meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
+                      ci.update();
+                      const label = legendItem.text;
+                      if (label && label !== 'Total') {
+                        setHiddenLegends(prev => {
+                          const next = new Set(prev);
+                          if (next.has(label)) next.delete(label); else next.add(label);
+                          return next;
+                        });
+                      }
+                    }
+                  }
+                },
                 scales: {
                   x: {
                     ticks: {
