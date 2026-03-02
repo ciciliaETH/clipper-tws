@@ -404,10 +404,10 @@ export async function GET(req: Request, context: any) {
         const userToIG = new Map<string,string[]>();
         for (const empId of empIds) {
           const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
-          const useTT = assignedTT.length ? assignedTT : (campaignTT.length ? campaignTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean))));
+          const useTT = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
           userToTT.set(empId, Array.from(new Set(useTT)));
           const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
-          const useIG = assignedIG.length ? assignedIG : (campaignIG.length ? campaignIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean))));
+          const useIG = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
           userToIG.set(empId, Array.from(new Set(useIG)));
         }
         // Query TT posts_daily
@@ -560,17 +560,17 @@ export async function GET(req: Request, context: any) {
           }
         }
       } else {
-      // collect union per-employee based on assignment, else fallbacks
+      // collect union of all usernames we need to fetch from posts_daily
       const ytNeed = new Set<string>();
       for (const empId of empIds) {
         const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
-        const useTT = assignedTT.length ? assignedTT : (campaignTT.length ? campaignTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean))));
+        const useTT = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
         for (const u of useTT) tikNeed.add(u);
         const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
-        const useIG = assignedIG.length ? assignedIG : (campaignIG.length ? campaignIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean))));
+        const useIG = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
         for (const u of useIG) igNeed.add(u);
         const assignedYT = (byEmployeeYT.get(empId) || []).filter(Boolean);
-        const useYT = assignedYT.length ? assignedYT : (campaignYT.length ? campaignYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean))));
+        const useYT = assignedYT.length ? assignedYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean)));
         for (const u of useYT) ytNeed.add(u);
       }
       // Always include campaign-level participants for accurate group totals.
@@ -686,9 +686,12 @@ export async function GET(req: Request, context: any) {
       const assignedTT: string[] = (byEmployee.get(empId) || []).filter(Boolean);
       const assignedIG: string[] = (byEmployeeIG.get(empId) || []).filter(Boolean);
       const assignedYT: string[] = (byEmployeeYT.get(empId) || []).filter(Boolean);
-      let accountUsernames: string[] = assignedTT.length ? assignedTT : (campaignTT.length ? campaignTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean))));
-      let accountIG: string[] = assignedIG.length ? assignedIG : (campaignIG.length ? campaignIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean))));
-      let accountYT: string[] = assignedYT.length ? assignedYT : (campaignYT.length ? campaignYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean))));
+      // Per-employee totals: only use explicitly assigned usernames or personal profile fallback.
+      // Do NOT fall back to campaign-level participants — that causes every unassigned employee
+      // to show the total of ALL campaign usernames, inflating individual rows.
+      let accountUsernames: string[] = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
+      let accountIG: string[] = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
+      let accountYT: string[] = assignedYT.length ? assignedYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean)));
       for (const u of accountUsernames) assignmentByUsername[u] = { employee_id: empId, name: user.full_name || user.email || user.tiktok_username };
 
       // totals: STRICT MODE
@@ -849,9 +852,6 @@ export async function GET(req: Request, context: any) {
     // Previously this summed per-employee totals, which inflated numbers when employees
     // without explicit assignments all received the campaign-wide username list.
     let groupTotals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
-    const groupTotalsTiktok = { views: 0, likes: 0, comments: 0, shares: 0, posts: 0 };
-    const groupTotalsInstagram = { views: 0, likes: 0, comments: 0, posts: 0 };
-    const groupTotalsYoutube = { views: 0, likes: 0, comments: 0, posts: 0 };
     if (sumsByUsername || sumsByUsernameIG || sumsByChannelYT) {
       if (sumsByUsername) {
         for (const m of Object.values(sumsByUsername) as any[]) {
@@ -861,11 +861,6 @@ export async function GET(req: Request, context: any) {
           groupTotals.shares += m.shares || 0;
           groupTotals.saves += m.saves || 0;
           groupTotals.posts += m.posts || 0;
-          groupTotalsTiktok.views += m.views || 0;
-          groupTotalsTiktok.likes += m.likes || 0;
-          groupTotalsTiktok.comments += m.comments || 0;
-          groupTotalsTiktok.shares += m.shares || 0;
-          groupTotalsTiktok.posts += m.posts || 0;
         }
       }
       if (sumsByUsernameIG) {
@@ -874,10 +869,6 @@ export async function GET(req: Request, context: any) {
           groupTotals.likes += m.likes || 0;
           groupTotals.comments += m.comments || 0;
           groupTotals.posts += m.posts || 0;
-          groupTotalsInstagram.views += m.views || 0;
-          groupTotalsInstagram.likes += m.likes || 0;
-          groupTotalsInstagram.comments += m.comments || 0;
-          groupTotalsInstagram.posts += m.posts || 0;
         }
       }
       if (sumsByChannelYT) {
@@ -886,10 +877,6 @@ export async function GET(req: Request, context: any) {
           groupTotals.likes += m.likes || 0;
           groupTotals.comments += m.comments || 0;
           groupTotals.posts += m.posts || 0;
-          groupTotalsYoutube.views += m.views || 0;
-          groupTotalsYoutube.likes += m.likes || 0;
-          groupTotalsYoutube.comments += m.comments || 0;
-          groupTotalsYoutube.posts += m.posts || 0;
         }
       }
     } else {
@@ -904,14 +891,7 @@ export async function GET(req: Request, context: any) {
       }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 });
     }
 
-    return NextResponse.json({
-      members: results,
-      groupTotals,
-      groupTotalsTiktok,
-      groupTotalsInstagram,
-      groupTotalsYoutube,
-      assignmentByUsername,
-    });
+    return NextResponse.json({ members: results, groupTotals, assignmentByUsername });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
