@@ -24,7 +24,8 @@ export default function CampaignVideosPage() {
   // Wait for URL params to be read before fetching
   const [ready, setReady] = useState(false)
 
-  // Read date range from URL query params on mount (passed from groups page)
+  // Read date range + employees_only from URL query params on mount (passed from groups page)
+  const [employeesOnly, setEmployeesOnly] = useState(false)
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search)
     const s = sp.get('start')
@@ -35,6 +36,7 @@ export default function CampaignVideosPage() {
       const d = new Date(); d.setDate(d.getDate() - 30)
       setDateRange({ start: d.toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) })
     }
+    if (sp.get('employees_only') === '1') setEmployeesOnly(true)
     setReady(true)
   }, [])
 
@@ -46,6 +48,7 @@ export default function CampaignVideosPage() {
     if (dateRange.end) url.searchParams.set('end', dateRange.end)
     url.searchParams.set('platform', platform)
     if (debouncedHashtag) url.searchParams.set('hashtag', debouncedHashtag)
+    if (employeesOnly) url.searchParams.set('employees_only', '1')
 
     fetch(url.toString())
       .then(res => res.json())
@@ -55,7 +58,7 @@ export default function CampaignVideosPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [ready, campaignId, dateRange, platform, debouncedHashtag])
+  }, [ready, campaignId, dateRange, platform, debouncedHashtag, employeesOnly])
 
   const fmt = (n: number) => new Intl.NumberFormat('id-ID').format(n)
 
