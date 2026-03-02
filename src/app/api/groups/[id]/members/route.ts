@@ -849,6 +849,9 @@ export async function GET(req: Request, context: any) {
     // Previously this summed per-employee totals, which inflated numbers when employees
     // without explicit assignments all received the campaign-wide username list.
     let groupTotals = { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 };
+    const groupTotalsTiktok = { views: 0, likes: 0, comments: 0, shares: 0, posts: 0 };
+    const groupTotalsInstagram = { views: 0, likes: 0, comments: 0, posts: 0 };
+    const groupTotalsYoutube = { views: 0, likes: 0, comments: 0, posts: 0 };
     if (sumsByUsername || sumsByUsernameIG || sumsByChannelYT) {
       if (sumsByUsername) {
         for (const m of Object.values(sumsByUsername) as any[]) {
@@ -858,6 +861,11 @@ export async function GET(req: Request, context: any) {
           groupTotals.shares += m.shares || 0;
           groupTotals.saves += m.saves || 0;
           groupTotals.posts += m.posts || 0;
+          groupTotalsTiktok.views += m.views || 0;
+          groupTotalsTiktok.likes += m.likes || 0;
+          groupTotalsTiktok.comments += m.comments || 0;
+          groupTotalsTiktok.shares += m.shares || 0;
+          groupTotalsTiktok.posts += m.posts || 0;
         }
       }
       if (sumsByUsernameIG) {
@@ -866,6 +874,10 @@ export async function GET(req: Request, context: any) {
           groupTotals.likes += m.likes || 0;
           groupTotals.comments += m.comments || 0;
           groupTotals.posts += m.posts || 0;
+          groupTotalsInstagram.views += m.views || 0;
+          groupTotalsInstagram.likes += m.likes || 0;
+          groupTotalsInstagram.comments += m.comments || 0;
+          groupTotalsInstagram.posts += m.posts || 0;
         }
       }
       if (sumsByChannelYT) {
@@ -874,6 +886,10 @@ export async function GET(req: Request, context: any) {
           groupTotals.likes += m.likes || 0;
           groupTotals.comments += m.comments || 0;
           groupTotals.posts += m.posts || 0;
+          groupTotalsYoutube.views += m.views || 0;
+          groupTotalsYoutube.likes += m.likes || 0;
+          groupTotalsYoutube.comments += m.comments || 0;
+          groupTotalsYoutube.posts += m.posts || 0;
         }
       }
     } else {
@@ -888,7 +904,14 @@ export async function GET(req: Request, context: any) {
       }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0, posts: 0 });
     }
 
-    return NextResponse.json({ members: results, groupTotals, assignmentByUsername });
+    return NextResponse.json({
+      members: results,
+      groupTotals,
+      groupTotalsTiktok,
+      groupTotalsInstagram,
+      groupTotalsYoutube,
+      assignmentByUsername,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

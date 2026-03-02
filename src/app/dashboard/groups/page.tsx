@@ -48,6 +48,9 @@ export default function CampaignsPage() {
   const [participants, setParticipants] = useState<any[]>([]);
   const [assignmentByUsername, setAssignmentByUsername] = useState<Record<string, { employee_id: string, name: string }>>({});
   const [memberGroupTotals, setMemberGroupTotals] = useState<any | null>(null);
+  const [memberGroupTotalsTiktok, setMemberGroupTotalsTiktok] = useState<any | null>(null);
+  const [memberGroupTotalsInstagram, setMemberGroupTotalsInstagram] = useState<any | null>(null);
+  const [memberGroupTotalsYoutube, setMemberGroupTotalsYoutube] = useState<any | null>(null);
   const [videoTotals, setVideoTotals] = useState<{ views: number; likes: number; comments: number } | null>(null);
   const [videoSeries, setVideoSeries] = useState<{ total: any[]; tiktok: any[]; instagram: any[]; youtube: any[] } | null>(null);
   const [empMetricsTotals, setEmpMetricsTotals] = useState<Record<string, any>>({});
@@ -267,6 +270,9 @@ export default function CampaignsPage() {
         setParticipants(data.members || []);
         setAssignmentByUsername(data.assignmentByUsername || {});
         if (data.groupTotals) setMemberGroupTotals(data.groupTotals);
+        if (data.groupTotalsTiktok) setMemberGroupTotalsTiktok(data.groupTotalsTiktok);
+        if (data.groupTotalsInstagram) setMemberGroupTotalsInstagram(data.groupTotalsInstagram);
+        if (data.groupTotalsYoutube) setMemberGroupTotalsYoutube(data.groupTotalsYoutube);
       }
     };
     // Fetch totals from the videos API — this is the same API that powers the
@@ -423,34 +429,42 @@ export default function CampaignsPage() {
   const formatNum = (n:number)=> new Intl.NumberFormat('id-ID').format(Math.round(n||0));
   const SHOW_VALUE_PANEL = false; // set true to re-enable chips panel above chart
 
-  // Combined totals that respect hidden legend items
+  // Combined totals from members API (matches employee table), with legend toggle support
   const combinedTotals = useMemo(() => {
     const result = { views: 0, likes: 0, comments: 0 };
     const showTT = !hiddenLegends.has('TikTok');
     const showIG = !hiddenLegends.has('Instagram');
     const showYT = !hiddenLegends.has('YouTube');
 
-    if (videoSeries) {
-      const sumSeries = (series: any[]) => {
-        for (const s of series) {
-          result.views += Number(s.views || 0);
-          result.likes += Number(s.likes || 0);
-          result.comments += Number(s.comments || 0);
-        }
-      };
-      if (showTT) sumSeries(videoSeries.tiktok || []);
-      if (showIG) sumSeries(videoSeries.instagram || []);
-      if (showYT) sumSeries(videoSeries.youtube || []);
-    } else {
-      const src = memberGroupTotals || metrics?.totals;
-      if (src) {
-        result.views = Number(src.views || 0);
-        result.likes = Number(src.likes || 0);
-        result.comments = Number(src.comments || 0);
+    // Use per-platform group totals from members API (accurate, matches employee table)
+    if (memberGroupTotalsTiktok || memberGroupTotalsInstagram || memberGroupTotalsYoutube) {
+      if (showTT && memberGroupTotalsTiktok) {
+        result.views += Number(memberGroupTotalsTiktok.views || 0);
+        result.likes += Number(memberGroupTotalsTiktok.likes || 0);
+        result.comments += Number(memberGroupTotalsTiktok.comments || 0);
       }
+      if (showIG && memberGroupTotalsInstagram) {
+        result.views += Number(memberGroupTotalsInstagram.views || 0);
+        result.likes += Number(memberGroupTotalsInstagram.likes || 0);
+        result.comments += Number(memberGroupTotalsInstagram.comments || 0);
+      }
+      if (showYT && memberGroupTotalsYoutube) {
+        result.views += Number(memberGroupTotalsYoutube.views || 0);
+        result.likes += Number(memberGroupTotalsYoutube.likes || 0);
+        result.comments += Number(memberGroupTotalsYoutube.comments || 0);
+      }
+    } else if (memberGroupTotals) {
+      // Fallback: aggregate totals (no per-platform breakdown available)
+      result.views = Number(memberGroupTotals.views || 0);
+      result.likes = Number(memberGroupTotals.likes || 0);
+      result.comments = Number(memberGroupTotals.comments || 0);
+    } else if (metrics?.totals) {
+      result.views = Number(metrics.totals.views || 0);
+      result.likes = Number(metrics.totals.likes || 0);
+      result.comments = Number(metrics.totals.comments || 0);
     }
     return result;
-  }, [videoSeries, memberGroupTotals, metrics, hiddenLegends]);
+  }, [memberGroupTotals, memberGroupTotalsTiktok, memberGroupTotalsInstagram, memberGroupTotalsYoutube, metrics, hiddenLegends]);
 
   // Re-apply hidden state to chart after React re-renders
   useEffect(() => {
