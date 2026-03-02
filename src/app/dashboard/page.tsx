@@ -1509,21 +1509,27 @@ export default function DashboardTotalPage() {
     }
   }, [data, platformFilter]);
 
-  // Combined totals: historical (pre-cutoff) + realtime (post-cutoff) to avoid double-counting
+  // Combined totals: historical (pre-cutoff) + realtime (post-cutoff), filtered by date range
   const combinedTotals = useMemo(() => {
     const HIST_CUTOFF = '2026-02-05';
+    const effStart = mode === 'accrual' ? accrualCustomStart : start;
+    const effEnd = mode === 'accrual' ? accrualCustomEnd : end;
     const result = { views: 0, likes: 0, comments: 0 };
 
-    // 1. Sum historical data (weekly_historical_data, covers Aug 2025 → Feb 4 2026)
+    // 1. Sum historical data only for periods that overlap with selected date range
     if (showHistorical && historicalData.length > 0) {
       for (const h of historicalData) {
+        const hStart = String(h.start_date);
+        const hEnd = String(h.end_date);
+        // Period overlaps with [effStart, effEnd] if hEnd >= effStart AND hStart <= effEnd
+        if (hEnd < effStart || hStart > effEnd) continue;
         result.views += Number(h.views || 0);
         result.likes += Number(h.likes || 0);
         result.comments += Number(h.comments || 0);
       }
     }
 
-    // 2. Sum realtime data from videoSeriesData, only dates >= cutoff to avoid overlap
+    // 2. Sum realtime data from videoSeriesData (already filtered by API date range)
     if (videoSeriesData?.total) {
       for (const s of videoSeriesData.total) {
         const date = String(s.date);
@@ -1533,14 +1539,13 @@ export default function DashboardTotalPage() {
         result.comments += Number(s.comments || 0);
       }
     } else if (videoTotals) {
-      // Fallback if no series data: use videoTotals directly
       result.views += videoTotals.views;
       result.likes += videoTotals.likes;
       result.comments += videoTotals.comments;
     }
 
     return result;
-  }, [historicalData, showHistorical, videoSeriesData, videoTotals]);
+  }, [historicalData, showHistorical, videoSeriesData, videoTotals, start, end, mode, accrualCustomStart, accrualCustomEnd]);
 
   const crosshairPlugin = useMemo(()=>({
     id: 'crosshairPlugin',
