@@ -403,12 +403,11 @@ export async function GET(req: Request, context: any) {
         const userToTT = new Map<string,string[]>();
         const userToIG = new Map<string,string[]>();
         for (const empId of empIds) {
+          // STRICT: only use explicit campaign assignments — no fallback
           const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
-          const useTT = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
-          userToTT.set(empId, Array.from(new Set(useTT)));
+          userToTT.set(empId, Array.from(new Set(assignedTT)));
           const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
-          const useIG = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
-          userToIG.set(empId, Array.from(new Set(useIG)));
+          userToIG.set(empId, Array.from(new Set(assignedIG)));
         }
         // Query TT posts_daily
         const ttUnion = Array.from(new Set(Array.from(userToTT.values()).flat())).filter(Boolean);
@@ -561,17 +560,12 @@ export async function GET(req: Request, context: any) {
         }
       } else {
       // collect union of all usernames we need to fetch from posts_daily
+      // STRICT: only explicit assignments per employee — no fallback
       const ytNeed = new Set<string>();
       for (const empId of empIds) {
-        const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
-        const useTT = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
-        for (const u of useTT) tikNeed.add(u);
-        const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
-        const useIG = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
-        for (const u of useIG) igNeed.add(u);
-        const assignedYT = (byEmployeeYT.get(empId) || []).filter(Boolean);
-        const useYT = assignedYT.length ? assignedYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean)));
-        for (const u of useYT) ytNeed.add(u);
+        for (const u of (byEmployee.get(empId) || [])) if (u) tikNeed.add(u);
+        for (const u of (byEmployeeIG.get(empId) || [])) if (u) igNeed.add(u);
+        for (const u of (byEmployeeYT.get(empId) || [])) if (u) ytNeed.add(u);
       }
       // Always include campaign-level participants for accurate group totals.
       // Without this, campaign usernames are only included for employees without
@@ -686,12 +680,12 @@ export async function GET(req: Request, context: any) {
       const assignedTT: string[] = (byEmployee.get(empId) || []).filter(Boolean);
       const assignedIG: string[] = (byEmployeeIG.get(empId) || []).filter(Boolean);
       const assignedYT: string[] = (byEmployeeYT.get(empId) || []).filter(Boolean);
-      // Per-employee totals: only use explicitly assigned usernames or personal profile fallback.
-      // Do NOT fall back to campaign-level participants — that causes every unassigned employee
-      // to show the total of ALL campaign usernames, inflating individual rows.
-      let accountUsernames: string[] = assignedTT.length ? assignedTT : Array.from(new Set((fallbackTikTok.get(empId) || []).filter(Boolean)));
-      let accountIG: string[] = assignedIG.length ? assignedIG : Array.from(new Set((fallbackIG.get(empId) || []).filter(Boolean)));
-      let accountYT: string[] = assignedYT.length ? assignedYT : Array.from(new Set((fallbackYT.get(empId) || []).filter(Boolean)));
+      // STRICT: only use explicitly assigned usernames for this campaign.
+      // No fallback — fallback pools (profile, user_*_usernames) contain shared accounts
+      // that cause every employee to show the same inflated totals.
+      let accountUsernames: string[] = assignedTT;
+      let accountIG: string[] = assignedIG;
+      let accountYT: string[] = assignedYT;
       for (const u of accountUsernames) assignmentByUsername[u] = { employee_id: empId, name: user.full_name || user.email || user.tiktok_username };
 
       // totals: STRICT MODE
