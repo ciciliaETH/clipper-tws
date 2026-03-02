@@ -24,6 +24,7 @@ export async function GET(req: Request, context: any) {
     const endDate = url.searchParams.get('end') || ''
     const extraHashtag = url.searchParams.get('hashtag') || ''
     const summaryOnly = url.searchParams.get('summary') === '1'
+    const employeesOnly = url.searchParams.get('employees_only') === '1'
 
     const supabase = supabaseAdmin()
 
@@ -82,14 +83,16 @@ export async function GET(req: Request, context: any) {
     for (const a of igAliases || []) { if (a.instagram_username) igUserToId.set(norm(a.instagram_username), a.user_id) }
     for (const a of ttEmpParts || []) { if (a.tiktok_username) ttUserToId.set(norm(a.tiktok_username), a.employee_id) }
     for (const a of igEmpParts || []) { if (a.instagram_username) igUserToId.set(norm(a.instagram_username), a.employee_id) }
-    // Add campaign-level participants (ensures consistency with members API)
-    for (const r of campTT || []) {
-      const u = (r as any).tiktok_username
-      if (u) { const n = norm(u); if (!ttUserToId.has(n)) ttUserToId.set(n, 'campaign') }
-    }
-    for (const r of campIG || []) {
-      const u = (r as any).instagram_username
-      if (u) { const n = norm(u); if (!igUserToId.has(n)) igUserToId.set(n, 'campaign') }
+    // Add campaign-level participants only when NOT filtering to group employees only
+    if (!employeesOnly) {
+      for (const r of campTT || []) {
+        const u = (r as any).tiktok_username
+        if (u) { const n = norm(u); if (!ttUserToId.has(n)) ttUserToId.set(n, 'campaign') }
+      }
+      for (const r of campIG || []) {
+        const u = (r as any).instagram_username
+        if (u) { const n = norm(u); if (!igUserToId.has(n)) igUserToId.set(n, 'campaign') }
+      }
     }
 
     // Date range defaults
@@ -209,13 +212,15 @@ export async function GET(req: Request, context: any) {
           const cid = (r as any).youtube_channel_id; if (cid) { channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).employee_id) }
         }
       }
-      // Campaign-level YouTube participants
-      try {
-        const { data: campYT } = await supabase.from('campaign_youtube_participants').select('youtube_channel_id').eq('campaign_id', campaignId)
-        for (const r of campYT || []) {
-          const cid = (r as any).youtube_channel_id; if (cid) channels.push(String(cid).trim())
-        }
-      } catch {} // table might not exist
+      // Campaign-level YouTube participants (skip when filtering to group employees only)
+      if (!employeesOnly) {
+        try {
+          const { data: campYT } = await supabase.from('campaign_youtube_participants').select('youtube_channel_id').eq('campaign_id', campaignId)
+          for (const r of campYT || []) {
+            const cid = (r as any).youtube_channel_id; if (cid) channels.push(String(cid).trim())
+          }
+        } catch {} // table might not exist
+      }
       const uniqueChannels = Array.from(new Set(channels.filter(Boolean)))
       if (uniqueChannels.length > 0) {
         const { data: ytRows } = await supabase
