@@ -26,11 +26,11 @@ export async function GET(req: Request) {
   // Fetch all employees (karyawan + leader)
   const { data: employees } = await supa
     .from('users')
-    .select('id, full_name, tiktok_username, instagram_username, youtube_channel_id, extra_instagram_usernames')
+    .select('id, full_name, tiktok_username, instagram_username, youtube_channel_id')
     .in('role', ['karyawan', 'leader'])
     .order('full_name', { ascending: true });
 
-  if (!employees?.length) return NextResponse.json({ data: [], debug: 'no employees found' });
+  if (!employees?.length) return NextResponse.json({ data: [] });
 
   const empIds = employees.map(e => e.id);
 
@@ -53,9 +53,6 @@ export async function GET(req: Request) {
   for (const e of employees) {
     const set = new Set<string>();
     if (e.instagram_username) set.add(String(e.instagram_username).replace(/^@+/, '').toLowerCase());
-    if (Array.isArray((e as any).extra_instagram_usernames)) {
-      for (const u of (e as any).extra_instagram_usernames) if (u) set.add(String(u).replace(/^@+/, '').toLowerCase());
-    }
     empIG.set(e.id, set);
   }
   for (const r of igAliases || []) {
@@ -179,19 +176,5 @@ export async function GET(req: Request) {
   // Sort by total desc
   data.sort((a, b) => (b.tiktok + b.instagram + b.youtube) - (a.tiktok + a.instagram + a.youtube));
 
-  return NextResponse.json({
-    data,
-    debug: {
-      employeeCount: employees.length,
-      ttUsernamesCount: allTT.size,
-      igUsernamesCount: allIG.size,
-      ytChannelsCount: allYT.size,
-      ttPostsFound: Array.from(ttPostsByUsername.values()).reduce((a, b) => a + b, 0),
-      igPostsFound: Array.from(igPostsByUsername.values()).reduce((a, b) => a + b, 0),
-      ytPostsFound: Array.from(ytPostsByChannel.values()).reduce((a, b) => a + b, 0),
-      sampleTTUsernames: Array.from(allTT).slice(0, 5),
-      sampleIGUsernames: Array.from(allIG).slice(0, 5),
-      dateRange: { start, end },
-    }
-  });
+  return NextResponse.json({ data });
 }
