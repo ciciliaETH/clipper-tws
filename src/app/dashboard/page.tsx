@@ -448,6 +448,7 @@ export default function DashboardTotalPage() {
             url.searchParams.set('start', effStart);
             url.searchParams.set('end', effEnd);
             url.searchParams.set('summary', '1');
+            url.searchParams.set('employees_only', '1');
             const res = await fetch(url.toString(), { cache: 'no-store' });
             const json = await res.json();
             return res.ok ? { id: c.id, name: c.name, json } : null;
