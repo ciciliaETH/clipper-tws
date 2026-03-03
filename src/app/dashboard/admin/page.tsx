@@ -47,8 +47,9 @@ export default function AdminPage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Deliverables tracker state
-  const [deliverables, setDeliverables] = useState<{ name: string; tiktok: number; instagram: number; youtube: number }[]>([]);
+  // Deliverables card state (per-employee popup)
+  const [delUser, setDelUser] = useState<User | null>(null);
+  const [delData, setDelData] = useState<{ name: string; tiktok: number; instagram: number; youtube: number } | null>(null);
   const [delStart, setDelStart] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7);
     return d.toISOString().slice(0, 10);
@@ -56,22 +57,30 @@ export default function AdminPage() {
   const [delEnd, setDelEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [delLoading, setDelLoading] = useState(false);
 
+  const openDeliverables = (user: User) => {
+    setDelUser(user);
+    setDelData(null);
+  };
+
   const loadDeliverables = useCallback(async () => {
+    if (!delUser) return;
     setDelLoading(true);
     try {
       const res = await fetch(`/api/admin/deliverables?start=${delStart}&end=${delEnd}`);
       if (res.ok) {
         const j = await res.json();
-        setDeliverables(j.data || []);
+        const all: { name: string; tiktok: number; instagram: number; youtube: number }[] = j.data || [];
+        const match = all.find((d: any) => d.name === delUser.full_name);
+        setDelData(match || { name: delUser.full_name || '', tiktok: 0, instagram: 0, youtube: 0 });
       }
     } catch (e) {
       console.error('Failed to load deliverables', e);
     } finally {
       setDelLoading(false);
     }
-  }, [delStart, delEnd]);
+  }, [delStart, delEnd, delUser]);
 
-  useEffect(() => { loadDeliverables(); }, [loadDeliverables]);
+  useEffect(() => { if (delUser) loadDeliverables(); }, [delUser, loadDeliverables]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -1100,7 +1109,7 @@ export default function AdminPage() {
                       ) : (
                         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20 text-white/80 text-xs flex-shrink-0">—</div>
                       )}
-                      <span className="truncate max-w-[100px] sm:max-w-none">{user.full_name}</span>
+                      <span className="truncate max-w-[100px] sm:max-w-none cursor-pointer hover:text-blue-300 transition-colors" onClick={(e) => { e.stopPropagation(); openDeliverables(user); }}>{user.full_name}</span>
                     </div>
                   </td>
                   <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-white/70">{user.username}</td>
@@ -1131,77 +1140,63 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Track Deliverables */}
-      <div className="glass rounded-2xl border border-white/10 p-3 sm:p-4 md:p-6 mt-4 sm:mt-8">
-        <h2 className="text-base sm:text-lg md:text-xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent mb-4">Track Deliverables</h2>
-        <div className="flex flex-wrap items-end gap-3 mb-4">
-          <div>
-            <label className="block text-xs text-white/60 mb-1">Dari</label>
-            <input type="date" value={delStart} onChange={e => setDelStart(e.target.value)} className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white text-sm" />
+      {/* Deliverables Card (per-employee popup) */}
+      {delUser && (
+        <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-50 p-4" onClick={() => setDelUser(null)}>
+          <div className="glass border border-white/10 p-4 sm:p-6 rounded-2xl w-full max-w-md glow-border" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-white">{delUser.full_name}</h2>
+              <button onClick={() => setDelUser(null)} className="text-white/60 hover:text-white"><FaTimes size={18} /></button>
+            </div>
+            <div className="flex flex-wrap items-end gap-3 mb-4">
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Dari</label>
+                <input type="date" value={delStart} onChange={e => setDelStart(e.target.value)} className="px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+              </div>
+              <div>
+                <label className="block text-xs text-white/60 mb-1">Sampai</label>
+                <input type="date" value={delEnd} onChange={e => setDelEnd(e.target.value)} className="px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+              </div>
+            </div>
+            {delLoading ? (
+              <p className="text-white/60 text-sm text-center py-8">Memuat...</p>
+            ) : delData ? (
+              <>
+                <div className="text-center text-white/60 text-xs mb-3">
+                  Total: <span className="text-white font-semibold">{delData.tiktok + delData.instagram + delData.youtube}</span> video
+                </div>
+                <div style={{ height: 180 }}>
+                  <Bar
+                    data={{
+                      labels: ['TikTok', 'Instagram', 'YouTube'],
+                      datasets: [{
+                        data: [delData.tiktok, delData.instagram, delData.youtube],
+                        backgroundColor: ['#38bdf8', '#f43f5e', '#ef4444'],
+                        borderRadius: 6,
+                        barThickness: 36,
+                      }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                      scales: {
+                        y: { beginAtZero: true, ticks: { color: 'rgba(255,255,255,0.6)', stepSize: 1 }, grid: { color: 'rgba(255,255,255,0.06)' } },
+                        x: { ticks: { color: 'rgba(255,255,255,0.8)', font: { size: 12 } }, grid: { display: false } },
+                      },
+                    }}
+                  />
+                </div>
+                <div className="flex justify-around mt-4 text-center text-xs">
+                  <div><div className="text-[#38bdf8] font-bold text-lg">{delData.tiktok}</div><div className="text-white/50">TikTok</div></div>
+                  <div><div className="text-[#f43f5e] font-bold text-lg">{delData.instagram}</div><div className="text-white/50">Instagram</div></div>
+                  <div><div className="text-[#ef4444] font-bold text-lg">{delData.youtube}</div><div className="text-white/50">YouTube</div></div>
+                </div>
+              </>
+            ) : null}
           </div>
-          <div>
-            <label className="block text-xs text-white/60 mb-1">Sampai</label>
-            <input type="date" value={delEnd} onChange={e => setDelEnd(e.target.value)} className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white text-sm" />
-          </div>
-          <button onClick={loadDeliverables} disabled={delLoading} className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 text-white text-sm disabled:opacity-50">
-            {delLoading ? 'Memuat...' : 'Refresh'}
-          </button>
         </div>
-        {delLoading ? (
-          <p className="text-white/60 text-sm">Memuat data deliverables...</p>
-        ) : deliverables.length === 0 ? (
-          <p className="text-white/60 text-sm">Tidak ada data untuk rentang tanggal ini.</p>
-        ) : (
-          <div style={{ height: Math.max(300, deliverables.length * 40) }}>
-            <Bar
-              data={{
-                labels: deliverables.map(d => d.name),
-                datasets: [
-                  {
-                    label: 'TikTok',
-                    data: deliverables.map(d => d.tiktok),
-                    backgroundColor: '#38bdf8',
-                    borderRadius: 4,
-                  },
-                  {
-                    label: 'Instagram',
-                    data: deliverables.map(d => d.instagram),
-                    backgroundColor: '#f43f5e',
-                    borderRadius: 4,
-                  },
-                  {
-                    label: 'YouTube',
-                    data: deliverables.map(d => d.youtube),
-                    backgroundColor: '#ef4444',
-                    borderRadius: 4,
-                  },
-                ],
-              }}
-              options={{
-                indexAxis: 'y',
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { position: 'top', labels: { color: '#fff', font: { size: 12 } } },
-                  tooltip: { mode: 'index', intersect: false },
-                },
-                scales: {
-                  x: {
-                    beginAtZero: true,
-                    ticks: { color: 'rgba(255,255,255,0.6)', stepSize: 1 },
-                    grid: { color: 'rgba(255,255,255,0.06)' },
-                    title: { display: true, text: 'Jumlah Video', color: 'rgba(255,255,255,0.6)' },
-                  },
-                  y: {
-                    ticks: { color: 'rgba(255,255,255,0.8)', font: { size: 11 } },
-                    grid: { display: false },
-                  },
-                },
-              }}
-            />
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Profile Picture Modal */}
       {showPictureModal && selectedPictureUrl && (
