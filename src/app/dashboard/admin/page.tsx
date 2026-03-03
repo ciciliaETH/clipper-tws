@@ -47,40 +47,34 @@ export default function AdminPage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Deliverables card state (per-employee popup)
-  const [delUser, setDelUser] = useState<User | null>(null);
-  const [delData, setDelData] = useState<{ name: string; tiktok: number; instagram: number; youtube: number } | null>(null);
+  // Deliverables state (inline mini bar + popup detail)
+  const [delMap, setDelMap] = useState<Map<string, { tiktok: number; instagram: number; youtube: number }>>(new Map());
   const [delStart, setDelStart] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7);
     return d.toISOString().slice(0, 10);
   });
   const [delEnd, setDelEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [delLoading, setDelLoading] = useState(false);
-
-  const openDeliverables = (user: User) => {
-    setDelUser(user);
-    setDelData(null);
-  };
+  const [delUser, setDelUser] = useState<User | null>(null);
 
   const loadDeliverables = useCallback(async () => {
-    if (!delUser) return;
     setDelLoading(true);
     try {
       const res = await fetch(`/api/admin/deliverables?start=${delStart}&end=${delEnd}`);
       if (res.ok) {
         const j = await res.json();
-        const all: { name: string; tiktok: number; instagram: number; youtube: number }[] = j.data || [];
-        const match = all.find((d: any) => d.name === delUser.full_name);
-        setDelData(match || { name: delUser.full_name || '', tiktok: 0, instagram: 0, youtube: 0 });
+        const m = new Map<string, { tiktok: number; instagram: number; youtube: number }>();
+        for (const d of j.data || []) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
+        setDelMap(m);
       }
     } catch (e) {
       console.error('Failed to load deliverables', e);
     } finally {
       setDelLoading(false);
     }
-  }, [delStart, delEnd, delUser]);
+  }, [delStart, delEnd]);
 
-  useEffect(() => { if (delUser) loadDeliverables(); }, [delUser, loadDeliverables]);
+  useEffect(() => { loadDeliverables(); }, [loadDeliverables]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -1070,19 +1064,26 @@ export default function AdminPage() {
       {loading && <p className="text-white/60">Memuat...</p>}
 
       <div className="glass rounded-2xl border border-white/10">
-        <div className="p-3 sm:p-4 flex items-center gap-3">
+        <div className="p-3 sm:p-4 flex flex-wrap items-center gap-3">
           <input
             value={searchName}
             onChange={(e)=> setSearchName(e.target.value)}
             placeholder="Cari nama lengkap…"
-            className="w-full max-w-md px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white text-sm"
+            className="w-full max-w-xs px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-white text-sm"
           />
+          <div className="flex items-center gap-2 ml-auto text-xs text-white/60">
+            <span>Deliverables:</span>
+            <input type="date" value={delStart} onChange={e => setDelStart(e.target.value)} className="px-2 py-1 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+            <span>-</span>
+            <input type="date" value={delEnd} onChange={e => setDelEnd(e.target.value)} className="px-2 py-1 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-[640px] w-full">
             <thead>
               <tr className="text-left text-[10px] sm:text-xs uppercase tracking-wider text-white/60">
                 <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Nama Lengkap</th>
+                <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Deliverables</th>
                 <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Username</th>
                 <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">TikTok</th>
                 <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3">Instagram</th>
@@ -1109,8 +1110,33 @@ export default function AdminPage() {
                       ) : (
                         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center border border-white/20 text-white/80 text-xs flex-shrink-0">—</div>
                       )}
-                      <span className="truncate max-w-[100px] sm:max-w-none cursor-pointer hover:text-blue-300 transition-colors" onClick={(e) => { e.stopPropagation(); openDeliverables(user); }}>{user.full_name}</span>
+                      <span className="truncate max-w-[100px] sm:max-w-none">{user.full_name}</span>
                     </div>
+                  </td>
+                  <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap">
+                    {(() => {
+                      const d = delMap.get(user.full_name || '');
+                      const tt = d?.tiktok || 0;
+                      const ig = d?.instagram || 0;
+                      const yt = d?.youtube || 0;
+                      const total = tt + ig + yt;
+                      if (delLoading) return <div className="w-24 h-5 rounded-full bg-white/5 animate-pulse" />;
+                      if (total === 0) return <span className="text-xs text-white/30">0</span>;
+                      const w = 96; // px width of bar
+                      const ttW = Math.round((tt / total) * w);
+                      const igW = Math.round((ig / total) * w);
+                      const ytW = w - ttW - igW;
+                      return (
+                        <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setDelUser(user)} title="Klik untuk detail">
+                          <div className="flex h-5 rounded-full overflow-hidden border border-white/10 group-hover:border-white/30 transition-all" style={{ width: w }}>
+                            {ttW > 0 && <div style={{ width: ttW, backgroundColor: '#38bdf8' }} />}
+                            {igW > 0 && <div style={{ width: igW, backgroundColor: '#f43f5e' }} />}
+                            {ytW > 0 && <div style={{ width: ytW, backgroundColor: '#ef4444' }} />}
+                          </div>
+                          <span className="text-xs text-white/60 group-hover:text-white transition-colors">{total}</span>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-white/70">{user.username}</td>
                   <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-4 text-xs sm:text-sm text-white/70 max-w-[120px] truncate">{[user.tiktok_username, ...(((user as any).extra_tiktok_usernames)||[])].filter(Boolean).join(', ') || '-'}</td>
@@ -1140,46 +1166,39 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Deliverables Card (per-employee popup) */}
-      {delUser && (
-        <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-50 p-4" onClick={() => setDelUser(null)}>
-          <div className="glass border border-white/10 p-4 sm:p-6 rounded-2xl w-full max-w-md glow-border" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-white">{delUser.full_name}</h2>
-              <button onClick={() => setDelUser(null)} className="text-white/60 hover:text-white"><FaTimes size={18} /></button>
-            </div>
-            <div className="flex flex-wrap items-end gap-3 mb-4">
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Dari</label>
-                <input type="date" value={delStart} onChange={e => setDelStart(e.target.value)} className="px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+      {/* Deliverables Detail Popup */}
+      {delUser && (() => {
+        const d = delMap.get(delUser.full_name || '');
+        const tt = d?.tiktok || 0;
+        const ig = d?.instagram || 0;
+        const yt = d?.youtube || 0;
+        const total = tt + ig + yt;
+        return (
+          <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-50 p-4" onClick={() => setDelUser(null)}>
+            <div className="glass border border-white/10 p-5 sm:p-6 rounded-2xl w-full max-w-sm glow-border" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-5">
+                <h2 className="text-lg font-semibold text-white">{delUser.full_name}</h2>
+                <button onClick={() => setDelUser(null)} className="text-white/60 hover:text-white"><FaTimes size={18} /></button>
               </div>
-              <div>
-                <label className="block text-xs text-white/60 mb-1">Sampai</label>
-                <input type="date" value={delEnd} onChange={e => setDelEnd(e.target.value)} className="px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 text-white text-xs" />
+              <div className="text-center text-white/50 text-xs mb-4">
+                {delStart} &mdash; {delEnd} &middot; Total: <span className="text-white font-bold text-sm">{total}</span> video
               </div>
-            </div>
-            {delLoading ? (
-              <p className="text-white/60 text-sm text-center py-8">Memuat...</p>
-            ) : delData ? (
-              <>
-                <div className="text-center text-white/60 text-xs mb-3">
-                  Total: <span className="text-white font-semibold">{delData.tiktok + delData.instagram + delData.youtube}</span> video
-                </div>
-                <div style={{ height: 180 }}>
+              {total > 0 ? (
+                <div style={{ height: 200 }}>
                   <Bar
                     data={{
                       labels: ['TikTok', 'Instagram', 'YouTube'],
                       datasets: [{
-                        data: [delData.tiktok, delData.instagram, delData.youtube],
+                        data: [tt, ig, yt],
                         backgroundColor: ['#38bdf8', '#f43f5e', '#ef4444'],
                         borderRadius: 6,
-                        barThickness: 36,
+                        barThickness: 40,
                       }],
                     }}
                     options={{
                       responsive: true,
                       maintainAspectRatio: false,
-                      plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                      plugins: { legend: { display: false } },
                       scales: {
                         y: { beginAtZero: true, ticks: { color: 'rgba(255,255,255,0.6)', stepSize: 1 }, grid: { color: 'rgba(255,255,255,0.06)' } },
                         x: { ticks: { color: 'rgba(255,255,255,0.8)', font: { size: 12 } }, grid: { display: false } },
@@ -1187,16 +1206,18 @@ export default function AdminPage() {
                     }}
                   />
                 </div>
-                <div className="flex justify-around mt-4 text-center text-xs">
-                  <div><div className="text-[#38bdf8] font-bold text-lg">{delData.tiktok}</div><div className="text-white/50">TikTok</div></div>
-                  <div><div className="text-[#f43f5e] font-bold text-lg">{delData.instagram}</div><div className="text-white/50">Instagram</div></div>
-                  <div><div className="text-[#ef4444] font-bold text-lg">{delData.youtube}</div><div className="text-white/50">YouTube</div></div>
-                </div>
-              </>
-            ) : null}
+              ) : (
+                <p className="text-center text-white/40 text-sm py-8">Tidak ada data di rentang ini.</p>
+              )}
+              <div className="flex justify-around mt-4 text-center">
+                <div><div className="text-[#38bdf8] font-bold text-xl">{tt}</div><div className="text-white/50 text-xs">TikTok</div></div>
+                <div><div className="text-[#f43f5e] font-bold text-xl">{ig}</div><div className="text-white/50 text-xs">Instagram</div></div>
+                <div><div className="text-[#ef4444] font-bold text-xl">{yt}</div><div className="text-white/50 text-xs">YouTube</div></div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Profile Picture Modal */}
       {showPictureModal && selectedPictureUrl && (

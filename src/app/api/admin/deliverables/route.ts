@@ -23,11 +23,11 @@ export async function GET(req: Request) {
   const start = url.searchParams.get('start') || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const end = url.searchParams.get('end') || new Date().toISOString().slice(0, 10);
 
-  // Fetch all employees with role 'karyawan'
+  // Fetch all employees (karyawan + leader)
   const { data: employees } = await supa
     .from('users')
     .select('id, full_name, tiktok_username, instagram_username, youtube_channel_id, extra_instagram_usernames')
-    .eq('role', 'karyawan')
+    .in('role', ['karyawan', 'leader'])
     .order('full_name', { ascending: true });
 
   if (!employees?.length) return NextResponse.json({ data: [] });
