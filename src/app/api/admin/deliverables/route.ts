@@ -23,14 +23,15 @@ export async function GET(req: Request) {
   const start = url.searchParams.get('start') || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const end = url.searchParams.get('end') || new Date().toISOString().slice(0, 10);
 
-  // Fetch all employees (karyawan + leader)
-  const { data: employees } = await supa
+  // Fetch all employees (karyawan + leader) - use select('*') to avoid column name issues
+  const { data: employees, error: empError } = await supa
     .from('users')
-    .select('id, full_name, tiktok_username, instagram_username, youtube_channel_id')
+    .select('*')
     .in('role', ['karyawan', 'leader'])
     .order('full_name', { ascending: true });
 
-  if (!employees?.length) return NextResponse.json({ data: [] });
+  if (empError) return NextResponse.json({ data: [], _error: empError.message });
+  if (!employees?.length) return NextResponse.json({ data: [], _error: 'no employees found' });
 
   const empIds = employees.map(e => e.id);
 
