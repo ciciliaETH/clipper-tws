@@ -69,6 +69,18 @@ export default function LeaderboardPage() {
     } finally { setLoading(false); }
   }
 
+  // ESC key to close modals
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showAvatarCard) setShowAvatarCard(false);
+        else if (selectedName) { setSelectedName(null); setSelectedRow(null); }
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [showAvatarCard, selectedName]);
+
   useEffect(() => {
     loadEmployees(month, interval);
     const t = setInterval(()=> setNow(Date.now()), 1000);

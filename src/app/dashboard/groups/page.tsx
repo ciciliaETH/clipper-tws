@@ -98,6 +98,20 @@ export default function CampaignsPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [manualIGUsernames, setManualIGUsernames] = useState('');
 
+  // ESC key to close modals
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedUser) { setSelectedUser(null); setSelectedUserName(null); }
+        else if (showManage) setShowManage(false);
+        else if (showEdit) setShowEdit(false);
+        else if (showModal) setShowModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [selectedUser, showManage, showEdit, showModal]);
+
   useEffect(() => {
     const loadUpdated = async () => {
       try {
