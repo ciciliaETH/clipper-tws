@@ -567,12 +567,9 @@ export async function GET(req: Request, context: any) {
         for (const u of (byEmployeeIG.get(empId) || [])) if (u) igNeed.add(u);
         for (const u of (byEmployeeYT.get(empId) || [])) if (u) ytNeed.add(u);
       }
-      // Always include campaign-level participants for accurate group totals.
-      // Without this, campaign usernames are only included for employees without
-      // explicit assignments, causing groupTotals to undercount.
-      for (const u of campaignTT) tikNeed.add(u);
-      for (const u of campaignIG) igNeed.add(u);
-      for (const u of campaignYT) ytNeed.add(u);
+      // STRICT: only fetch data for explicitly-assigned usernames.
+      // Previously this also added campaignTT/campaignIG/campaignYT which inflated
+      // groupTotals with unassigned campaign usernames (header > sum of employees).
       if (tikNeed.size > 0) {
         const { data: rows } = await supabase
           .from('tiktok_posts_daily')
