@@ -63,6 +63,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/admin/deliverables?start=${delStart}&end=${delEnd}`);
       if (res.ok) {
         const j = await res.json();
+        if (j.debug) console.log('[Deliverables Debug]', j.debug);
         const m = new Map<string, { tiktok: number; instagram: number; youtube: number }>();
         for (const d of j.data || []) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
         setDelMap(m);

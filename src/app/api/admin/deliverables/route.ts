@@ -30,7 +30,7 @@ export async function GET(req: Request) {
     .in('role', ['karyawan', 'leader'])
     .order('full_name', { ascending: true });
 
-  if (!employees?.length) return NextResponse.json({ data: [] });
+  if (!employees?.length) return NextResponse.json({ data: [], debug: 'no employees found' });
 
   const empIds = employees.map(e => e.id);
 
@@ -85,17 +85,27 @@ export async function GET(req: Request) {
   for (const s of empYT.values()) for (const u of s) allYT.add(u);
 
   // Fetch TikTok posts (dedupe by video_id)
+  // Use both taken_at and post_date to cover all posts (some may have NULL taken_at)
   const ttPostsByUsername = new Map<string, number>();
   if (allTT.size > 0) {
-    const { data: ttPosts } = await supa
+    const ttArr = Array.from(allTT);
+    const { data: ttPosts1 } = await supa
       .from('tiktok_posts_daily')
       .select('video_id, username')
-      .in('username', Array.from(allTT))
+      .in('username', ttArr)
       .gte('taken_at', start + 'T00:00:00Z')
       .lte('taken_at', end + 'T23:59:59Z')
       .limit(50000);
+    const { data: ttPosts2 } = await supa
+      .from('tiktok_posts_daily')
+      .select('video_id, username')
+      .in('username', ttArr)
+      .is('taken_at', null)
+      .gte('post_date', start)
+      .lte('post_date', end)
+      .limit(50000);
     const seen = new Set<string>();
-    for (const r of ttPosts || []) {
+    for (const r of [...(ttPosts1 || []), ...(ttPosts2 || [])]) {
       const vid = String(r.video_id || '');
       if (!vid || seen.has(vid)) continue;
       seen.add(vid);
@@ -105,17 +115,27 @@ export async function GET(req: Request) {
   }
 
   // Fetch Instagram posts (dedupe by id/code)
+  // Use both taken_at and post_date fallback
   const igPostsByUsername = new Map<string, number>();
   if (allIG.size > 0) {
-    const { data: igPosts } = await supa
+    const igArr = Array.from(allIG);
+    const { data: igPosts1 } = await supa
       .from('instagram_posts_daily')
       .select('id, code, username')
-      .in('username', Array.from(allIG))
+      .in('username', igArr)
       .gte('taken_at', start + 'T00:00:00Z')
       .lte('taken_at', end + 'T23:59:59Z')
       .limit(50000);
+    const { data: igPosts2 } = await supa
+      .from('instagram_posts_daily')
+      .select('id, code, username')
+      .in('username', igArr)
+      .is('taken_at', null)
+      .gte('post_date', start)
+      .lte('post_date', end)
+      .limit(50000);
     const seen = new Set<string>();
-    for (const r of igPosts || []) {
+    for (const r of [...(igPosts1 || []), ...(igPosts2 || [])]) {
       const vid = String((r as any).id || (r as any).code || '');
       if (!vid || seen.has(vid)) continue;
       seen.add(vid);
@@ -159,5 +179,19 @@ export async function GET(req: Request) {
   // Sort by total desc
   data.sort((a, b) => (b.tiktok + b.instagram + b.youtube) - (a.tiktok + a.instagram + a.youtube));
 
-  return NextResponse.json({ data });
+  return NextResponse.json({
+    data,
+    debug: {
+      employeeCount: employees.length,
+      ttUsernamesCount: allTT.size,
+      igUsernamesCount: allIG.size,
+      ytChannelsCount: allYT.size,
+      ttPostsFound: Array.from(ttPostsByUsername.values()).reduce((a, b) => a + b, 0),
+      igPostsFound: Array.from(igPostsByUsername.values()).reduce((a, b) => a + b, 0),
+      ytPostsFound: Array.from(ytPostsByChannel.values()).reduce((a, b) => a + b, 0),
+      sampleTTUsernames: Array.from(allTT).slice(0, 5),
+      sampleIGUsernames: Array.from(allIG).slice(0, 5),
+      dateRange: { start, end },
+    }
+  });
 }
