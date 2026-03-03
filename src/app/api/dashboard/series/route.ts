@@ -171,35 +171,29 @@ export async function GET(req: Request) {
           const cCampYT = campPartYT.filter(r => r.campaign_id === cId).map(r => String((r as any).youtube_channel_id||'').trim()).filter(Boolean);
 
           for (const empId of empIdsInCamp) {
-            // TikTok: employee_participants → campaign_participants → user profile handles
-            let ttHandles = cEmpTT
-              .filter(r => r.employee_id === empId)
-              .map(r => String(r.tiktok_username||'').replace(/^@+/,'').toLowerCase())
-              .filter(Boolean);
-            if (!ttHandles.length && cCampTT.length) ttHandles = cCampTT;
-            if (!ttHandles.length) ttHandles = Array.from(new Set(perUserTT.get(empId) || []));
+            // TikTok: employee_participants + employee's own profile handles (ADDITIVE, no campaign fallback)
+            const ttHandles = Array.from(new Set([
+              ...cEmpTT.filter(r => r.employee_id === empId).map(r => String(r.tiktok_username||'').replace(/^@+/,'').toLowerCase()).filter(Boolean),
+              ...(perUserTT.get(empId) || []),
+            ]));
             for (const h of ttHandles) {
               const set = handleToCampsTT.get(h) || new Set(); set.add(cId); handleToCampsTT.set(h, set);
             }
 
-            // Instagram: employee_instagram_participants → campaign_instagram_participants → user profile handles
-            let igHandles = cEmpIG
-              .filter(r => (r as any).employee_id === empId)
-              .map(r => String((r as any).instagram_username||'').replace(/^@+/,'').toLowerCase())
-              .filter(Boolean);
-            if (!igHandles.length && cCampIG.length) igHandles = cCampIG;
-            if (!igHandles.length) igHandles = Array.from(new Set(perUserIG.get(empId) || []));
+            // Instagram: employee_instagram_participants + employee's own profile handles (ADDITIVE, no campaign fallback)
+            const igHandles = Array.from(new Set([
+              ...cEmpIG.filter(r => (r as any).employee_id === empId).map(r => String((r as any).instagram_username||'').replace(/^@+/,'').toLowerCase()).filter(Boolean),
+              ...(perUserIG.get(empId) || []),
+            ]));
             for (const h of igHandles) {
               const set = handleToCampsIG.get(h) || new Set(); set.add(cId); handleToCampsIG.set(h, set);
             }
 
-            // YouTube: employee_youtube_participants → campaign_youtube_participants → user profile channels
-            let ytChannels = cEmpYT
-              .filter(r => (r as any).employee_id === empId)
-              .map(r => String((r as any).youtube_channel_id||'').trim())
-              .filter(Boolean);
-            if (!ytChannels.length && cCampYT.length) ytChannels = cCampYT;
-            if (!ytChannels.length) ytChannels = Array.from(new Set(perUserYT.get(empId) || []));
+            // YouTube: employee_youtube_participants + employee's own profile channels (ADDITIVE, no campaign fallback)
+            const ytChannels = Array.from(new Set([
+              ...cEmpYT.filter(r => (r as any).employee_id === empId).map(r => String((r as any).youtube_channel_id||'').trim()).filter(Boolean),
+              ...(perUserYT.get(empId) || []),
+            ]));
             for (const ch of ytChannels) {
               const set = handleToCampsYT.get(ch) || new Set(); set.add(cId); handleToCampsYT.set(ch, set);
             }
