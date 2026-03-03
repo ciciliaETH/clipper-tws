@@ -403,10 +403,11 @@ export async function GET(req: Request, context: any) {
         const userToTT = new Map<string,string[]>();
         const userToIG = new Map<string,string[]>();
         for (const empId of empIds) {
-          // STRICT: only use explicit campaign assignments — no fallback
-          const assignedTT = (byEmployee.get(empId) || []).filter(Boolean);
+          // Use explicit campaign assignments + employee's own usernames (aliases, profile, accounts)
+          // but NOT campaign-wide participant lists (which caused shared-username inflation).
+          const assignedTT = [...(byEmployee.get(empId) || []), ...(fallbackTikTok.get(empId) || [])].filter(Boolean);
           userToTT.set(empId, Array.from(new Set(assignedTT)));
-          const assignedIG = (byEmployeeIG.get(empId) || []).filter(Boolean);
+          const assignedIG = [...(byEmployeeIG.get(empId) || []), ...(fallbackIG.get(empId) || [])].filter(Boolean);
           userToIG.set(empId, Array.from(new Set(assignedIG)));
         }
         // Query TT posts_daily
@@ -560,16 +561,17 @@ export async function GET(req: Request, context: any) {
         }
       } else {
       // collect union of all usernames we need to fetch from posts_daily
-      // STRICT: only explicit assignments per employee — no fallback
+      // Uses explicit assignments + employee's own usernames (aliases, profile, accounts)
+      // but NOT campaign-wide participant lists (which inflated groupTotals).
       const ytNeed = new Set<string>();
       for (const empId of empIds) {
         for (const u of (byEmployee.get(empId) || [])) if (u) tikNeed.add(u);
+        for (const u of (fallbackTikTok.get(empId) || [])) if (u) tikNeed.add(u);
         for (const u of (byEmployeeIG.get(empId) || [])) if (u) igNeed.add(u);
+        for (const u of (fallbackIG.get(empId) || [])) if (u) igNeed.add(u);
         for (const u of (byEmployeeYT.get(empId) || [])) if (u) ytNeed.add(u);
+        for (const u of (fallbackYT.get(empId) || [])) if (u) ytNeed.add(u);
       }
-      // STRICT: only fetch data for explicitly-assigned usernames.
-      // Previously this also added campaignTT/campaignIG/campaignYT which inflated
-      // groupTotals with unassigned campaign usernames (header > sum of employees).
       if (tikNeed.size > 0) {
         const { data: rows } = await supabase
           .from('tiktok_posts_daily')
@@ -677,12 +679,11 @@ export async function GET(req: Request, context: any) {
       const assignedTT: string[] = (byEmployee.get(empId) || []).filter(Boolean);
       const assignedIG: string[] = (byEmployeeIG.get(empId) || []).filter(Boolean);
       const assignedYT: string[] = (byEmployeeYT.get(empId) || []).filter(Boolean);
-      // STRICT: only use explicitly assigned usernames for this campaign.
-      // No fallback — fallback pools (profile, user_*_usernames) contain shared accounts
-      // that cause every employee to show the same inflated totals.
-      let accountUsernames: string[] = assignedTT;
-      let accountIG: string[] = assignedIG;
-      let accountYT: string[] = assignedYT;
+      // Use explicit campaign assignments + employee's own usernames (aliases, profile, accounts).
+      // These are per-employee specific — NOT the campaign-wide lists that caused inflation.
+      let accountUsernames: string[] = Array.from(new Set([...assignedTT, ...(fallbackTikTok.get(empId) || [])])).filter(Boolean);
+      let accountIG: string[] = Array.from(new Set([...assignedIG, ...(fallbackIG.get(empId) || [])])).filter(Boolean);
+      let accountYT: string[] = Array.from(new Set([...assignedYT, ...(fallbackYT.get(empId) || [])])).filter(Boolean);
       for (const u of accountUsernames) assignmentByUsername[u] = { employee_id: empId, name: user.full_name || user.email || user.tiktok_username };
 
       // totals: STRICT MODE

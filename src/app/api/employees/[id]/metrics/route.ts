@@ -68,125 +68,118 @@ export async function GET(req: Request, context: any) {
       }
     }
 
-    // resolve usernames for this employee
+    // Resolve usernames for this employee — ADDITIVE approach matching videos API.
+    // Combines: employee_participants + user_tiktok_usernames + users.tiktok_username + employee_accounts
+    // but NOT campaign_participants (which would give ALL campaign usernames to every employee).
     let usernames: string[] = [];
     let igUsernames: string[] = [];
     let ytChannels: string[] = [];
+
+    // TikTok: collect from all per-employee sources
     if (campaignId) {
-      // prefer per-campaign assignment using employee_participants
       const { data: ep } = await supabase
         .from('employee_participants')
         .select('tiktok_username')
         .eq('employee_id', id)
         .eq('campaign_id', campaignId);
-      usernames = (ep || []).map((x:any)=> String(x.tiktok_username)).filter(Boolean);
+      usernames.push(...(ep || []).map((x:any)=> String(x.tiktok_username)).filter(Boolean));
     }
-    if (!campaignId && !usernames.length) {
-      // fallback to employee_accounts (legacy) — only when NOT in campaign context
+    try {
+      const { data: ttAliases } = await supabase
+        .from('user_tiktok_usernames')
+        .select('tiktok_username')
+        .eq('user_id', id);
+      usernames.push(...(ttAliases || []).map((r:any)=> String(r.tiktok_username)).filter(Boolean));
+    } catch {}
+    try {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('tiktok_username')
+        .eq('id', id)
+        .maybeSingle();
+      if (profile?.tiktok_username) usernames.push(String(profile.tiktok_username));
+    } catch {}
+    try {
       const { data: accounts } = await supabase
         .from('employee_accounts')
         .select('account_user_id')
         .eq('employee_id', id);
-      const accountIds = (accounts || []).map((a:any)=>a.account_user_id);
+      const accountIds = (accounts || []).map((a:any)=>a.account_user_id).filter(Boolean);
       if (accountIds.length > 0) {
         const { data: aus } = await supabase.from('users').select('tiktok_username').in('id', accountIds);
-        usernames = (aus || []).map((x:any)=>x.tiktok_username).filter(Boolean);
+        usernames.push(...(aus || []).map((x:any)=> String(x.tiktok_username)).filter(Boolean));
       }
-    }
-    // STRICT: removed campaign_participants fallback — it caused ALL employees
-    // to share every campaign username, inflating per-employee totals.
+    } catch {}
+    usernames = Array.from(new Set(usernames.map(u => u.replace(/^@+/, '').toLowerCase()).filter(Boolean)));
 
-    // Resolve Instagram usernames for this employee
+    // Instagram: collect from all per-employee sources
     try {
       if (campaignId) {
-        // STRICT: campaign-specific IG list — only explicit per-employee assignment
         const { data: igEp } = await supabase
           .from('employee_instagram_participants')
           .select('instagram_username')
           .eq('employee_id', id)
           .eq('campaign_id', campaignId);
-        igUsernames = (igEp || []).map((r:any)=> String(r.instagram_username)).filter(Boolean);
+        igUsernames.push(...(igEp || []).map((r:any)=> String(r.instagram_username)).filter(Boolean));
       }
-      if (!campaignId && !igUsernames.length) {
-        // fallback to global mapping for the user — only when NOT in campaign context
-        const { data: igMap } = await supabase
-          .from('user_instagram_usernames')
-          .select('instagram_username')
-          .eq('user_id', id);
-        igUsernames = (igMap || []).map((r:any)=> String(r.instagram_username)).filter(Boolean);
+      const { data: igMap } = await supabase
+        .from('user_instagram_usernames')
+        .select('instagram_username')
+        .eq('user_id', id);
+      igUsernames.push(...(igMap || []).map((r:any)=> String(r.instagram_username)).filter(Boolean));
+      const { data: igProfile } = await supabase
+        .from('users')
+        .select('instagram_username, extra_instagram_usernames')
+        .eq('id', id)
+        .maybeSingle();
+      if (igProfile?.instagram_username) igUsernames.push(String(igProfile.instagram_username));
+      if (Array.isArray((igProfile as any)?.extra_instagram_usernames)) {
+        for (const u of (igProfile as any).extra_instagram_usernames) if (u) igUsernames.push(String(u));
       }
-      if (!campaignId && !igUsernames.length) {
-        // profile fallback — only when NOT in campaign context
-        const { data: igProfile } = await supabase
-          .from('users')
-          .select('instagram_username, extra_instagram_usernames')
-          .eq('id', id)
-          .maybeSingle();
-        const arr:string[] = [];
-        if (igProfile?.instagram_username) arr.push(String(igProfile.instagram_username));
-        if (Array.isArray((igProfile as any)?.extra_instagram_usernames)) {
-          for (const u of (igProfile as any).extra_instagram_usernames) if (u) arr.push(String(u));
-        }
-        if (arr.length) igUsernames = arr;
-      }
-      if (!campaignId && !igUsernames.length) {
-        // employee_accounts fallback — only when NOT in campaign context
-        const { data: empAcc } = await supabase
-          .from('employee_accounts')
-          .select('account_user_id')
-          .eq('employee_id', id);
-        const accountIds = Array.from(new Set((empAcc||[]).map((r:any)=> r.account_user_id))).filter(Boolean);
-        if (accountIds.length) {
-          const usernamesFromAccounts: string[] = [];
-          try {
-            const { data: accUsers } = await supabase
-              .from('users')
-              .select('instagram_username, id, extra_instagram_usernames')
-              .in('id', accountIds);
-            for (const u of accUsers || []) {
-              if ((u as any).instagram_username) usernamesFromAccounts.push(String((u as any).instagram_username));
-              if (Array.isArray((u as any).extra_instagram_usernames)) {
-                for (const ex of (u as any).extra_instagram_usernames) if (ex) usernamesFromAccounts.push(String(ex));
-              }
+      const { data: empAcc } = await supabase
+        .from('employee_accounts')
+        .select('account_user_id')
+        .eq('employee_id', id);
+      const accountIds = Array.from(new Set((empAcc||[]).map((r:any)=> r.account_user_id))).filter(Boolean);
+      if (accountIds.length) {
+        try {
+          const { data: accUsers } = await supabase
+            .from('users')
+            .select('instagram_username, id, extra_instagram_usernames')
+            .in('id', accountIds);
+          for (const u of accUsers || []) {
+            if ((u as any).instagram_username) igUsernames.push(String((u as any).instagram_username));
+            if (Array.isArray((u as any).extra_instagram_usernames)) {
+              for (const ex of (u as any).extra_instagram_usernames) if (ex) igUsernames.push(String(ex));
             }
-          } catch {}
-          try {
-            const { data: accMap } = await supabase
-              .from('user_instagram_usernames')
-              .select('instagram_username, user_id')
-              .in('user_id', accountIds);
-            for (const r of accMap || []) if ((r as any).instagram_username) usernamesFromAccounts.push(String((r as any).instagram_username));
-          } catch {}
-          if (usernamesFromAccounts.length) igUsernames = usernamesFromAccounts;
-        }
+          }
+        } catch {}
+        try {
+          const { data: accMap } = await supabase
+            .from('user_instagram_usernames')
+            .select('instagram_username, user_id')
+            .in('user_id', accountIds);
+          for (const r of accMap || []) if ((r as any).instagram_username) igUsernames.push(String((r as any).instagram_username));
+        } catch {}
       }
     } catch {}
-    // STRICT: removed campaign_instagram_participants fallback — same shared-username inflation bug.
 
-    // Resolve YouTube channels for this employee
+    // YouTube: collect from all per-employee sources
     try {
       if (campaignId) {
-        // STRICT: only explicit per-employee-per-campaign assignment
         const { data: ytEp } = await supabase
           .from('employee_youtube_participants')
           .select('youtube_channel_id')
           .eq('employee_id', id)
           .eq('campaign_id', campaignId);
-        ytChannels = (ytEp || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean);
+        ytChannels.push(...(ytEp || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean));
       }
-      if (!campaignId && !ytChannels.length) {
-        const { data: ytMap } = await supabase.from('user_youtube_channels').select('youtube_channel_id').eq('user_id', id);
-        ytChannels = (ytMap || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean);
-      }
-      if (!campaignId && !ytChannels.length) {
-        const { data: ytProfile } = await supabase.from('users').select('youtube_channel_id').eq('id', id).maybeSingle();
-        if (ytProfile?.youtube_channel_id) ytChannels.push(String(ytProfile.youtube_channel_id));
-      }
-      // STRICT: removed campaign_youtube_participants fallback — same shared-channel inflation bug.
+      const { data: ytMap } = await supabase.from('user_youtube_channels').select('youtube_channel_id').eq('user_id', id);
+      ytChannels.push(...(ytMap || []).map((r:any)=> String(r.youtube_channel_id)).filter(Boolean));
+      const { data: ytProfile } = await supabase.from('users').select('youtube_channel_id').eq('id', id).maybeSingle();
+      if (ytProfile?.youtube_channel_id) ytChannels.push(String(ytProfile.youtube_channel_id));
     } catch {}
-    
-    // STRICT: removed TikTok→IG mirror fallback — TikTok and IG are separate platforms
-    // and mirroring usernames across them causes wrong data in campaign context.
+    ytChannels = Array.from(new Set(ytChannels.map(ch => ch.trim()).filter(Boolean)));
     // Normalize & dedupe early
     igUsernames = Array.from(new Set(igUsernames.map((u)=> String(u).replace(/^@+/, '').toLowerCase()).filter(Boolean)));
 
