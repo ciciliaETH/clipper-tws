@@ -786,11 +786,11 @@ export default function CampaignsPage() {
           {/* Header totals then refresh button below */}
           <div className="glass rounded-2xl p-3 sm:p-4 border border-white/10">
             <div className="flex flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-white/70">
-              {(videoTotals || memberGroupTotals || metrics) && (
+              {(metrics || memberGroupTotals || videoTotals) && (
                 <>
-                  <span>Views: <strong className="text-white">{(videoTotals?.views ?? memberGroupTotals?.views ?? metrics?.totals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Likes: <strong className="text-white">{(videoTotals?.likes ?? memberGroupTotals?.likes ?? metrics?.totals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
-                  <span>Comments: <strong className="text-white">{(videoTotals?.comments ?? memberGroupTotals?.comments ?? metrics?.totals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Views: <strong className="text-white">{(metrics?.totals?.views ?? memberGroupTotals?.views ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Likes: <strong className="text-white">{(metrics?.totals?.likes ?? memberGroupTotals?.likes ?? 0).toLocaleString('id-ID')}</strong></span>
+                  <span>Comments: <strong className="text-white">{(metrics?.totals?.comments ?? memberGroupTotals?.comments ?? 0).toLocaleString('id-ID')}</strong></span>
                   {lastUpdatedHuman && (
                     <span className="ml-auto text-white/60">Terakhir diperbarui: <strong className="text-white/80">{lastUpdatedHuman}</strong></span>
                   )}
