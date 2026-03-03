@@ -61,10 +61,11 @@ export default function AdminPage() {
     setDelLoading(true);
     try {
       const res = await fetch(`/api/admin/deliverables?start=${delStart}&end=${delEnd}`);
-      if (res.ok) {
-        const j = await res.json();
+      const j = await res.json();
+      console.log('[Deliverables]', res.status, j._debug || j.error || 'no debug', 'data count:', j.data?.length);
+      if (res.ok && j.data) {
         const m = new Map<string, { tiktok: number; instagram: number; youtube: number }>();
-        for (const d of j.data || []) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
+        for (const d of j.data) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
         setDelMap(m);
       }
     } catch (e) {

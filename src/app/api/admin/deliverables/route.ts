@@ -69,24 +69,28 @@ export async function GET(req: Request) {
     if (ch) { const s = empYT.get(r.user_id) || new Set(); s.add(ch); empYT.set(r.user_id, s); }
   }
 
-  // Source 3: campaign-specific assignments (employee_participants, employee_instagram_participants, employee_youtube_participants)
-  const [{ data: campTT }, { data: campIG }, { data: campYT }] = await Promise.all([
-    supa.from('employee_participants').select('employee_id, tiktok_username').in('employee_id', empIds),
-    supa.from('employee_instagram_participants').select('employee_id, instagram_username').in('employee_id', empIds),
-    supa.from('employee_youtube_participants').select('employee_id, youtube_channel_id').in('employee_id', empIds).then(r => r).catch(() => ({ data: null })),
-  ]);
-  for (const r of campTT || []) {
-    const u = String(r.tiktok_username || '').replace(/^@+/, '').toLowerCase();
-    if (u) { const s = empTT.get(r.employee_id) || new Set(); s.add(u); empTT.set(r.employee_id, s); }
-  }
-  for (const r of campIG || []) {
-    const u = String((r as any).instagram_username || '').replace(/^@+/, '').toLowerCase();
-    if (u) { const s = empIG.get((r as any).employee_id) || new Set(); s.add(u); empIG.set((r as any).employee_id, s); }
-  }
-  for (const r of campYT || []) {
-    const ch = String((r as any).youtube_channel_id || '').trim();
-    if (ch) { const s = empYT.get((r as any).employee_id) || new Set(); s.add(ch); empYT.set((r as any).employee_id, s); }
-  }
+  // Source 3: campaign-specific assignments (each wrapped individually to prevent crashes)
+  try {
+    const { data: campTT } = await supa.from('employee_participants').select('employee_id, tiktok_username').in('employee_id', empIds);
+    for (const r of campTT || []) {
+      const u = String(r.tiktok_username || '').replace(/^@+/, '').toLowerCase();
+      if (u) { const s = empTT.get(r.employee_id) || new Set(); s.add(u); empTT.set(r.employee_id, s); }
+    }
+  } catch (e) { console.error('[deliverables] employee_participants error', e); }
+  try {
+    const { data: campIG } = await supa.from('employee_instagram_participants').select('employee_id, instagram_username').in('employee_id', empIds);
+    for (const r of campIG || []) {
+      const u = String((r as any).instagram_username || '').replace(/^@+/, '').toLowerCase();
+      if (u) { const s = empIG.get((r as any).employee_id) || new Set(); s.add(u); empIG.set((r as any).employee_id, s); }
+    }
+  } catch (e) { console.error('[deliverables] employee_instagram_participants error', e); }
+  try {
+    const { data: campYT } = await supa.from('employee_youtube_participants').select('employee_id, youtube_channel_id').in('employee_id', empIds);
+    for (const r of campYT || []) {
+      const ch = String((r as any).youtube_channel_id || '').trim();
+      if (ch) { const s = empYT.get((r as any).employee_id) || new Set(); s.add(ch); empYT.set((r as any).employee_id, s); }
+    }
+  } catch (e) { /* table may not exist */ }
 
   // Collect all usernames we need to query
   const allTT = new Set<string>();
@@ -191,5 +195,8 @@ export async function GET(req: Request) {
   // Sort by total desc
   data.sort((a, b) => (b.tiktok + b.instagram + b.youtube) - (a.tiktok + a.instagram + a.youtube));
 
-  return NextResponse.json({ data });
+  return NextResponse.json({
+    data,
+    _debug: { employees: employees.length, ttUsernames: allTT.size, igUsernames: allIG.size, ytChannels: allYT.size, ttPosts: Array.from(ttPostsByUsername.values()).reduce((a,b)=>a+b,0), igPosts: Array.from(igPostsByUsername.values()).reduce((a,b)=>a+b,0), ytPosts: Array.from(ytPostsByChannel.values()).reduce((a,b)=>a+b,0), start, end }
+  });
 }
