@@ -34,43 +34,58 @@ export async function GET(req: Request) {
 
   const empIds = employees.map(e => e.id);
 
-  // Resolve all TikTok usernames per employee (additive)
-  const { data: ttAliases } = await supa.from('user_tiktok_usernames').select('user_id, tiktok_username').in('user_id', empIds);
+  // Source 1: profile usernames from users table
   const empTT = new Map<string, Set<string>>();
+  const empIG = new Map<string, Set<string>>();
+  const empYT = new Map<string, Set<string>>();
   for (const e of employees) {
-    const set = new Set<string>();
-    if (e.tiktok_username) set.add(String(e.tiktok_username).replace(/^@+/, '').toLowerCase());
-    empTT.set(e.id, set);
-  }
-  for (const r of ttAliases || []) {
-    const u = String(r.tiktok_username || '').replace(/^@+/, '').toLowerCase();
-    if (u) { const set = empTT.get(r.user_id) || new Set(); set.add(u); empTT.set(r.user_id, set); }
+    const ttSet = new Set<string>();
+    if (e.tiktok_username) ttSet.add(String(e.tiktok_username).replace(/^@+/, '').toLowerCase());
+    empTT.set(e.id, ttSet);
+    const igSet = new Set<string>();
+    if (e.instagram_username) igSet.add(String(e.instagram_username).replace(/^@+/, '').toLowerCase());
+    empIG.set(e.id, igSet);
+    const ytSet = new Set<string>();
+    if (e.youtube_channel_id) ytSet.add(String(e.youtube_channel_id).trim());
+    empYT.set(e.id, ytSet);
   }
 
-  // Resolve all Instagram usernames per employee (additive)
-  const { data: igAliases } = await supa.from('user_instagram_usernames').select('user_id, instagram_username').in('user_id', empIds);
-  const empIG = new Map<string, Set<string>>();
-  for (const e of employees) {
-    const set = new Set<string>();
-    if (e.instagram_username) set.add(String(e.instagram_username).replace(/^@+/, '').toLowerCase());
-    empIG.set(e.id, set);
+  // Source 2: alias tables (user_tiktok_usernames, user_instagram_usernames, user_youtube_channels)
+  const [{ data: ttAliases }, { data: igAliases }, { data: ytAliases }] = await Promise.all([
+    supa.from('user_tiktok_usernames').select('user_id, tiktok_username').in('user_id', empIds),
+    supa.from('user_instagram_usernames').select('user_id, instagram_username').in('user_id', empIds),
+    supa.from('user_youtube_channels').select('user_id, youtube_channel_id').in('user_id', empIds),
+  ]);
+  for (const r of ttAliases || []) {
+    const u = String(r.tiktok_username || '').replace(/^@+/, '').toLowerCase();
+    if (u) { const s = empTT.get(r.user_id) || new Set(); s.add(u); empTT.set(r.user_id, s); }
   }
   for (const r of igAliases || []) {
     const u = String(r.instagram_username || '').replace(/^@+/, '').toLowerCase();
-    if (u) { const set = empIG.get(r.user_id) || new Set(); set.add(u); empIG.set(r.user_id, set); }
-  }
-
-  // Resolve all YouTube channels per employee (additive)
-  const { data: ytAliases } = await supa.from('user_youtube_channels').select('user_id, youtube_channel_id').in('user_id', empIds);
-  const empYT = new Map<string, Set<string>>();
-  for (const e of employees) {
-    const set = new Set<string>();
-    if (e.youtube_channel_id) set.add(String(e.youtube_channel_id).trim());
-    empYT.set(e.id, set);
+    if (u) { const s = empIG.get(r.user_id) || new Set(); s.add(u); empIG.set(r.user_id, s); }
   }
   for (const r of ytAliases || []) {
     const ch = String(r.youtube_channel_id || '').trim();
-    if (ch) { const set = empYT.get(r.user_id) || new Set(); set.add(ch); empYT.set(r.user_id, set); }
+    if (ch) { const s = empYT.get(r.user_id) || new Set(); s.add(ch); empYT.set(r.user_id, s); }
+  }
+
+  // Source 3: campaign-specific assignments (employee_participants, employee_instagram_participants, employee_youtube_participants)
+  const [{ data: campTT }, { data: campIG }, { data: campYT }] = await Promise.all([
+    supa.from('employee_participants').select('employee_id, tiktok_username').in('employee_id', empIds),
+    supa.from('employee_instagram_participants').select('employee_id, instagram_username').in('employee_id', empIds),
+    supa.from('employee_youtube_participants').select('employee_id, youtube_channel_id').in('employee_id', empIds).then(r => r).catch(() => ({ data: null })),
+  ]);
+  for (const r of campTT || []) {
+    const u = String(r.tiktok_username || '').replace(/^@+/, '').toLowerCase();
+    if (u) { const s = empTT.get(r.employee_id) || new Set(); s.add(u); empTT.set(r.employee_id, s); }
+  }
+  for (const r of campIG || []) {
+    const u = String((r as any).instagram_username || '').replace(/^@+/, '').toLowerCase();
+    if (u) { const s = empIG.get((r as any).employee_id) || new Set(); s.add(u); empIG.set((r as any).employee_id, s); }
+  }
+  for (const r of campYT || []) {
+    const ch = String((r as any).youtube_channel_id || '').trim();
+    if (ch) { const s = empYT.get((r as any).employee_id) || new Set(); s.add(ch); empYT.set((r as any).employee_id, s); }
   }
 
   // Collect all usernames we need to query
