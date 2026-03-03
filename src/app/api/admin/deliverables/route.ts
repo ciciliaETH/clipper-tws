@@ -30,8 +30,7 @@ export async function GET(req: Request) {
     .in('role', ['karyawan', 'leader'])
     .order('full_name', { ascending: true });
 
-  if (empError) return NextResponse.json({ data: [], _error: empError.message });
-  if (!employees?.length) return NextResponse.json({ data: [], _error: 'no employees found' });
+  if (empError || !employees?.length) return NextResponse.json({ data: [] });
 
   const empIds = employees.map(e => e.id);
 
@@ -196,8 +195,5 @@ export async function GET(req: Request) {
   // Sort by total desc
   data.sort((a, b) => (b.tiktok + b.instagram + b.youtube) - (a.tiktok + a.instagram + a.youtube));
 
-  return NextResponse.json({
-    data,
-    _debug: { employees: employees.length, ttUsernames: allTT.size, igUsernames: allIG.size, ytChannels: allYT.size, ttPosts: Array.from(ttPostsByUsername.values()).reduce((a,b)=>a+b,0), igPosts: Array.from(igPostsByUsername.values()).reduce((a,b)=>a+b,0), ytPosts: Array.from(ytPostsByChannel.values()).reduce((a,b)=>a+b,0), start, end }
-  });
+  return NextResponse.json({ data });
 }

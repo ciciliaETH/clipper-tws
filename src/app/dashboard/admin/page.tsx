@@ -61,11 +61,10 @@ export default function AdminPage() {
     setDelLoading(true);
     try {
       const res = await fetch(`/api/admin/deliverables?start=${delStart}&end=${delEnd}`);
-      const j = await res.json();
-      console.log('[Deliverables]', res.status, j._debug || j.error || 'no debug', 'data count:', j.data?.length);
-      if (res.ok && j.data) {
+      if (res.ok) {
+        const j = await res.json();
         const m = new Map<string, { tiktok: number; instagram: number; youtube: number }>();
-        for (const d of j.data) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
+        for (const d of j.data || []) m.set(d.name, { tiktok: d.tiktok, instagram: d.instagram, youtube: d.youtube });
         setDelMap(m);
       }
     } catch (e) {
@@ -99,6 +98,19 @@ export default function AdminPage() {
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  // ESC key to close any open modal/card
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (delUser) setDelUser(null);
+        else if (showPictureModal) setShowPictureModal(false);
+        else if (showModal) { setShowModal(false); setError(null); }
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [delUser, showPictureModal, showModal]);
 
   useEffect(() => {
     // load active campaign and prizes
