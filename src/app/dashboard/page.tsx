@@ -1223,6 +1223,8 @@ export default function DashboardTotalPage() {
         const hs = String((r as any).start_date||'');
         const he = String((r as any).end_date||'');
         if (!hs || !he) continue;
+        // Filter: skip historical periods outside selected date range
+        if (he < start || hs > end) continue;
         const startDate = toDate(hs); const endDate = toDate(he);
         histPeriods.push({
           startDate, endDate,
@@ -1266,6 +1268,10 @@ export default function DashboardTotalPage() {
       for (const idx of indices) {
         const startDate = new Date(anchor.getTime() + idx*7*24*60*60*1000);
         const endDate = new Date(startDate.getTime()); endDate.setUTCDate(endDate.getUTCDate()+6);
+        // Filter: skip realtime periods outside selected date range
+        const rtStart = startDate.toISOString().slice(0,10);
+        const rtEnd = endDate.toISOString().slice(0,10);
+        if (rtEnd < start || rtStart > end) continue;
         rtPeriods.push({
           startDate, endDate,
           views: mapViews.get(idx)||0,
@@ -1427,7 +1433,7 @@ export default function DashboardTotalPage() {
       return { start: d, end: d };
     });
     return { labels, datasets, _periods };
-  }, [data, videoSeriesData, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, platformFilter, historicalData, showHistorical]);
+  }, [data, videoSeriesData, metric, interval, weeklyView, useCustomAccrualDates, mode, accrualCustomStart, accrualCustomEnd, start, end, platformFilter, historicalData, showHistorical]);
 
   // Posts chart data - derived from videos API (same source of truth as detail video page)
   // Uses _periods from chartData to align with main chart's weekly/monthly bucketing
