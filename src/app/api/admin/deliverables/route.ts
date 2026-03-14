@@ -111,7 +111,7 @@ export async function GET(req: Request) {
       .in('username', ttArr)
       .gte('taken_at', start + 'T00:00:00Z')
       .lte('taken_at', end + 'T23:59:59Z')
-      .limit(50000);
+      .limit(500000);
     const { data: ttPosts2 } = await supa
       .from('tiktok_posts_daily')
       .select('video_id, username')
@@ -119,7 +119,7 @@ export async function GET(req: Request) {
       .is('taken_at', null)
       .gte('post_date', start)
       .lte('post_date', end)
-      .limit(50000);
+      .limit(500000);
     const seen = new Set<string>();
     for (const r of [...(ttPosts1 || []), ...(ttPosts2 || [])]) {
       const vid = String(r.video_id || '');
@@ -141,7 +141,7 @@ export async function GET(req: Request) {
       .in('username', igArr)
       .gte('taken_at', start + 'T00:00:00Z')
       .lte('taken_at', end + 'T23:59:59Z')
-      .limit(50000);
+      .limit(500000);
     const { data: igPosts2 } = await supa
       .from('instagram_posts_daily')
       .select('id, code, username')
@@ -149,7 +149,7 @@ export async function GET(req: Request) {
       .is('taken_at', null)
       .gte('post_date', start)
       .lte('post_date', end)
-      .limit(50000);
+      .limit(500000);
     const seen = new Set<string>();
     for (const r of [...(igPosts1 || []), ...(igPosts2 || [])]) {
       const vid = String((r as any).id || (r as any).code || '');
@@ -169,7 +169,7 @@ export async function GET(req: Request) {
       .in('channel_id', Array.from(allYT))
       .gte('post_date', start)
       .lte('post_date', end)
-      .limit(50000);
+      .limit(500000);
     const seen = new Set<string>();
     for (const r of ytPosts || []) {
       const vid = String(r.video_id || '');

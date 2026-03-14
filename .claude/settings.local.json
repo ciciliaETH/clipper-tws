@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx next build:*)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/app/dashboard/groups/**)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/app/api/campaigns/[id]/metrics/**)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/app/dashboard/**)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/app/api/employees/[id]/metrics/**)",
+      "Read(//nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/components/**)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/src/components/**)"
+    ]
+  }
+}

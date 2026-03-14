@@ -405,7 +405,7 @@ export async function GET(req: Request, context: any) {
         .gte('taken_at', start + 'T00:00:00Z')
         .lte('taken_at', end + 'T23:59:59Z')
         .order('play_count', { ascending: false })
-        .limit(50000);
+        .limit(500000);
       const seenTT = new Map<string, any>();
       for (const r of rows || []) {
         const vid = String((r as any).video_id || '');
@@ -430,7 +430,7 @@ export async function GET(req: Request, context: any) {
         .gte('taken_at', start + 'T00:00:00Z')
         .lte('taken_at', end + 'T23:59:59Z')
         .order('play_count', { ascending: false })
-        .limit(50000);
+        .limit(500000);
       const seenIG = new Map<string, any>();
       for (const r of igRows || []) {
         const vid = String((r as any).id || (r as any).code || '');
@@ -455,7 +455,7 @@ export async function GET(req: Request, context: any) {
           .gte('post_date', start)
           .lte('post_date', end)
           .order('views', { ascending: false })
-          .limit(50000);
+          .limit(500000);
         const seenYT = new Map<string, any>();
         for (const r of ytRows || []) {
           const vid = String((r as any).video_id || (r as any).id || '');
@@ -534,7 +534,7 @@ export async function GET(req: Request, context: any) {
           .gte('taken_at', start + 'T00:00:00Z')
           .lte('taken_at', end + 'T23:59:59Z')
           .order('play_count', { ascending: false })
-          .limit(50000);
+          .limit(500000);
         // Deduplicate by video_id (same logic as totals)
         const dedupTT = new Map<string, any>();
         for (const r of ttSeriesRows || []) {
@@ -575,7 +575,7 @@ export async function GET(req: Request, context: any) {
         .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
         .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
         .order('play_count', { ascending: false })
-        .limit(50000);
+        .limit(500000);
       // Deduplicate by id/code first
       const dedupIG = new Map<string, any>();
       for (const r of rows || []) {
@@ -613,7 +613,7 @@ export async function GET(req: Request, context: any) {
           .gte('post_date', start || '1970-01-01')
           .lte('post_date', end || new Date().toISOString().slice(0,10))
           .order('views', { ascending: false })
-          .limit(50000);
+          .limit(500000);
         // Deduplicate by video_id first
         const dedupYT = new Map<string, any>();
         for (const r of rows || []) {

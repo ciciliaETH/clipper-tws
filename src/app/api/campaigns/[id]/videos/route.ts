@@ -117,7 +117,7 @@ export async function GET(req: Request, context: any) {
           .gte('taken_at', startISO + 'T00:00:00Z')
           .lte('taken_at', endISO + 'T23:59:59Z')
           .order('play_count', { ascending: false })
-          .limit(50000)
+          .limit(500000)
 
         // Deduplicate: keep first occurrence per video_id (= highest play_count)
         const seen = new Map<string, any>()
@@ -162,7 +162,7 @@ export async function GET(req: Request, context: any) {
           .gte('taken_at', startISO + 'T00:00:00Z')
           .lte('taken_at', endISO + 'T23:59:59Z')
           .order('play_count', { ascending: false })
-          .limit(50000)
+          .limit(500000)
 
         // Deduplicate: keep first occurrence per id (= highest play_count)
         const seen = new Map<string, any>()
@@ -230,7 +230,7 @@ export async function GET(req: Request, context: any) {
           .gte('post_date', startISO)
           .lte('post_date', endISO)
           .order('views', { ascending: false })
-          .limit(50000)
+          .limit(500000)
 
         // Deduplicate: keep first occurrence per video_id (= highest views)
         const seen = new Map<string, any>()

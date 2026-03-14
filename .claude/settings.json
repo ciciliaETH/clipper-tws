@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status -u)",
+      "Bash(git diff src/app/api/dashboard/series/route.ts src/app/api/employees/[id]/metrics/route.ts src/app/api/groups/[id]/members/route.ts src/app/dashboard/groups/page.tsx src/app/dashboard/page.tsx --stat)",
+      "Bash(git add src/app/api/dashboard/series/route.ts src/app/api/employees/[id]/metrics/route.ts src/app/api/groups/[id]/members/route.ts src/app/dashboard/groups/page.tsx src/app/dashboard/page.tsx)",
+      "Bash(git commit:*)",
+      "Read(//c/nofall/dashboard-clipper-V2-main - Copy/dashboard-clipper-V2-main/**)",
+      "Bash(git stash)",
+      "Bash(git merge claude/exciting-tu --no-edit)",
+      "Bash(git stash pop)",
+      "Bash(git checkout --theirs src/app/api/dashboard/series/route.ts)",
+      "Bash(git add src/app/api/dashboard/series/route.ts)",
+      "Bash(git checkout HEAD -- src/app/api/dashboard/series/route.ts)"
+    ]
+  }
+}

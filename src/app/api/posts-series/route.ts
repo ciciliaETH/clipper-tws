@@ -125,7 +125,7 @@ export async function GET(req: Request) {
         .gte('taken_at', startDate + 'T00:00:00Z')
         .lte('taken_at', endDate + 'T23:59:59Z')
         .order('taken_at', { ascending: true })
-        .limit(50000);
+        .limit(500000);
 
       const videoFirstDate = new Map<string, { date: string; title: string | null }>();
       for (const row of ttPosts || []) {
@@ -169,7 +169,7 @@ export async function GET(req: Request) {
         .gte('taken_at', startDate + 'T00:00:00Z')
         .lte('taken_at', endDate + 'T23:59:59Z')
         .order('taken_at', { ascending: true })
-        .limit(50000);
+        .limit(500000);
 
       for (const row of igPostsWithDate || []) {
         const pid = String((row as any).id);
@@ -187,7 +187,7 @@ export async function GET(req: Request) {
         .gte('created_at', startDate + 'T00:00:00Z')
         .lte('created_at', endDate + 'T23:59:59Z')
         .order('created_at', { ascending: true })
-        .limit(50000);
+        .limit(500000);
 
       for (const row of igPostsNoDate || []) {
         const pid = String((row as any).id);
@@ -229,7 +229,7 @@ export async function GET(req: Request) {
         .gte('post_date', startDate)
         .lte('post_date', endDate)
         .order('post_date', { ascending: true })
-        .limit(50000);
+        .limit(500000);
 
       // Dedup by video_id - keep earliest post_date per unique video
       const ytFirstDate = new Map<string, { date: string; title: string | null }>();

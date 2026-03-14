@@ -423,7 +423,7 @@ export async function GET(req: Request, context: any) {
             .gte('taken_at', start + 'T00:00:00Z')
             .lte('taken_at', end + 'T23:59:59Z')
             .order('play_count', { ascending: false })
-            .limit(50000);
+            .limit(500000);
           // Deduplicate by video_id (same logic as participant detail page)
           const dedupedTT = new Map<string, any>();
           for (const r of ptt || []) {
@@ -460,7 +460,7 @@ export async function GET(req: Request, context: any) {
             .gte('taken_at', start + 'T00:00:00Z')
             .lte('taken_at', end + 'T23:59:59Z')
             .order('play_count', { ascending: false })
-            .limit(50000);
+            .limit(500000);
           // Deduplicate by id/code (same logic as participant detail page)
           const dedupedIG = new Map<string, any>();
           for (const r of pig || []) {
@@ -580,7 +580,7 @@ export async function GET(req: Request, context: any) {
           .lte('taken_at', end + 'T23:59:59Z')
           .in('username', Array.from(tikNeed))
           .order('play_count', { ascending: false })
-          .limit(50000);
+          .limit(500000);
         // Deduplicate by video_id (same logic as participant detail page)
         const deduped = new Map<string, any>();
         for (const r of rows || []) {
@@ -612,7 +612,7 @@ export async function GET(req: Request, context: any) {
           .lte('taken_at', end + 'T23:59:59Z')
           .in('username', Array.from(igNeed))
           .order('play_count', { ascending: false })
-          .limit(50000);
+          .limit(500000);
         // Deduplicate by id/code (same logic as participant detail page)
         const dedupedIG = new Map<string, any>();
         for (const r of rowsIG || []) {
@@ -644,7 +644,7 @@ export async function GET(req: Request, context: any) {
             .lte('post_date', end)
             .in('channel_id', Array.from(ytNeed))
             .order('views', { ascending: false })
-            .limit(50000);
+            .limit(500000);
           const dedupedYT = new Map<string, any>();
           for (const r of rowsYT || []) {
             const vid = String((r as any).video_id || (r as any).id || '');
