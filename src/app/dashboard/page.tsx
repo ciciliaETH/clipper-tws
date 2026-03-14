@@ -1380,18 +1380,24 @@ export default function DashboardTotalPage() {
     });
 
     // Platform breakdown if available (only when 'all' selected)
+    // Align platform series to total series dates (they may have different date sets)
+    const alignToTotal = (series: any[]) => {
+      const map: Record<string, any> = {};
+      for (const s of series) map[String(s.date)] = s;
+      return totalSeries.map((t: any) => {
+        const it = map[String(t.date)];
+        return it ? (metric==='likes'? it.likes : metric==='comments'? it.comments : it.views) : 0;
+      });
+    };
     if (platformFilter === 'all') {
       if (Array.isArray(src.total_tiktok) && src.total_tiktok.length) {
-        const ttVals = src.total_tiktok.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-        datasets.push({ label:'TikTok', data: ttVals, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
+        datasets.push({ label:'TikTok', data: alignToTotal(src.total_tiktok), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
       if (Array.isArray(src.total_instagram) && src.total_instagram.length) {
-        const igVals = src.total_instagram.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-        datasets.push({ label:'Instagram', data: igVals, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
+        datasets.push({ label:'Instagram', data: alignToTotal(src.total_instagram), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
       if (Array.isArray(src.total_youtube) && src.total_youtube.length) {
-        const ytVals = src.total_youtube.map((s:any)=> metric==='likes'? s.likes : metric==='comments'? s.comments : s.views);
-        datasets.push({ label:'YouTube', data: ytVals, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
+        datasets.push({ label:'YouTube', data: alignToTotal(src.total_youtube), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)', fill: false, tension: 0.35, yAxisID: 'y' });
       }
     }
 

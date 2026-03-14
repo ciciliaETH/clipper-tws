@@ -402,9 +402,19 @@ export default function CampaignsPage() {
     });
     const pick = (s:any)=> compareMetric==='likes' ? s.likes : (compareMetric==='comments' ? s.comments : s.views);
     const dataTotal = base.map((s:any)=> pick(s));
-    const dataTikTok = (useSeries.tiktok || []).map((s:any)=> pick(s));
-    const dataInstagram = (useSeries.instagram || []).map((s:any)=> pick(s));
-    const dataYouTube = (useSeries.youtube || []).map((s:any)=> pick(s));
+    // Align platform series to the same dates as total (they may have different date sets)
+    const labelKeys = base.map((s:any)=> String(s.date));
+    const alignSeries = (series: any[]) => {
+      const map: Record<string, any> = {};
+      for (const s of series) map[String(s.date)] = s;
+      return labelKeys.map((key:string) => {
+        const it = map[key];
+        return it ? pick(it) : 0;
+      });
+    };
+    const dataTikTok = alignSeries(useSeries.tiktok || []);
+    const dataInstagram = alignSeries(useSeries.instagram || []);
+    const dataYouTube = alignSeries(useSeries.youtube || []);
 
     const datasets: any[] = [
       { label: 'Total', data: dataTotal, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.2)', fill: true, tension: 0.35, hidden: !showTotal },
