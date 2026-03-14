@@ -291,7 +291,6 @@ export default function CampaignsPage() {
         url.searchParams.set('start', groupStart);
         url.searchParams.set('end', groupEnd);
         url.searchParams.set('summary', '1');
-        url.searchParams.set('employees_only', '1');
         const res = await fetch(url.toString(), { cache: 'no-store' });
         const json = await res.json();
         if (res.ok && json.totals) {
@@ -824,7 +823,7 @@ export default function CampaignsPage() {
             <div className="mt-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
               {selected && (
                 <Link
-                  href={`/dashboard/groups/${selected.id}/videos?start=${groupStart}&end=${groupEnd}&employees_only=1`}
+                  href={`/dashboard/groups/${selected.id}/videos?start=${groupStart}&end=${groupEnd}`}
                   target="_blank"
                   className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs sm:text-sm transition-colors border border-blue-500/30 self-start"
                 >
