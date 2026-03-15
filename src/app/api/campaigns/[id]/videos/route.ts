@@ -201,10 +201,11 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] TikTok: ${seen.size} unique videos after dedup`)
 
-        // No hashtag filtering — include ALL videos from campaign participants.
-        // Only apply extra hashtag filter if explicitly requested via query param.
+        // Apply campaign hashtag filter + optional extra hashtag filter
+        let hashtagFiltered = 0
         for (const [videoId, row] of seen.entries()) {
-          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) continue
+          if (!hasRequiredHashtag(row.title, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) { hashtagFiltered++; continue }
 
           const ownerId = ttUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -224,7 +225,7 @@ export async function GET(req: Request, context: any) {
             shares: Number(row.share_count || 0),
           })
         }
-        console.log(`[VIDEOS] TikTok: ${videos.filter(v=>v.platform==='tiktok').length} videos included`)
+        console.log(`[VIDEOS] TikTok: ${videos.filter(v=>v.platform==='tiktok').length} videos included, ${hashtagFiltered} excluded by hashtag filter`)
       }
     }
 
@@ -271,9 +272,11 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] Instagram: ${seen.size} unique videos after dedup`)
 
-        // No hashtag filtering — include ALL videos from campaign participants.
+        // Apply campaign hashtag filter + optional extra hashtag filter
+        let hashtagFiltered = 0
         for (const [postId, row] of seen.entries()) {
-          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) continue
+          if (!hasRequiredHashtag(row.caption, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) { hashtagFiltered++; continue }
 
           const ownerId = igUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -296,7 +299,7 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        console.log(`[VIDEOS] Instagram: ${videos.filter(v=>v.platform==='instagram').length} videos included`)
+        console.log(`[VIDEOS] Instagram: ${videos.filter(v=>v.platform==='instagram').length} videos included, ${hashtagFiltered} excluded by hashtag filter`)
       }
     }
 
@@ -349,9 +352,11 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] YouTube: ${seen.size} unique videos after dedup`)
 
-        // No hashtag filtering — include ALL videos from campaign participants.
+        // Apply campaign hashtag filter + optional extra hashtag filter
+        let hashtagFiltered = 0
         for (const [vid, row] of seen.entries()) {
-          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) continue
+          if (!hasRequiredHashtag((row as any).title, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) { hashtagFiltered++; continue }
 
           const channelId = String((row as any).channel_id)
           const ownerId = ytChannelToId.get(channelId) || null
@@ -372,7 +377,7 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        console.log(`[VIDEOS] YouTube: ${videos.filter(v=>v.platform==='youtube').length} videos included`)
+        console.log(`[VIDEOS] YouTube: ${videos.filter(v=>v.platform==='youtube').length} videos included, ${hashtagFiltered} excluded by hashtag filter`)
       }
     }
 
