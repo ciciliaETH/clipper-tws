@@ -1017,93 +1017,120 @@ export async function GET(request: Request, context: any) {
     let telemetry: any = undefined;
     const FORCE_RAPID = rapidParam === '1';
     
-    // AGGREGATOR UNLIMITED FETCH - 90-DAY ROLLING WINDOWS
+    // AGGREGATOR UNLIMITED FETCH - 90-DAY ROLLING WINDOWS (cursor-based)
+    // Uses same format as top-level fetchFromAggregator: date strings + cursor pagination
     const fetchFromAggregator = async (): Promise<any[]> => {
       if (!AGGREGATOR_ENABLED || FORCE_RAPID) return [];
-      
-      console.log(`[TikTok Fetch] Trying Aggregator API first for @${normalized}`);
-      console.log(`[Aggregator] Starting unlimited fetch for @${normalized}`);
-      
+
+      console.log(`[TikTok Fetch] Trying Aggregator API for @${normalized}`);
+
       const allVideos: any[] = [];
       const seenIds = new Set<string>();
       let totalPages = 0;
-      
-      // Calculate date range (optimize for Vercel 60s limit)
-      const endDate = endBound ? new Date(endBound) : new Date();
-      const startDate = startBound ? new Date(startBound) : new Date(endDate.getTime() - 90 * 86400000); // 90 days only (fit in 60s)
-      
-      console.log(`[Aggregator] Date range: ${startDate.toISOString().slice(0,10)} to ${endDate.toISOString().slice(0,10)}`);
-      
-      // Single 90-day window (no multiple windows - too slow for 60s limit)
-      const windows: { start: Date; end: Date }[] = [{ start: startDate, end: endDate }];
-      
-      // Process each window
-      for (const window of windows) {
-        const startTime = Math.floor(window.start.getTime() / 1000);
-        const endTime = Math.floor(window.end.getTime() / 1000);
-        
-        console.log(`[Aggregator] Window: ${window.start.toISOString().slice(0,10)} to ${window.end.toISOString().slice(0,10)}`);
-        
+      const fetchStartTime = Date.now();
+      const MAX_FETCH_TIME_MS = 50000; // 50s hard limit for Vercel 60s timeout
+
+      // Calculate date range
+      const aggEnd = endBound ? new Date(endBound) : new Date();
+      const aggStart = startBound ? new Date(startBound) : new Date(aggEnd.getTime() - 365 * 86400000);
+
+      // Use 90-day rolling windows (newest to oldest) with cursor pagination
+      let windowEnd = new Date(aggEnd);
+      let emptyWindows = 0;
+
+      while (windowEnd > aggStart && emptyWindows < 3) {
+        if (Date.now() - fetchStartTime > MAX_FETCH_TIME_MS) {
+          console.log(`[Aggregator] ⏱️ Time limit reached, stopping with ${allVideos.length} videos`);
+          break;
+        }
+
+        const windowStart = new Date(Math.max(aggStart.getTime(), windowEnd.getTime() - 90 * 86400000));
+        const windowStartStr = windowStart.toISOString().slice(0, 10);
+        const windowEndStr = windowEnd.toISOString().slice(0, 10);
+
+        console.log(`[Aggregator] Window: ${windowStartStr} to ${windowEndStr}`);
+
+        let cursor: string | undefined = undefined;
         let windowVideos = 0;
-        let page = 1;
-        let hasMore = true;
-        
-        while (hasMore && page <= AGGREGATOR_MAX_PAGES) {
+        let sameCursor = 0;
+        let noNewData = 0;
+
+        for (let page = 0; page < AGGREGATOR_MAX_PAGES; page++) {
+          if (Date.now() - fetchStartTime > MAX_FETCH_TIME_MS) break;
+          totalPages++;
+
           try {
-            const url = `${AGGREGATOR_BASE}/user/posts?username=${encodeURIComponent(normalized)}&start_time=${startTime}&end_time=${endTime}&count=${AGGREGATOR_PER_PAGE}&page=${page}`;
-            
+            const url = new URL(`${AGGREGATOR_BASE}/user/posts`);
+            url.searchParams.set('username', normalized);
+            url.searchParams.set('count', String(AGGREGATOR_PER_PAGE));
+            url.searchParams.set('start', windowStartStr);
+            url.searchParams.set('end', windowEndStr);
+            if (cursor) url.searchParams.set('cursor', cursor);
+
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 30000);
-            
-            const res = await fetch(url, { signal: controller.signal });
+            const res = await fetch(url.toString(), {
+              headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+              signal: controller.signal
+            });
             clearTimeout(timer);
-            
+
             if (!res.ok) {
-              console.warn(`[Aggregator] Page ${page} failed: ${res.status}`);
+              console.warn(`[Aggregator] Page ${page + 1} failed: ${res.status}`);
               break;
             }
-            
-            const data = await res.json();
-            const pageVideos = data?.data?.videos || data?.videos || [];
-            
-            let newVideos = 0;
-            for (const video of pageVideos) {
-              const videoId = video?.video_id || video?.aweme_id || video?.id;
+
+            const json = await res.json();
+            const videos = json?.data?.videos || json?.videos || [];
+
+            if (!Array.isArray(videos) || videos.length === 0) {
+              noNewData++;
+              if (noNewData >= 2) break;
+              continue;
+            }
+
+            let addedThisPage = 0;
+            for (const video of videos) {
+              const videoId = video?.aweme_id || video?.video_id || video?.id;
               if (!videoId) continue;
-              
               const id = String(videoId);
               if (seenIds.has(id)) continue;
-              
               seenIds.add(id);
               allVideos.push(video);
-              newVideos++;
+              addedThisPage++;
               windowVideos++;
             }
-            
-            totalPages++;
-            console.log(`[Aggregator] Page ${page}: +${newVideos} videos (window total: ${windowVideos})`);
-            
-            // Stop if no new videos (reached end)
-            if (newVideos === 0) {
-              hasMore = false;
+
+            console.log(`[Aggregator] Page ${page + 1}: +${addedThisPage} videos (window total: ${windowVideos})`);
+
+            if (addedThisPage > 0) noNewData = 0;
+
+            // Check for next cursor
+            const nextCursor = json?.data?.cursor || json?.data?.next_cursor;
+            const hasMore = json?.data?.hasMore || json?.data?.has_more;
+            if (!hasMore || !nextCursor) break;
+            if (cursor === nextCursor) {
+              sameCursor++;
+              if (sameCursor >= 2) break;
             } else {
-              page++;
-              await new Promise(resolve => setTimeout(resolve, AGGREGATOR_RATE_MS));
+              sameCursor = 0;
             }
+            cursor = String(nextCursor);
+            await new Promise(resolve => setTimeout(resolve, AGGREGATOR_RATE_MS));
           } catch (err: any) {
-            console.error(`[Aggregator] Page ${page} error:`, err.message);
+            console.error(`[Aggregator] Page ${page + 1} error:`, err.message);
             break;
           }
         }
-        
-        // If window returned videos, continue to older windows
-        // If no videos in recent window, likely account has no older content
-        if (windowVideos === 0 && windows.indexOf(window) === 0) {
-          console.log(`[Aggregator] No videos in most recent window, skipping older windows`);
-          break;
-        }
+
+        if (windowVideos === 0) emptyWindows++;
+        else emptyWindows = 0;
+
+        // Move to previous 90-day window
+        windowEnd = new Date(windowStart.getTime() - 1);
+        await new Promise(resolve => setTimeout(resolve, AGGREGATOR_RATE_MS));
       }
-      
+
       console.log(`[Aggregator] Completed: ${allVideos.length} unique videos from ${totalPages} pages`);
       return allVideos;
     };
