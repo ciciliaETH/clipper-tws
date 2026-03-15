@@ -34,7 +34,7 @@ async function fetchInstagramData(username: string, baseUrl: string, timeout = 2
   const start = Date.now();
   try {
     // Hint the downstream route to fit within our timeout using budget and pagination caps
-    const url = `${baseUrl}/api/fetch-ig/${encodeURIComponent(username)}?create=1&allow_username=0&max_pages=6&page_size=40&time_budget_ms=${Math.max(5000, Math.min(59000, Math.floor(timeout * 0.95)))}`;
+    const url = `${baseUrl}/api/fetch-ig/${encodeURIComponent(username)}?create=1&allow_username=0&max_pages=50&page_size=100&time_budget_ms=${Math.max(5000, Math.min(59000, Math.floor(timeout * 0.95)))}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     

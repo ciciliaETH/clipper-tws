@@ -498,8 +498,9 @@ export async function GET(request: Request, context: any) {
 
   const normalized = primaryUsername.replace(/^@/, '').toLowerCase().replace(/\s+/g, '').trim();
   const urlObj = new URL(request.url);
-  // Default start to 2026-01-01 for consistent date window
-  const startParam = urlObj.searchParams.get('start') || '2026-01-01';
+  // Default start to 365 days ago to capture all historical data
+  const defaultStart = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startParam = urlObj.searchParams.get('start') || defaultStart;
   const endParam = urlObj.searchParams.get('end');
   const pagesParam = urlObj.searchParams.get('pages');
   const cursorParam = urlObj.searchParams.get('cursor');
@@ -560,38 +561,12 @@ export async function GET(request: Request, context: any) {
   const { id: userId, tiktok_username, tiktok_sec_uid } = userData as { id: string; tiktok_username: string; tiktok_sec_uid: string | null };
 
   // ========================================
-  // MAIN FETCH LOGIC: Aggregator → RapidAPI
+  // MAIN FETCH LOGIC: handled below in the UNLIMITED SYNC block
+  // (removed duplicate aggregator call that wasted half the time budget)
   // ========================================
-  let videos: any[] = [];
-  let fetchSource = 'none';
-  let fetchTelemetry: any = {};
   
-  // PRIORITY 1: Try Aggregator API (UNLIMITED) unless ?rapid=1
-  if (AGGREGATOR_ENABLED && rapidParam !== '1') {
-    console.log(`[TikTok Fetch] Trying Aggregator API first for @${normalized}`);
-    try {
-      const aggregatorResult = await fetchFromAggregator(normalized, startParam, endParam);
-      
-      if (aggregatorResult.success && aggregatorResult.videos.length > 0) {
-        videos = aggregatorResult.videos;
-        fetchSource = 'aggregator';
-        fetchTelemetry = {
-          source: 'aggregator',
-          totalVideos: aggregatorResult.totalFetched,
-          success: true
-        };
-        console.log(`[TikTok Fetch] ✓ Aggregator success: ${videos.length} videos`);
-      } else {
-        console.log(`[TikTok Fetch] ✗ Aggregator returned no data, falling back to RapidAPI`);
-      }
-    } catch (error: any) {
-      console.error(`[TikTok Fetch] Aggregator error:`, error.message);
-      console.log(`[TikTok Fetch] Falling back to RapidAPI`);
-    }
-  }
-  
-  // PRIORITY 2: Fallback to RapidAPI if Aggregator failed or forced
-  if (videos.length === 0 || rapidParam === '1') {
+  // RapidAPI helper for page-mode or forced rapid
+  if (rapidParam === '1') {
     if (rapidParam === '1') {
       console.log(`[TikTok Fetch] RapidAPI forced via ?rapid=1`);
     }
