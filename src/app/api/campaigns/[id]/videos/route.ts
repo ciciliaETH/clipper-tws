@@ -192,11 +192,19 @@ export async function GET(req: Request, context: any) {
         const ttPosts = [...ttPostsWithDate, ...ttPostsNoDate]
         console.log(`[VIDEOS] TikTok: fetched ${ttPosts.length} raw rows (${ttPostsWithDate.length} with taken_at, ${ttPostsNoDate.length} without) for ${ttUsernames.length} usernames`)
 
-        // Deduplicate: keep first occurrence per video_id (= highest play_count due to order)
+        // Deduplicate: by video_id + content fingerprint (title+username+views)
+        // Catches duplicates stored with different ID formats (aweme_id vs numeric video_id)
         const seen = new Map<string, any>()
+        const seenFingerprints = new Set<string>()
         for (const p of ttPosts) {
           const vid = String(p.video_id)
-          if (vid && !seen.has(vid)) seen.set(vid, p)
+          if (!vid) continue
+          if (seen.has(vid)) continue
+          // Content fingerprint to catch same video with different ID format
+          const fp = `${String(p.username||'').toLowerCase()}|${String(p.title||'').slice(0,50)}|${Number(p.play_count||0)}`
+          if (fp.length > 5 && seenFingerprints.has(fp)) continue
+          seen.set(vid, p)
+          if (fp.length > 5) seenFingerprints.add(fp)
         }
 
         console.log(`[VIDEOS] TikTok: ${seen.size} unique videos after dedup`)
@@ -263,17 +271,22 @@ export async function GET(req: Request, context: any) {
         const igPosts = [...igPostsWithDate, ...igPostsNoDate]
         console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows (${igPostsWithDate.length} with taken_at, ${igPostsNoDate.length} without) for ${igUsernames.length} usernames`)
 
-        // Deduplicate: by id AND by code (shortcode) to catch duplicates with different numeric IDs
+        // Deduplicate: by id + code + content fingerprint
         const seen = new Map<string, any>()
         const seenCodes = new Set<string>()
+        const seenFingerprints = new Set<string>()
         for (const p of igPosts) {
           const vid = String(p.id)
           const code = String(p.code || '')
           if (!vid) continue
           if (seen.has(vid)) continue
           if (code && seenCodes.has(code)) continue
+          // Content fingerprint to catch same post with different IDs
+          const fp = `${String(p.username||'').toLowerCase()}|${String(p.caption||'').slice(0,50)}|${Number(p.play_count||0)}`
+          if (fp.length > 5 && seenFingerprints.has(fp)) continue
           seen.set(vid, p)
           if (code) seenCodes.add(code)
+          if (fp.length > 5) seenFingerprints.add(fp)
         }
 
         console.log(`[VIDEOS] Instagram: ${seen.size} unique videos after dedup`)
