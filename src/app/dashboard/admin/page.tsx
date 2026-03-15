@@ -508,29 +508,35 @@ export default function AdminPage() {
 
     const processBatch = async () => {
       try {
-        const res = await fetch(`/api/backfill/taken-at?platform=${takenAtPlatform}&limit=20`, {
+        // Use refresh-all endpoint which fetches complete data including taken_at
+        const endpoint = takenAtPlatform === 'instagram'
+          ? '/api/admin/ig/refresh-all'
+          : '/api/admin/tiktok/refresh-all';
+
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
+          body: JSON.stringify({ batch_size: 1, delay_ms: 2000 })
         });
         const j = await res.json();
-        if (!res.ok) throw new Error(j?.error || 'Gagal backfill taken_at');
-        
-        totalUp += (j.updated || 0);
+        if (!res.ok) throw new Error(j?.error || 'Gagal refresh');
+
+        totalUp += (j.success || j.updated || 0);
         totalFail += (j.failed || 0);
 
         setTakenAtResult({ platform: takenAtPlatform, updated: totalUp, failed: totalFail });
-        
-        if (j.remaining && j.remaining > 0) {
-            console.log(`[Backfill] Batch done. ${j.remaining} remaining. Looping...`);
-            setTimeout(processBatch, 1000); 
+
+        const remaining = j.remaining ?? j.pagination?.remaining ?? 0;
+        if (remaining > 0) {
+            console.log(`[Refresh] Batch done. ${remaining} remaining. Looping...`);
+            setTimeout(processBatch, 1000);
         } else {
             setRunningTakenAt(false);
-            alert(`✅ Backfill taken_at selesai!\n\nPlatform: ${j.platform || takenAtPlatform}\nTotal Updated: ${totalUp}\nTotal Failed: ${totalFail}`);
+            alert(`✅ Refresh selesai!\n\nPlatform: ${takenAtPlatform}\nTotal Updated: ${totalUp}\nTotal Failed: ${totalFail}`);
         }
       } catch (e: any) {
         setRunningTakenAt(false);
-        alert('Error: ' + (e?.message || 'Gagal backfill taken_at'));
+        alert('Error: ' + (e?.message || 'Gagal refresh'));
       }
     };
 
