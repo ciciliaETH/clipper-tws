@@ -115,10 +115,13 @@ export async function GET(req: Request) {
         allVideos.push(v);
         added++;
 
-        // Check if this is the target video
-        if (searchVideoId && id === searchVideoId) {
-          foundTarget = true;
-          targetVideoRaw = v;
+        // Check if this is the target video (check ALL id fields)
+        if (searchVideoId) {
+          const allIds = [v?.aweme_id, v?.video_id, v?.id, v?.item_id, v?.videoId].map(x => x ? String(x) : '');
+          if (allIds.includes(searchVideoId)) {
+            foundTarget = true;
+            targetVideoRaw = v;
+          }
         }
       }
 

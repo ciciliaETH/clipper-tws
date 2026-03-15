@@ -668,7 +668,7 @@ export async function GET(request: Request, context: any) {
     }
   }
   
-  console.log(`[TikTok Fetch] Final result: ${videos.length} videos from ${fetchSource}`);
+  // (logging moved to main sync block below)
 
   // RapidAPI Fast Reliable Data Scraper cursor fetch (primary when RAPIDAPI_USE_CURSOR=1)
   const rapidFastCursorFetchAll = async (): Promise<{ list: any[]; telemetry: any } | any[]> => {
