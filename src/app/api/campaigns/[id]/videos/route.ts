@@ -34,6 +34,22 @@ async function fetchAllPages(queryFn: () => any): Promise<any[]> {
   return all
 }
 
+// Fetch a reference table that might exceed Supabase default 1000 row limit
+async function fetchAllRef(queryFn: () => any): Promise<any[]> {
+  const all: any[] = []
+  let offset = 0
+  const size = 5000
+  while (true) {
+    const { data, error } = await queryFn().range(offset, offset + size - 1)
+    if (error) break
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < size) break
+    offset += size
+  }
+  return all
+}
+
 export async function GET(req: Request, context: any) {
   try {
     const { id: campaignId } = await context.params as { id: string }
@@ -60,12 +76,11 @@ export async function GET(req: Request, context: any) {
     }
     const requiredHashtags: string[] | null = (campaign as any).required_hashtags || null
 
-    // 2. Get employees in this campaign
-    const { data: empRows } = await supabase
-      .from('employee_groups')
-      .select('employee_id')
-      .eq('campaign_id', campaignId)
-    const employeeIds = (empRows || []).map((e: any) => String(e.employee_id))
+    // 2. Get employees in this campaign (paginated to avoid 1000 row default limit)
+    const empRows = await fetchAllRef(
+      () => supabase.from('employee_groups').select('employee_id').eq('campaign_id', campaignId)
+    )
+    const employeeIds = empRows.map((e: any) => String(e.employee_id))
     if (employeeIds.length === 0) {
       return NextResponse.json({
         campaign: { id: campaign.id, name: campaign.name, required_hashtags: requiredHashtags },
@@ -73,47 +88,64 @@ export async function GET(req: Request, context: any) {
       })
     }
 
-    // 3. Resolve all platform usernames (same sources as /api/groups/[id]/members)
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, full_name, username, tiktok_username, instagram_username')
-      .in('id', employeeIds)
+    // 3. Resolve all platform usernames (paginated reference queries)
+    const users = await fetchAllRef(
+      () => supabase.from('users').select('id, full_name, username, tiktok_username, instagram_username').in('id', employeeIds)
+    )
 
     // Employee-level assignments (filtered by campaign_id to match members API)
-    const { data: ttAliases } = await supabase.from('user_tiktok_usernames').select('user_id, tiktok_username').in('user_id', employeeIds)
-    const { data: igAliases } = await supabase.from('user_instagram_usernames').select('user_id, instagram_username').in('user_id', employeeIds)
-    const { data: ttEmpParts } = await supabase.from('employee_participants').select('employee_id, tiktok_username').in('employee_id', employeeIds).eq('campaign_id', campaignId)
-    const { data: igEmpParts } = await supabase.from('employee_instagram_participants').select('employee_id, instagram_username').in('employee_id', employeeIds).eq('campaign_id', campaignId)
+    const ttAliases = await fetchAllRef(() => supabase.from('user_tiktok_usernames').select('user_id, tiktok_username').in('user_id', employeeIds))
+    const igAliases = await fetchAllRef(() => supabase.from('user_instagram_usernames').select('user_id, instagram_username').in('user_id', employeeIds))
+    const ttEmpParts = await fetchAllRef(() => supabase.from('employee_participants').select('employee_id, tiktok_username').in('employee_id', employeeIds).eq('campaign_id', campaignId))
+    const igEmpParts = await fetchAllRef(() => supabase.from('employee_instagram_participants').select('employee_id, instagram_username').in('employee_id', employeeIds).eq('campaign_id', campaignId))
 
     // Campaign-level participants (same source as members API fallback)
-    const { data: campTT } = await supabase.from('campaign_participants').select('tiktok_username').eq('campaign_id', campaignId)
-    const { data: campIG } = await supabase.from('campaign_instagram_participants').select('instagram_username').eq('campaign_id', campaignId)
+    const campTT = await fetchAllRef(() => supabase.from('campaign_participants').select('tiktok_username').eq('campaign_id', campaignId))
+    const campIG = await fetchAllRef(() => supabase.from('campaign_instagram_participants').select('instagram_username').eq('campaign_id', campaignId))
 
     const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '').replace(/^@+/, '')
     const userMap = new Map<string, string>()
+    // Store BOTH normalized and original-case usernames to handle case-sensitivity in DB
     const ttUserToId = new Map<string, string>()
+    const ttOriginalCase = new Set<string>() // track original-case usernames
     const igUserToId = new Map<string, string>()
+    const igOriginalCase = new Set<string>()
     const ytChannelToId = new Map<string, string>()
 
-    for (const u of users || []) {
+    for (const u of users) {
       userMap.set(u.id, (u as any).full_name || (u as any).username || (u as any).tiktok_username || u.id)
-      if ((u as any).tiktok_username) ttUserToId.set(norm((u as any).tiktok_username), u.id)
-      if ((u as any).instagram_username) igUserToId.set(norm((u as any).instagram_username), u.id)
+      if ((u as any).tiktok_username) {
+        ttUserToId.set(norm((u as any).tiktok_username), u.id)
+        ttOriginalCase.add(String((u as any).tiktok_username).trim())
+      }
+      if ((u as any).instagram_username) {
+        igUserToId.set(norm((u as any).instagram_username), u.id)
+        igOriginalCase.add(String((u as any).instagram_username).trim())
+      }
     }
-    for (const a of ttAliases || []) { if (a.tiktok_username) ttUserToId.set(norm(a.tiktok_username), a.user_id) }
-    for (const a of igAliases || []) { if (a.instagram_username) igUserToId.set(norm(a.instagram_username), a.user_id) }
-    for (const a of ttEmpParts || []) { if (a.tiktok_username) ttUserToId.set(norm(a.tiktok_username), a.employee_id) }
-    for (const a of igEmpParts || []) { if (a.instagram_username) igUserToId.set(norm(a.instagram_username), a.employee_id) }
+    for (const a of ttAliases) { if (a.tiktok_username) { ttUserToId.set(norm(a.tiktok_username), a.user_id); ttOriginalCase.add(String(a.tiktok_username).trim()) } }
+    for (const a of igAliases) { if (a.instagram_username) { igUserToId.set(norm(a.instagram_username), a.user_id); igOriginalCase.add(String(a.instagram_username).trim()) } }
+    for (const a of ttEmpParts) { if (a.tiktok_username) { ttUserToId.set(norm(a.tiktok_username), a.employee_id); ttOriginalCase.add(String(a.tiktok_username).trim()) } }
+    for (const a of igEmpParts) { if (a.instagram_username) { igUserToId.set(norm(a.instagram_username), a.employee_id); igOriginalCase.add(String(a.instagram_username).trim()) } }
     // Add campaign-level participants only when NOT filtering to group employees only
     if (!employeesOnly) {
-      for (const r of campTT || []) {
+      for (const r of campTT) {
         const u = (r as any).tiktok_username
-        if (u) { const n = norm(u); if (!ttUserToId.has(n)) ttUserToId.set(n, 'campaign') }
+        if (u) { const n = norm(u); if (!ttUserToId.has(n)) ttUserToId.set(n, 'campaign'); ttOriginalCase.add(String(u).trim()) }
       }
-      for (const r of campIG || []) {
+      for (const r of campIG) {
         const u = (r as any).instagram_username
-        if (u) { const n = norm(u); if (!igUserToId.has(n)) igUserToId.set(n, 'campaign') }
+        if (u) { const n = norm(u); if (!igUserToId.has(n)) igUserToId.set(n, 'campaign'); igOriginalCase.add(String(u).trim()) }
       }
+    }
+
+    // Build username arrays for querying: include BOTH normalized AND original case
+    // to handle case-sensitive .in() filter in PostgreSQL
+    const buildUsernameSet = (normalized: Map<string, string>, original: Set<string>): string[] => {
+      const all = new Set<string>()
+      for (const k of normalized.keys()) all.add(k)
+      for (const o of original) all.add(o)
+      return Array.from(all).filter(Boolean)
     }
 
     // Date range defaults
@@ -126,10 +158,8 @@ export async function GET(req: Request, context: any) {
     const videos: any[] = []
 
     // === TIKTOK ===
-    // Paginated fetch to bypass Supabase max-rows limit.
-    // Dedup by video_id keeping highest play_count.
     if (platform === 'all' || platform === 'tiktok') {
-      const ttUsernames = Array.from(ttUserToId.keys())
+      const ttUsernames = buildUsernameSet(ttUserToId, ttOriginalCase)
       if (ttUsernames.length > 0) {
         const ttPosts = await fetchAllPages(
           () => supabase
@@ -176,26 +206,43 @@ export async function GET(req: Request, context: any) {
             shares: Number(row.share_count || 0),
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos filtered by hashtag`)
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos filtered by hashtag requirement`)
       }
     }
 
     // === INSTAGRAM ===
+    // TWO queries: posts WITH taken_at + posts with NULL taken_at (fallback to created_at)
     if (platform === 'all' || platform === 'instagram') {
-      const igUsernames = Array.from(igUserToId.keys())
+      const igUsernames = buildUsernameSet(igUserToId, igOriginalCase)
       if (igUsernames.length > 0) {
-        const igPosts = await fetchAllPages(
+        // Query 1: Posts WITH taken_at
+        const igPostsWithDate = await fetchAllPages(
           () => supabase
             .from('instagram_posts_daily')
             .select('id, code, username, taken_at, caption, play_count, like_count, comment_count')
             .in('username', igUsernames)
+            .not('taken_at', 'is', null)
             .gte('taken_at', startISO + 'T00:00:00Z')
             .lte('taken_at', endISO + 'T23:59:59Z')
             .order('play_count', { ascending: false })
             .order('id', { ascending: true })
         )
 
-        console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows for ${igUsernames.length} usernames`)
+        // Query 2: Posts WITHOUT taken_at (fallback to created_at)
+        const igPostsNoDate = await fetchAllPages(
+          () => supabase
+            .from('instagram_posts_daily')
+            .select('id, code, username, taken_at, caption, play_count, like_count, comment_count, created_at')
+            .in('username', igUsernames)
+            .is('taken_at', null)
+            .gte('created_at', startISO + 'T00:00:00Z')
+            .lte('created_at', endISO + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+            .order('id', { ascending: true })
+        )
+
+        const igPosts = [...igPostsWithDate, ...igPostsNoDate]
+        console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows (${igPostsWithDate.length} with taken_at, ${igPostsNoDate.length} without) for ${igUsernames.length} usernames`)
 
         // Deduplicate: keep first occurrence per id (= highest play_count)
         const seen = new Map<string, any>()
@@ -214,6 +261,9 @@ export async function GET(req: Request, context: any) {
           const ownerId = igUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
 
+          // Use taken_at if available, otherwise created_at
+          const postDate = row.taken_at || (row as any).created_at
+
           videos.push({
             platform: 'instagram',
             id: postId,
@@ -221,7 +271,7 @@ export async function GET(req: Request, context: any) {
             owner_name: ownerName,
             title: row.caption || '',
             caption: row.caption || '',
-            taken_at: row.taken_at,
+            taken_at: postDate,
             link: `https://www.instagram.com/reel/${row.code || postId}/`,
             views: Number(row.play_count || 0),
             likes: Number(row.like_count || 0),
@@ -229,31 +279,31 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] Instagram: ${hashtagFiltered} videos filtered by hashtag`)
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] Instagram: ${hashtagFiltered} videos filtered by hashtag requirement`)
       }
     }
 
     // === YOUTUBE ===
     if (platform === 'all' || platform === 'youtube') {
       const channels: string[] = []
-      for (const u of users || []) {
+      for (const u of users) {
         const cid = (u as any).youtube_channel_id; if (cid) channels.push(String(cid).trim())
       }
       if (employeeIds.length > 0) {
-        const { data: ytMap } = await supabase.from('user_youtube_channels').select('user_id, youtube_channel_id').in('user_id', employeeIds)
-        for (const r of ytMap || []) {
+        const ytMap = await fetchAllRef(() => supabase.from('user_youtube_channels').select('user_id, youtube_channel_id').in('user_id', employeeIds))
+        for (const r of ytMap) {
           const cid = (r as any).youtube_channel_id; if (cid) { channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).user_id) }
         }
-        const { data: ytEmp } = await supabase.from('employee_youtube_participants').select('employee_id, youtube_channel_id').in('employee_id', employeeIds).eq('campaign_id', campaignId)
-        for (const r of ytEmp || []) {
+        const ytEmp = await fetchAllRef(() => supabase.from('employee_youtube_participants').select('employee_id, youtube_channel_id').in('employee_id', employeeIds).eq('campaign_id', campaignId))
+        for (const r of ytEmp) {
           const cid = (r as any).youtube_channel_id; if (cid) { channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).employee_id) }
         }
       }
       // Campaign-level YouTube participants
       if (!employeesOnly) {
         try {
-          const { data: campYT } = await supabase.from('campaign_youtube_participants').select('youtube_channel_id').eq('campaign_id', campaignId)
-          for (const r of campYT || []) {
+          const campYT = await fetchAllRef(() => supabase.from('campaign_youtube_participants').select('youtube_channel_id').eq('campaign_id', campaignId))
+          for (const r of campYT) {
             const cid = (r as any).youtube_channel_id; if (cid) channels.push(String(cid).trim())
           }
         } catch {} // table might not exist
@@ -306,14 +356,26 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] YouTube: ${hashtagFiltered} videos filtered by hashtag`)
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] YouTube: ${hashtagFiltered} videos filtered by hashtag requirement`)
       }
     }
 
     // Sort by views desc (highest first) as default
     videos.sort((a, b) => (b.views || 0) - (a.views || 0))
 
-    console.log(`[VIDEOS] FINAL: ${videos.length} total videos, views=${videos.reduce((s, v) => s + (v.views || 0), 0).toLocaleString()}`)
+    // === AUDIT LOG ===
+    const ttCount = videos.filter(v => v.platform === 'tiktok').length
+    const igCount = videos.filter(v => v.platform === 'instagram').length
+    const ytCount = videos.filter(v => v.platform === 'youtube').length
+    const totalViews = videos.reduce((s, v) => s + (v.views || 0), 0)
+    console.log(`[VIDEOS] ═══════════════════════════════════════`)
+    console.log(`[VIDEOS] FINAL: ${videos.length} videos (TT:${ttCount} IG:${igCount} YT:${ytCount})`)
+    console.log(`[VIDEOS] Total views: ${totalViews.toLocaleString()}`)
+    console.log(`[VIDEOS] Required hashtags: ${JSON.stringify(requiredHashtags)}`)
+    console.log(`[VIDEOS] TT usernames queried: ${buildUsernameSet(ttUserToId, ttOriginalCase).length}`)
+    console.log(`[VIDEOS] IG usernames queried: ${buildUsernameSet(igUserToId, igOriginalCase).length}`)
+    console.log(`[VIDEOS] Date range: ${startISO} to ${endISO}`)
+    console.log(`[VIDEOS] ═══════════════════════════════════════`)
 
     // Compute totals + daily time series (bucketed by date and platform)
     const totals = { views: 0, likes: 0, comments: 0, shares: 0 }
