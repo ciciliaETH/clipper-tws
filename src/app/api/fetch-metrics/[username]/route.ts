@@ -1129,8 +1129,72 @@ export async function GET(request: Request, context: any) {
       }
     }
     
+    // SUPPLEMENT: If aggregator returned few videos, also try RapidAPI to get more
+    // This catches videos that the aggregator hasn't indexed
+    const aggCount = videos.length;
+    if (aggCount < 200) { // likely missing videos if under 200
+      console.log(`[TikTok Fetch] Aggregator returned only ${aggCount} videos, supplementing with RapidAPI...`);
+      try {
+        const seenVids = new Set<string>();
+        for (const v of videos) {
+          const vid = v?.aweme_id || v?.video_id || v?.id;
+          if (vid) seenVids.add(String(vid));
+        }
+
+        const rapidPerPage = 100;
+        let rapidCursor: string | undefined = undefined;
+        let rapidPage = 0;
+        let rapidAdded = 0;
+        const rapidMaxPages = 20; // Cap at 20 pages to avoid timeout
+        const rapidStart = Date.now();
+
+        while (rapidPage < rapidMaxPages && (Date.now() - rapidStart) < 25000) {
+          rapidPage++;
+          const rapidUrl = `https://${TIKTOK_RAPID_HOST}/user/posts?unique_id=@${encodeURIComponent(normalized)}&count=${rapidPerPage}${rapidCursor ? `&cursor=${rapidCursor}` : ''}`;
+          try {
+            const rRes = await rapidApiRequest<any>({ url: rapidUrl, method: 'GET', rapidApiHost: TIKTOK_RAPID_HOST, timeoutMs: 15000 });
+            if (!rRes || !rRes.data) break;
+            const rList: any[] = Array.isArray(rRes?.data?.videos) ? rRes.data.videos : (Array.isArray(rRes?.data?.aweme_list) ? rRes.data.aweme_list : []);
+            if (rList.length === 0) break;
+
+            let pageAdded = 0;
+            for (const v of rList) {
+              const vid = v?.aweme_id || v?.video_id || v?.id;
+              if (!vid) continue;
+              const key = String(vid);
+              if (seenVids.has(key)) continue;
+              // Also check numeric video_id
+              const numericId = v?.video_id || v?.videoId || v?.item_id;
+              if (numericId && seenVids.has(String(numericId))) continue;
+
+              seenVids.add(key);
+              if (numericId) seenVids.add(String(numericId));
+              videos.push(v);
+              pageAdded++;
+              rapidAdded++;
+            }
+
+            if (pageAdded === 0) break;
+
+            const nextCursor = rRes?.data?.cursor ? String(rRes.data.cursor) : undefined;
+            if (!nextCursor || nextCursor === rapidCursor) break;
+            rapidCursor = nextCursor;
+
+            await new Promise(r => setTimeout(r, 350));
+          } catch (err: any) {
+            console.error(`[RapidAPI supplement] Page ${rapidPage} error:`, err.message);
+            break;
+          }
+        }
+
+        console.log(`[TikTok Fetch] RapidAPI supplement: +${rapidAdded} additional videos (total now: ${videos.length})`);
+      } catch (err: any) {
+        console.error(`[TikTok Fetch] RapidAPI supplement failed:`, err.message);
+      }
+    }
+
     // FINAL RESULT LOG
-    console.log(`[TikTok Fetch] Final result: ${videos.length} videos from ${telemetry?.mode || 'aggregator'}`);
+    console.log(`[TikTok Fetch] Final result: ${videos.length} videos (aggregator: ${aggCount}, rapid supplement: ${videos.length - aggCount})`);
     
     // VIDEO ENRICHMENT - Backfill missing stats from tikwm.com
     videos = await Promise.all(videos.map(async (v: any) => {
