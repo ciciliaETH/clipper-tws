@@ -155,7 +155,7 @@ export async function GET(req: Request, context: any) {
     const startISO = startDate || defaultStart.toISOString().slice(0, 10)
     const endISO = endDate || now.toISOString().slice(0, 10)
 
-    const videos: any[] = []
+    let videos: any[] = []
 
     // === TIKTOK ===
     // TWO queries: posts WITH taken_at + posts with NULL taken_at (fallback to created_at)
@@ -263,11 +263,17 @@ export async function GET(req: Request, context: any) {
         const igPosts = [...igPostsWithDate, ...igPostsNoDate]
         console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows (${igPostsWithDate.length} with taken_at, ${igPostsNoDate.length} without) for ${igUsernames.length} usernames`)
 
-        // Deduplicate: keep first occurrence per id (= highest play_count)
+        // Deduplicate: by id AND by code (shortcode) to catch duplicates with different numeric IDs
         const seen = new Map<string, any>()
+        const seenCodes = new Set<string>()
         for (const p of igPosts) {
           const vid = String(p.id)
-          if (vid && !seen.has(vid)) seen.set(vid, p)
+          const code = String(p.code || '')
+          if (!vid) continue
+          if (seen.has(vid)) continue
+          if (code && seenCodes.has(code)) continue
+          seen.set(vid, p)
+          if (code) seenCodes.add(code)
         }
 
         console.log(`[VIDEOS] Instagram: ${seen.size} unique videos after dedup`)
@@ -380,6 +386,15 @@ export async function GET(req: Request, context: any) {
         console.log(`[VIDEOS] YouTube: ${videos.filter(v=>v.platform==='youtube').length} videos included, ${hashtagFiltered} excluded by hashtag filter`)
       }
     }
+
+    // Final dedup: remove any remaining duplicates by link URL
+    const seenLinks = new Set<string>()
+    videos = videos.filter(v => {
+      const link = String(v.link || '')
+      if (!link || seenLinks.has(link)) return false
+      seenLinks.add(link)
+      return true
+    })
 
     // Sort by views desc (highest first) as default
     videos.sort((a, b) => (b.views || 0) - (a.views || 0))
