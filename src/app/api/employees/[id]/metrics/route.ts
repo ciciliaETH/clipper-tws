@@ -6,6 +6,22 @@ import { hasRequiredHashtag } from '@/lib/hashtag-filter';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60 seconds to stay safe
 
+// Paginated fetch: bypasses Supabase/PostgREST max-rows server limit
+const PAGE_SIZE = 10000;
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
+  const all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[PAGINATE] error:', error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 function adminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -398,16 +414,17 @@ export async function GET(req: Request, context: any) {
 
     if (start && end) {
       // TikTok: deduplicate by video_id (same logic as participant detail page)
-      const { data: rows, error: aggErr } = await supabase
-        .from('tiktok_posts_daily')
-        .select('video_id, play_count, digg_count, comment_count, share_count, save_count, title')
-        .in('username', normUsernames)
-        .gte('taken_at', start + 'T00:00:00Z')
-        .lte('taken_at', end + 'T23:59:59Z')
-        .order('play_count', { ascending: false })
-        .limit(500000);
+      const rows = await fetchAllPages(
+        () => supabase
+          .from('tiktok_posts_daily')
+          .select('video_id, play_count, digg_count, comment_count, share_count, save_count, title')
+          .in('username', normUsernames)
+          .gte('taken_at', start + 'T00:00:00Z')
+          .lte('taken_at', end + 'T23:59:59Z')
+          .order('play_count', { ascending: false })
+      );
       const seenTT = new Map<string, any>();
-      for (const r of rows || []) {
+      for (const r of rows) {
         const vid = String((r as any).video_id || '');
         if (vid && !seenTT.has(vid)) seenTT.set(vid, r);
       }
@@ -423,16 +440,17 @@ export async function GET(req: Request, context: any) {
         totalsTikTok.posts += 1;
       }
       // Instagram: deduplicate by id/code (same logic as participant detail page)
-      const { data: igRows } = await supabase
-        .from('instagram_posts_daily')
-        .select('id, code, play_count, like_count, comment_count, caption')
-        .in('username', normIG)
-        .gte('taken_at', start + 'T00:00:00Z')
-        .lte('taken_at', end + 'T23:59:59Z')
-        .order('play_count', { ascending: false })
-        .limit(500000);
+      const igRows = await fetchAllPages(
+        () => supabase
+          .from('instagram_posts_daily')
+          .select('id, code, play_count, like_count, comment_count, caption')
+          .in('username', normIG)
+          .gte('taken_at', start + 'T00:00:00Z')
+          .lte('taken_at', end + 'T23:59:59Z')
+          .order('play_count', { ascending: false })
+      );
       const seenIG = new Map<string, any>();
-      for (const r of igRows || []) {
+      for (const r of igRows) {
         const vid = String((r as any).id || (r as any).code || '');
         if (vid && !seenIG.has(vid)) seenIG.set(vid, r);
       }
@@ -448,14 +466,15 @@ export async function GET(req: Request, context: any) {
 
       // YouTube: deduplicate by video_id (same logic as participant detail page)
       if (normYT.length) {
-        const { data: ytRows } = await supabase
-          .from('youtube_posts_daily')
-          .select('video_id, views, likes, comments, title')
-          .in('channel_id', normYT)
-          .gte('post_date', start)
-          .lte('post_date', end)
-          .order('views', { ascending: false })
-          .limit(500000);
+        const ytRows = await fetchAllPages(
+          () => supabase
+            .from('youtube_posts_daily')
+            .select('video_id, views, likes, comments, title')
+            .in('channel_id', normYT)
+            .gte('post_date', start)
+            .lte('post_date', end)
+            .order('views', { ascending: false })
+        );
         const seenYT = new Map<string, any>();
         for (const r of ytRows || []) {
           const vid = String((r as any).video_id || (r as any).id || '');
@@ -527,17 +546,18 @@ export async function GET(req: Request, context: any) {
     // TikTok series - direct query with dedup by video_id + hashtag filter (matches totals logic)
     try {
       if (normUsernames.length && start && end) {
-        const { data: ttSeriesRows } = await supabase
-          .from('tiktok_posts_daily')
-          .select('video_id, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
-          .in('username', normUsernames)
-          .gte('taken_at', start + 'T00:00:00Z')
-          .lte('taken_at', end + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
-          .limit(500000);
+        const ttSeriesRows = await fetchAllPages(
+          () => supabase
+            .from('tiktok_posts_daily')
+            .select('video_id, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
+            .in('username', normUsernames)
+            .gte('taken_at', start + 'T00:00:00Z')
+            .lte('taken_at', end + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+        );
         // Deduplicate by video_id (same logic as totals)
         const dedupTT = new Map<string, any>();
-        for (const r of ttSeriesRows || []) {
+        for (const r of ttSeriesRows) {
           const vid = String((r as any).video_id || '');
           if (vid && !dedupTT.has(vid)) dedupTT.set(vid, r);
         }
@@ -568,17 +588,18 @@ export async function GET(req: Request, context: any) {
 
     // Instagram series - deduplicate by id/code + hashtag filter (matches totals logic)
     try {
-      const { data: rows } = await supabase
-        .from('instagram_posts_daily')
-        .select('id, code, taken_at, play_count, like_count, comment_count, caption')
-        .in('username', normIG)
-        .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
-        .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
-        .order('play_count', { ascending: false })
-        .limit(500000);
+      const igSeriesRows = await fetchAllPages(
+        () => supabase
+          .from('instagram_posts_daily')
+          .select('id, code, taken_at, play_count, like_count, comment_count, caption')
+          .in('username', normIG)
+          .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
+          .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
+          .order('play_count', { ascending: false })
+      );
       // Deduplicate by id/code first
       const dedupIG = new Map<string, any>();
-      for (const r of rows || []) {
+      for (const r of igSeriesRows) {
         const vid = String((r as any).id || (r as any).code || '');
         if (vid && !dedupIG.has(vid)) dedupIG.set(vid, r);
       }
@@ -606,17 +627,18 @@ export async function GET(req: Request, context: any) {
     // YouTube series - deduplicate by video_id
     try {
       if (normYT.length) {
-        const { data: rows } = await supabase
-          .from('youtube_posts_daily')
-          .select('video_id, post_date, views, likes, comments, title')
-          .in('channel_id', normYT)
-          .gte('post_date', start || '1970-01-01')
-          .lte('post_date', end || new Date().toISOString().slice(0,10))
-          .order('views', { ascending: false })
-          .limit(500000);
+        const ytSeriesRows = await fetchAllPages(
+          () => supabase
+            .from('youtube_posts_daily')
+            .select('video_id, post_date, views, likes, comments, title')
+            .in('channel_id', normYT)
+            .gte('post_date', start || '1970-01-01')
+            .lte('post_date', end || new Date().toISOString().slice(0,10))
+            .order('views', { ascending: false })
+        );
         // Deduplicate by video_id first
         const dedupYT = new Map<string, any>();
-        for (const r of rows || []) {
+        for (const r of ytSeriesRows) {
           const vid = String((r as any).video_id || (r as any).id || '');
           if (vid && !dedupYT.has(vid)) dedupYT.set(vid, r);
         }

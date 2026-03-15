@@ -13,6 +13,30 @@ function supabaseAdmin() {
   )
 }
 
+// Paginated fetch: keeps fetching pages until all rows are retrieved.
+// This bypasses Supabase/PostgREST max-rows server limit which silently
+// truncates results even when .limit() is set higher.
+const PAGE_SIZE = 10000
+
+async function fetchAllPages(
+  query: () => ReturnType<ReturnType<ReturnType<typeof createClient>['from']>['select']>,
+  orderCol: string
+): Promise<any[]> {
+  const all: any[] = []
+  let offset = 0
+  while (true) {
+    const { data, error } = await query()
+      .order(orderCol, { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1) as any
+    if (error) { console.error('[PAGINATE] error:', error.message); break }
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < PAGE_SIZE) break // last page
+    offset += PAGE_SIZE
+  }
+  return all
+}
+
 export async function GET(req: Request, context: any) {
   try {
     const { id: campaignId } = await context.params as { id: string }
@@ -105,30 +129,36 @@ export async function GET(req: Request, context: any) {
     const videos: any[] = []
 
     // === TIKTOK ===
-    // Use same dedup as /api/employees/[id]/metrics: order by play_count DESC,
-    // keep first (highest) per video_id. Limit 50000 to match metrics endpoint.
+    // Paginated fetch to bypass Supabase max-rows limit.
+    // Dedup by video_id keeping highest play_count.
     if (platform === 'all' || platform === 'tiktok') {
       const ttUsernames = Array.from(ttUserToId.keys())
       if (ttUsernames.length > 0) {
-        const { data: ttPosts } = await supabase
-          .from('tiktok_posts_daily')
-          .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
-          .in('username', ttUsernames)
-          .gte('taken_at', startISO + 'T00:00:00Z')
-          .lte('taken_at', endISO + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
-          .limit(500000)
+        const ttPosts = await fetchAllPages(
+          () => supabase
+            .from('tiktok_posts_daily')
+            .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
+            .in('username', ttUsernames)
+            .gte('taken_at', startISO + 'T00:00:00Z')
+            .lte('taken_at', endISO + 'T23:59:59Z'),
+          'play_count'
+        )
 
-        // Deduplicate: keep first occurrence per video_id (= highest play_count)
+        console.log(`[VIDEOS] TikTok: fetched ${ttPosts.length} raw rows for ${ttUsernames.length} usernames`)
+
+        // Deduplicate: keep first occurrence per video_id (= highest play_count due to order)
         const seen = new Map<string, any>()
-        for (const p of ttPosts || []) {
+        for (const p of ttPosts) {
           const vid = String(p.video_id)
           if (vid && !seen.has(vid)) seen.set(vid, p)
         }
 
+        console.log(`[VIDEOS] TikTok: ${seen.size} unique videos after dedup`)
+
+        let hashtagFiltered = 0
         for (const [videoId, row] of seen.entries()) {
-          if (!hasRequiredHashtag(row.title, requiredHashtags)) continue
-          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) continue
+          if (!hasRequiredHashtag(row.title, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) { hashtagFiltered++; continue }
 
           const ownerId = ttUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -148,6 +178,7 @@ export async function GET(req: Request, context: any) {
             shares: Number(row.share_count || 0),
           })
         }
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos filtered by hashtag`)
       }
     }
 
@@ -155,25 +186,31 @@ export async function GET(req: Request, context: any) {
     if (platform === 'all' || platform === 'instagram') {
       const igUsernames = Array.from(igUserToId.keys())
       if (igUsernames.length > 0) {
-        const { data: igPosts } = await supabase
-          .from('instagram_posts_daily')
-          .select('id, code, username, taken_at, caption, play_count, like_count, comment_count')
-          .in('username', igUsernames)
-          .gte('taken_at', startISO + 'T00:00:00Z')
-          .lte('taken_at', endISO + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
-          .limit(500000)
+        const igPosts = await fetchAllPages(
+          () => supabase
+            .from('instagram_posts_daily')
+            .select('id, code, username, taken_at, caption, play_count, like_count, comment_count')
+            .in('username', igUsernames)
+            .gte('taken_at', startISO + 'T00:00:00Z')
+            .lte('taken_at', endISO + 'T23:59:59Z'),
+          'play_count'
+        )
+
+        console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows for ${igUsernames.length} usernames`)
 
         // Deduplicate: keep first occurrence per id (= highest play_count)
         const seen = new Map<string, any>()
-        for (const p of igPosts || []) {
+        for (const p of igPosts) {
           const vid = String(p.id)
           if (vid && !seen.has(vid)) seen.set(vid, p)
         }
 
+        console.log(`[VIDEOS] Instagram: ${seen.size} unique videos after dedup`)
+
+        let hashtagFiltered = 0
         for (const [postId, row] of seen.entries()) {
-          if (!hasRequiredHashtag(row.caption, requiredHashtags)) continue
-          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) continue
+          if (!hasRequiredHashtag(row.caption, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) { hashtagFiltered++; continue }
 
           const ownerId = igUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -193,6 +230,7 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] Instagram: ${hashtagFiltered} videos filtered by hashtag`)
       }
     }
 
@@ -212,7 +250,7 @@ export async function GET(req: Request, context: any) {
           const cid = (r as any).youtube_channel_id; if (cid) { channels.push(String(cid).trim()); ytChannelToId.set(String(cid).trim(), (r as any).employee_id) }
         }
       }
-      // Campaign-level YouTube participants (skip when filtering to group employees only)
+      // Campaign-level YouTube participants
       if (!employeesOnly) {
         try {
           const { data: campYT } = await supabase.from('campaign_youtube_participants').select('youtube_channel_id').eq('campaign_id', campaignId)
@@ -223,25 +261,31 @@ export async function GET(req: Request, context: any) {
       }
       const uniqueChannels = Array.from(new Set(channels.filter(Boolean)))
       if (uniqueChannels.length > 0) {
-        const { data: ytRows } = await supabase
-          .from('youtube_posts_daily')
-          .select('video_id, channel_id, post_date, title, views, likes, comments')
-          .in('channel_id', uniqueChannels)
-          .gte('post_date', startISO)
-          .lte('post_date', endISO)
-          .order('views', { ascending: false })
-          .limit(500000)
+        const ytRows = await fetchAllPages(
+          () => supabase
+            .from('youtube_posts_daily')
+            .select('video_id, channel_id, post_date, title, views, likes, comments')
+            .in('channel_id', uniqueChannels)
+            .gte('post_date', startISO)
+            .lte('post_date', endISO),
+          'views'
+        )
+
+        console.log(`[VIDEOS] YouTube: fetched ${ytRows.length} raw rows for ${uniqueChannels.length} channels`)
 
         // Deduplicate: keep first occurrence per video_id (= highest views)
         const seen = new Map<string, any>()
-        for (const r of ytRows || []) {
+        for (const r of ytRows) {
           const vid = String((r as any).video_id)
           if (vid && !seen.has(vid)) seen.set(vid, r)
         }
 
+        console.log(`[VIDEOS] YouTube: ${seen.size} unique videos after dedup`)
+
+        let hashtagFiltered = 0
         for (const [vid, row] of seen.entries()) {
-          if (!hasRequiredHashtag((row as any).title, requiredHashtags)) continue
-          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) continue
+          if (!hasRequiredHashtag((row as any).title, requiredHashtags)) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) { hashtagFiltered++; continue }
 
           const channelId = String((row as any).channel_id)
           const ownerId = ytChannelToId.get(channelId) || null
@@ -262,11 +306,14 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
+        if (hashtagFiltered > 0) console.log(`[VIDEOS] YouTube: ${hashtagFiltered} videos filtered by hashtag`)
       }
     }
 
     // Sort by views desc (highest first) as default
     videos.sort((a, b) => (b.views || 0) - (a.views || 0))
+
+    console.log(`[VIDEOS] FINAL: ${videos.length} total videos, views=${videos.reduce((s, v) => s + (v.views || 0), 0).toLocaleString()}`)
 
     // Compute totals + daily time series (bucketed by date and platform)
     const totals = { views: 0, likes: 0, comments: 0, shares: 0 }

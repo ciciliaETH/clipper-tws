@@ -4,6 +4,22 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
+// Paginated fetch: bypasses Supabase/PostgREST max-rows server limit
+const PAGE_SIZE = 10000;
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
+  const all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[PAGINATE] error:', error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 function adminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -283,16 +299,17 @@ export async function GET(req: Request) {
       // Always fetch up to today so that dedup/bucketing is stable
       const rtFetchEndISO = todayISO > endISO ? todayISO : endISO;
       if (handlesTT.size) {
-        const { data: rows } = await supa
-          .from('tiktok_posts_daily')
-          .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count')
-          .in('username', Array.from(handlesTT))
-          .gte('taken_at', rtStartISO+'T00:00:00Z')
-          .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
-          .limit(500000);
+        const rows = await fetchAllPages(
+          () => supa
+            .from('tiktok_posts_daily')
+            .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count')
+            .in('username', Array.from(handlesTT))
+            .gte('taken_at', rtStartISO+'T00:00:00Z')
+            .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
+        );
         // Deduplicate by video_id (PK, defensive)
         const seenTT = new Map<string, any>();
-        for (const r of rows||[]) {
+        for (const r of rows) {
           const vid = String((r as any).video_id || '');
           if (vid && !seenTT.has(vid)) seenTT.set(vid, r);
         }
@@ -323,16 +340,17 @@ export async function GET(req: Request) {
         }
       }
       if (handlesIG.size) {
-        const { data: rows } = await supa
-          .from('instagram_posts_daily')
-          .select('id, code, username, taken_at, play_count, like_count, comment_count')
-          .in('username', Array.from(handlesIG))
-          .gte('taken_at', rtStartISO+'T00:00:00Z')
-          .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
-          .limit(500000);
+        const rows = await fetchAllPages(
+          () => supa
+            .from('instagram_posts_daily')
+            .select('id, code, username, taken_at, play_count, like_count, comment_count')
+            .in('username', Array.from(handlesIG))
+            .gte('taken_at', rtStartISO+'T00:00:00Z')
+            .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
+        );
         // Deduplicate by id/code
         const seenIG = new Map<string, any>();
-        for (const r of rows||[]) {
+        for (const r of rows) {
           const vid = String((r as any).id || (r as any).code || '');
           if (vid && !seenIG.has(vid)) seenIG.set(vid, r);
         }
@@ -360,13 +378,14 @@ export async function GET(req: Request) {
         }
       }
       if (handlesYT.size) {
-        const { data: rows } = await supa
-          .from('youtube_posts_daily')
-          .select('video_id, channel_id, post_date, views, likes, comments')
-          .in('channel_id', Array.from(handlesYT))
-          .gte('post_date', rtStartISO)
-          .lte('post_date', rtFetchEndISO)
-          .limit(500000);
+        const rows = await fetchAllPages(
+          () => supa
+            .from('youtube_posts_daily')
+            .select('video_id, channel_id, post_date, views, likes, comments')
+            .in('channel_id', Array.from(handlesYT))
+            .gte('post_date', rtStartISO)
+            .lte('post_date', rtFetchEndISO)
+        );
         // Deduplicate by video_id — keep EARLIEST post_date per video so it stays
         // in the correct weekly bucket regardless of later scrapes
         const seenYT = new Map<string, any>();

@@ -4,6 +4,22 @@ import { hasRequiredHashtag } from '@/lib/hashtag-filter';
 
 export const dynamic = 'force-dynamic';
 
+// Paginated fetch: bypasses Supabase/PostgREST max-rows server limit
+const PAGE_SIZE = 10000;
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
+  const all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[PAGINATE] error:', error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 function supabaseAdmin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -118,17 +134,18 @@ export async function GET(req: Request) {
     // ─── TikTok ───
     // tiktok_posts_daily has video_id as PK (one row per video), taken_at is always set
     if ((platform === 'all' || platform === 'tiktok') && tiktokUsernames.size > 0) {
-      const { data: ttPosts } = await supabase
-        .from('tiktok_posts_daily')
-        .select('video_id, username, taken_at, title')
-        .in('username', Array.from(tiktokUsernames))
-        .gte('taken_at', startDate + 'T00:00:00Z')
-        .lte('taken_at', endDate + 'T23:59:59Z')
-        .order('taken_at', { ascending: true })
-        .limit(500000);
+      const ttPosts = await fetchAllPages(
+        () => supabase
+          .from('tiktok_posts_daily')
+          .select('video_id, username, taken_at, title')
+          .in('username', Array.from(tiktokUsernames))
+          .gte('taken_at', startDate + 'T00:00:00Z')
+          .lte('taken_at', endDate + 'T23:59:59Z')
+          .order('taken_at', { ascending: true })
+      );
 
       const videoFirstDate = new Map<string, { date: string; title: string | null }>();
-      for (const row of ttPosts || []) {
+      for (const row of ttPosts) {
         const vid = String(row.video_id);
         if (videoFirstDate.has(vid)) continue;
         const date = new Date(row.taken_at).toISOString().slice(0, 10);
@@ -161,17 +178,18 @@ export async function GET(req: Request) {
       const postFirstDate = new Map<string, { date: string; caption: string | null }>();
 
       // Query 1: Posts WITH taken_at (use taken_at for date)
-      const { data: igPostsWithDate } = await supabase
-        .from('instagram_posts_daily')
-        .select('id, username, taken_at, caption')
-        .in('username', igUsernamesArr)
-        .not('taken_at', 'is', null)
-        .gte('taken_at', startDate + 'T00:00:00Z')
-        .lte('taken_at', endDate + 'T23:59:59Z')
-        .order('taken_at', { ascending: true })
-        .limit(500000);
+      const igPostsWithDate = await fetchAllPages(
+        () => supabase
+          .from('instagram_posts_daily')
+          .select('id, username, taken_at, caption')
+          .in('username', igUsernamesArr)
+          .not('taken_at', 'is', null)
+          .gte('taken_at', startDate + 'T00:00:00Z')
+          .lte('taken_at', endDate + 'T23:59:59Z')
+          .order('taken_at', { ascending: true })
+      );
 
-      for (const row of igPostsWithDate || []) {
+      for (const row of igPostsWithDate) {
         const pid = String((row as any).id);
         if (postFirstDate.has(pid)) continue;
         const date = new Date((row as any).taken_at).toISOString().slice(0, 10);
@@ -179,24 +197,25 @@ export async function GET(req: Request) {
       }
 
       // Query 2: Posts WITHOUT taken_at (fallback to created_at)
-      const { data: igPostsNoDate } = await supabase
-        .from('instagram_posts_daily')
-        .select('id, username, caption, created_at')
-        .in('username', igUsernamesArr)
-        .is('taken_at', null)
-        .gte('created_at', startDate + 'T00:00:00Z')
-        .lte('created_at', endDate + 'T23:59:59Z')
-        .order('created_at', { ascending: true })
-        .limit(500000);
+      const igPostsNoDate = await fetchAllPages(
+        () => supabase
+          .from('instagram_posts_daily')
+          .select('id, username, caption, created_at')
+          .in('username', igUsernamesArr)
+          .is('taken_at', null)
+          .gte('created_at', startDate + 'T00:00:00Z')
+          .lte('created_at', endDate + 'T23:59:59Z')
+          .order('created_at', { ascending: true })
+      );
 
-      for (const row of igPostsNoDate || []) {
+      for (const row of igPostsNoDate) {
         const pid = String((row as any).id);
         if (postFirstDate.has(pid)) continue; // already counted from query 1
         const date = new Date((row as any).created_at).toISOString().slice(0, 10);
         postFirstDate.set(pid, { date, caption: (row as any).caption });
       }
 
-      console.log(`[posts-series] Instagram: ${(igPostsWithDate||[]).length} with taken_at, ${(igPostsNoDate||[]).length} without (using created_at)`);
+      console.log(`[posts-series] Instagram: ${igPostsWithDate.length} with taken_at, ${igPostsNoDate.length} without (using created_at)`);
 
       // Group by date, apply hashtag filter
       const postIdsByDate = new Map<string, Set<string>>();
@@ -222,18 +241,19 @@ export async function GET(req: Request) {
     // youtube_posts_daily has composite PK (id=user_id, video_id) - multiple rows per video.
     // Dedup by video_id to count unique videos only.
     if ((platform === 'all' || platform === 'youtube') && youtubeChannels.size > 0) {
-      const { data: ytPosts } = await supabase
-        .from('youtube_posts_daily')
-        .select('video_id, channel_id, post_date, title')
-        .in('channel_id', Array.from(youtubeChannels))
-        .gte('post_date', startDate)
-        .lte('post_date', endDate)
-        .order('post_date', { ascending: true })
-        .limit(500000);
+      const ytPosts = await fetchAllPages(
+        () => supabase
+          .from('youtube_posts_daily')
+          .select('video_id, channel_id, post_date, title')
+          .in('channel_id', Array.from(youtubeChannels))
+          .gte('post_date', startDate)
+          .lte('post_date', endDate)
+          .order('post_date', { ascending: true })
+      );
 
       // Dedup by video_id - keep earliest post_date per unique video
       const ytFirstDate = new Map<string, { date: string; title: string | null }>();
-      for (const row of ytPosts || []) {
+      for (const row of ytPosts) {
         const vid = String((row as any).video_id);
         if (!vid) continue;
         const date = String((row as any).post_date).slice(0, 10);
@@ -243,7 +263,7 @@ export async function GET(req: Request) {
         }
       }
 
-      console.log(`[posts-series] YouTube: ${(ytPosts||[]).length} rows → ${ytFirstDate.size} unique videos`);
+      console.log(`[posts-series] YouTube: ${ytPosts.length} rows → ${ytFirstDate.size} unique videos`);
 
       // Group by date, apply hashtag filter
       const ytVideosByDate = new Map<string, Set<string>>();

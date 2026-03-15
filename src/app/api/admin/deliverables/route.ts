@@ -5,6 +5,22 @@ import { createClient as createSSR } from '@/lib/supabase/server';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+// Paginated fetch: bypasses Supabase/PostgREST max-rows server limit
+const PAGE_SIZE = 10000;
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
+  const all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[PAGINATE] error:', error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 export async function GET(req: Request) {
   // Auth: admin only
   const supabaseSSR = await createSSR();
@@ -105,23 +121,25 @@ export async function GET(req: Request) {
   const ttPostsByUsername = new Map<string, number>();
   if (allTT.size > 0) {
     const ttArr = Array.from(allTT);
-    const { data: ttPosts1 } = await supa
-      .from('tiktok_posts_daily')
-      .select('video_id, username')
-      .in('username', ttArr)
-      .gte('taken_at', start + 'T00:00:00Z')
-      .lte('taken_at', end + 'T23:59:59Z')
-      .limit(500000);
-    const { data: ttPosts2 } = await supa
-      .from('tiktok_posts_daily')
-      .select('video_id, username')
-      .in('username', ttArr)
-      .is('taken_at', null)
-      .gte('post_date', start)
-      .lte('post_date', end)
-      .limit(500000);
+    const ttPosts1 = await fetchAllPages(
+      () => supa
+        .from('tiktok_posts_daily')
+        .select('video_id, username')
+        .in('username', ttArr)
+        .gte('taken_at', start + 'T00:00:00Z')
+        .lte('taken_at', end + 'T23:59:59Z')
+    );
+    const ttPosts2 = await fetchAllPages(
+      () => supa
+        .from('tiktok_posts_daily')
+        .select('video_id, username')
+        .in('username', ttArr)
+        .is('taken_at', null)
+        .gte('post_date', start)
+        .lte('post_date', end)
+    );
     const seen = new Set<string>();
-    for (const r of [...(ttPosts1 || []), ...(ttPosts2 || [])]) {
+    for (const r of [...ttPosts1, ...ttPosts2]) {
       const vid = String(r.video_id || '');
       if (!vid || seen.has(vid)) continue;
       seen.add(vid);
@@ -135,23 +153,25 @@ export async function GET(req: Request) {
   const igPostsByUsername = new Map<string, number>();
   if (allIG.size > 0) {
     const igArr = Array.from(allIG);
-    const { data: igPosts1 } = await supa
-      .from('instagram_posts_daily')
-      .select('id, code, username')
-      .in('username', igArr)
-      .gte('taken_at', start + 'T00:00:00Z')
-      .lte('taken_at', end + 'T23:59:59Z')
-      .limit(500000);
-    const { data: igPosts2 } = await supa
-      .from('instagram_posts_daily')
-      .select('id, code, username')
-      .in('username', igArr)
-      .is('taken_at', null)
-      .gte('post_date', start)
-      .lte('post_date', end)
-      .limit(500000);
+    const igPosts1 = await fetchAllPages(
+      () => supa
+        .from('instagram_posts_daily')
+        .select('id, code, username')
+        .in('username', igArr)
+        .gte('taken_at', start + 'T00:00:00Z')
+        .lte('taken_at', end + 'T23:59:59Z')
+    );
+    const igPosts2 = await fetchAllPages(
+      () => supa
+        .from('instagram_posts_daily')
+        .select('id, code, username')
+        .in('username', igArr)
+        .is('taken_at', null)
+        .gte('post_date', start)
+        .lte('post_date', end)
+    );
     const seen = new Set<string>();
-    for (const r of [...(igPosts1 || []), ...(igPosts2 || [])]) {
+    for (const r of [...igPosts1, ...igPosts2]) {
       const vid = String((r as any).id || (r as any).code || '');
       if (!vid || seen.has(vid)) continue;
       seen.add(vid);
@@ -163,15 +183,16 @@ export async function GET(req: Request) {
   // Fetch YouTube posts (dedupe by video_id)
   const ytPostsByChannel = new Map<string, number>();
   if (allYT.size > 0) {
-    const { data: ytPosts } = await supa
-      .from('youtube_posts_daily')
-      .select('video_id, channel_id')
-      .in('channel_id', Array.from(allYT))
-      .gte('post_date', start)
-      .lte('post_date', end)
-      .limit(500000);
+    const ytPosts = await fetchAllPages(
+      () => supa
+        .from('youtube_posts_daily')
+        .select('video_id, channel_id')
+        .in('channel_id', Array.from(allYT))
+        .gte('post_date', start)
+        .lte('post_date', end)
+    );
     const seen = new Set<string>();
-    for (const r of ytPosts || []) {
+    for (const r of ytPosts) {
       const vid = String(r.video_id || '');
       if (!vid || seen.has(vid)) continue;
       seen.add(vid);

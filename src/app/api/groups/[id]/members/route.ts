@@ -6,6 +6,28 @@ import { hasRequiredHashtag } from '@/lib/hashtag-filter';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60 seconds to stay safe
 
+// Paginated fetch: keeps fetching pages until all rows are retrieved.
+// Bypasses Supabase/PostgREST max-rows server limit.
+const PAGE_SIZE = 10000;
+async function fetchAllPages(
+  queryFn: () => any,
+  orderCol: string
+): Promise<any[]> {
+  const all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFn()
+      .order(orderCol, { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) { console.error('[PAGINATE] error:', error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 function adminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -416,17 +438,19 @@ export async function GET(req: Request, context: any) {
         const perUserDayTT = new Map<string, Map<string,{views:number;likes:number;comments:number;shares:number;saves:number;posts:number}>>();
         const perUserDayIG = new Map<string, Map<string,{views:number;likes:number;comments:number;posts:number}>>();
         if (!snapshotsOnly && ttUnion.length) {
-          const { data: ptt } = await supabase
-            .from('tiktok_posts_daily')
-            .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
-            .in('username', ttUnion)
-            .gte('taken_at', start + 'T00:00:00Z')
-            .lte('taken_at', end + 'T23:59:59Z')
-            .order('play_count', { ascending: false })
-            .limit(500000);
+          const ptt = await fetchAllPages(
+            () => supabase
+              .from('tiktok_posts_daily')
+              .select('video_id, username, taken_at, play_count, digg_count, comment_count, share_count, save_count, title')
+              .in('username', ttUnion)
+              .gte('taken_at', start + 'T00:00:00Z')
+              .lte('taken_at', end + 'T23:59:59Z')
+              .order('play_count', { ascending: false }),
+            'play_count'
+          );
           // Deduplicate by video_id (same logic as participant detail page)
           const dedupedTT = new Map<string, any>();
-          for (const r of ptt || []) {
+          for (const r of ptt) {
             const vid = String((r as any).video_id || '');
             if (vid && !dedupedTT.has(vid)) dedupedTT.set(vid, r);
           }
@@ -453,17 +477,19 @@ export async function GET(req: Request, context: any) {
           }
         }
         if (!snapshotsOnly && igUnion.length) {
-          const { data: pig } = await supabase
-            .from('instagram_posts_daily')
-            .select('id, code, username, taken_at, play_count, like_count, comment_count, caption')
-            .in('username', igUnion)
-            .gte('taken_at', start + 'T00:00:00Z')
-            .lte('taken_at', end + 'T23:59:59Z')
-            .order('play_count', { ascending: false })
-            .limit(500000);
+          const pig = await fetchAllPages(
+            () => supabase
+              .from('instagram_posts_daily')
+              .select('id, code, username, taken_at, play_count, like_count, comment_count, caption')
+              .in('username', igUnion)
+              .gte('taken_at', start + 'T00:00:00Z')
+              .lte('taken_at', end + 'T23:59:59Z')
+              .order('play_count', { ascending: false }),
+            'play_count'
+          );
           // Deduplicate by id/code (same logic as participant detail page)
           const dedupedIG = new Map<string, any>();
-          for (const r of pig || []) {
+          for (const r of pig) {
             const vid = String((r as any).id || (r as any).code || '');
             if (vid && !dedupedIG.has(vid)) dedupedIG.set(vid, r);
           }
@@ -573,17 +599,18 @@ export async function GET(req: Request, context: any) {
         for (const u of (fallbackYT.get(empId) || [])) if (u) ytNeed.add(u);
       }
       if (tikNeed.size > 0) {
-        const { data: rows } = await supabase
-          .from('tiktok_posts_daily')
-          .select('video_id, username, play_count, digg_count, comment_count, share_count, save_count, title')
-          .gte('taken_at', start + 'T00:00:00Z')
-          .lte('taken_at', end + 'T23:59:59Z')
-          .in('username', Array.from(tikNeed))
-          .order('play_count', { ascending: false })
-          .limit(500000);
+        const rows = await fetchAllPages(
+          () => supabase
+            .from('tiktok_posts_daily')
+            .select('video_id, username, play_count, digg_count, comment_count, share_count, save_count, title')
+            .gte('taken_at', start + 'T00:00:00Z')
+            .lte('taken_at', end + 'T23:59:59Z')
+            .in('username', Array.from(tikNeed)),
+          'play_count'
+        );
         // Deduplicate by video_id (same logic as participant detail page)
         const deduped = new Map<string, any>();
-        for (const r of rows || []) {
+        for (const r of rows) {
           const vid = String((r as any).video_id || '');
           if (vid && !deduped.has(vid)) deduped.set(vid, r);
         }
@@ -605,17 +632,18 @@ export async function GET(req: Request, context: any) {
         sumsByUsername = map;
       }
       if (igNeed.size > 0) {
-        const { data: rowsIG } = await supabase
-          .from('instagram_posts_daily')
-          .select('id, code, username, play_count, like_count, comment_count, caption')
-          .gte('taken_at', start + 'T00:00:00Z')
-          .lte('taken_at', end + 'T23:59:59Z')
-          .in('username', Array.from(igNeed))
-          .order('play_count', { ascending: false })
-          .limit(500000);
+        const rowsIG = await fetchAllPages(
+          () => supabase
+            .from('instagram_posts_daily')
+            .select('id, code, username, play_count, like_count, comment_count, caption')
+            .gte('taken_at', start + 'T00:00:00Z')
+            .lte('taken_at', end + 'T23:59:59Z')
+            .in('username', Array.from(igNeed)),
+          'play_count'
+        );
         // Deduplicate by id/code (same logic as participant detail page)
         const dedupedIG = new Map<string, any>();
-        for (const r of rowsIG || []) {
+        for (const r of rowsIG) {
           const vid = String((r as any).id || (r as any).code || '');
           if (vid && !dedupedIG.has(vid)) dedupedIG.set(vid, r);
         }
@@ -637,16 +665,17 @@ export async function GET(req: Request, context: any) {
       // YouTube: deduplicate by video_id (same logic as participant detail page)
       try {
         if (ytNeed.size > 0) {
-          const { data: rowsYT } = await supabase
-            .from('youtube_posts_daily')
-            .select('video_id, channel_id, views, likes, comments, title')
-            .gte('post_date', start)
-            .lte('post_date', end)
-            .in('channel_id', Array.from(ytNeed))
-            .order('views', { ascending: false })
-            .limit(500000);
+          const rowsYT = await fetchAllPages(
+            () => supabase
+              .from('youtube_posts_daily')
+              .select('video_id, channel_id, views, likes, comments, title')
+              .gte('post_date', start)
+              .lte('post_date', end)
+              .in('channel_id', Array.from(ytNeed)),
+            'views'
+          );
           const dedupedYT = new Map<string, any>();
-          for (const r of rowsYT || []) {
+          for (const r of rowsYT) {
             const vid = String((r as any).video_id || (r as any).id || '');
             if (vid && !dedupedYT.has(vid)) dedupedYT.set(vid, r);
           }
