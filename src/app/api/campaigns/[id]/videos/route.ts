@@ -201,18 +201,10 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] TikTok: ${seen.size} unique videos after dedup`)
 
-        let hashtagFiltered = 0
-        const hashtagFilteredSamples: string[] = []
+        // No hashtag filtering — include ALL videos from campaign participants.
+        // Only apply extra hashtag filter if explicitly requested via query param.
         for (const [videoId, row] of seen.entries()) {
-          if (!hasRequiredHashtag(row.title, requiredHashtags)) {
-            hashtagFiltered++
-            // Log first 5 filtered videos for debugging
-            if (hashtagFilteredSamples.length < 5) {
-              hashtagFilteredSamples.push(`${videoId} (${row.username}, ${Number(row.play_count||0).toLocaleString()} views): "${(row.title||'').slice(0,80)}"`)
-            }
-            continue
-          }
-          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) continue
 
           const ownerId = ttUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -232,11 +224,7 @@ export async function GET(req: Request, context: any) {
             shares: Number(row.share_count || 0),
           })
         }
-        if (hashtagFiltered > 0) {
-          console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos EXCLUDED by hashtag filter (required: ${JSON.stringify(requiredHashtags)})`)
-          console.log(`[VIDEOS] TikTok: Sample excluded videos:`)
-          hashtagFilteredSamples.forEach(s => console.log(`  - ${s}`))
-        }
+        console.log(`[VIDEOS] TikTok: ${videos.filter(v=>v.platform==='tiktok').length} videos included`)
       }
     }
 
@@ -283,10 +271,9 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] Instagram: ${seen.size} unique videos after dedup`)
 
-        let hashtagFiltered = 0
+        // No hashtag filtering — include ALL videos from campaign participants.
         for (const [postId, row] of seen.entries()) {
-          if (!hasRequiredHashtag(row.caption, requiredHashtags)) { hashtagFiltered++; continue }
-          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag(row.caption, [extraHashtag])) continue
 
           const ownerId = igUserToId.get(norm(row.username)) || null
           const ownerName = ownerId && userMap.has(ownerId) ? userMap.get(ownerId)! : row.username
@@ -309,7 +296,7 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] Instagram: ${hashtagFiltered} videos filtered by hashtag requirement`)
+        console.log(`[VIDEOS] Instagram: ${videos.filter(v=>v.platform==='instagram').length} videos included`)
       }
     }
 
@@ -362,10 +349,9 @@ export async function GET(req: Request, context: any) {
 
         console.log(`[VIDEOS] YouTube: ${seen.size} unique videos after dedup`)
 
-        let hashtagFiltered = 0
+        // No hashtag filtering — include ALL videos from campaign participants.
         for (const [vid, row] of seen.entries()) {
-          if (!hasRequiredHashtag((row as any).title, requiredHashtags)) { hashtagFiltered++; continue }
-          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) { hashtagFiltered++; continue }
+          if (extraHashtag && !hasRequiredHashtag((row as any).title, [extraHashtag])) continue
 
           const channelId = String((row as any).channel_id)
           const ownerId = ytChannelToId.get(channelId) || null
@@ -386,7 +372,7 @@ export async function GET(req: Request, context: any) {
             shares: 0,
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] YouTube: ${hashtagFiltered} videos filtered by hashtag requirement`)
+        console.log(`[VIDEOS] YouTube: ${videos.filter(v=>v.platform==='youtube').length} videos included`)
       }
     }
 
