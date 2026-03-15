@@ -17,8 +17,8 @@ export const maxDuration = 60; // 60s - fit Vercel Hobby limit
 const AGG_BASE = process.env.AGGREGATOR_V3_BASE || 'http://202.10.44.90/api/v3';
 const AGG_IG_ENABLED = (process.env.AGGREGATOR_ENABLED !== '0');
 const AGG_IG_UNLIMITED = (process.env.AGGREGATOR_UNLIMITED !== '0');
-// Reduce default max pages to ensure we never exceed 60s per request
-const AGG_IG_MAX_PAGES = Number(process.env.AGGREGATOR_MAX_PAGES || 10);
+// Allow up to 50 pages for complete data capture (with time guard)
+const AGG_IG_MAX_PAGES = Number(process.env.AGGREGATOR_MAX_PAGES || 50);
 const AGG_IG_RATE_MS = Number(process.env.AGGREGATOR_RATE_MS || 500);
 const AGG_IG_PAGE_SIZE = Number(process.env.AGGREGATOR_PAGE_SIZE || 50); // use larger page size to minimize pagination
 
@@ -167,14 +167,15 @@ export async function GET(req: Request, context: any) {
   const debug = url.searchParams.get('debug') === '1';
   const allowUsernameFallback = (process.env.FETCH_IG_ALLOW_USERNAME_FALLBACK === '1') || (url.searchParams.get('allow_username') === '1');
   // Date window: default start to 2026-01-01 for consistent refresh
-  const startParam = url.searchParams.get('start') || '2026-01-01';
+  const defaultIgStart = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startParam = url.searchParams.get('start') || defaultIgStart;
   const endParam = url.searchParams.get('end') || null;
   // Optional tuning via query params
   const qpMaxPages = Number(url.searchParams.get('max_pages') || '') || undefined;
   const qpPageSize = Number(url.searchParams.get('page_size') || '') || undefined;
   const qpBudgetMs = Number(url.searchParams.get('time_budget_ms') || '') || undefined;
-  const maxPages = Math.max(1, Math.min(AGG_IG_MAX_PAGES, qpMaxPages ?? AGG_IG_MAX_PAGES));
-  const pageSize = Math.min(50, Math.max(1, qpPageSize ?? AGG_IG_PAGE_SIZE));
+  const maxPages = Math.max(1, qpMaxPages ?? AGG_IG_MAX_PAGES);
+  const pageSize = Math.max(1, qpPageSize ?? AGG_IG_PAGE_SIZE);
   const budgetMs = Math.max(5000, Math.min(60000, qpBudgetMs ?? 25000));
 
   const supa = admin();
