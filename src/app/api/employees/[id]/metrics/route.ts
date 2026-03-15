@@ -421,7 +421,7 @@ export async function GET(req: Request, context: any) {
           .in('username', normUsernames)
           .gte('taken_at', start + 'T00:00:00Z')
           .lte('taken_at', end + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
+          .order('play_count', { ascending: false }).order('video_id', { ascending: true })
       );
       const seenTT = new Map<string, any>();
       for (const r of rows) {
@@ -447,7 +447,7 @@ export async function GET(req: Request, context: any) {
           .in('username', normIG)
           .gte('taken_at', start + 'T00:00:00Z')
           .lte('taken_at', end + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
+          .order('play_count', { ascending: false }).order('id', { ascending: true })
       );
       const seenIG = new Map<string, any>();
       for (const r of igRows) {
@@ -473,7 +473,7 @@ export async function GET(req: Request, context: any) {
             .in('channel_id', normYT)
             .gte('post_date', start)
             .lte('post_date', end)
-            .order('views', { ascending: false })
+            .order('views', { ascending: false }).order('video_id', { ascending: true })
         );
         const seenYT = new Map<string, any>();
         for (const r of ytRows || []) {
@@ -553,7 +553,7 @@ export async function GET(req: Request, context: any) {
             .in('username', normUsernames)
             .gte('taken_at', start + 'T00:00:00Z')
             .lte('taken_at', end + 'T23:59:59Z')
-            .order('play_count', { ascending: false })
+            .order('play_count', { ascending: false }).order('video_id', { ascending: true })
         );
         // Deduplicate by video_id (same logic as totals)
         const dedupTT = new Map<string, any>();
@@ -595,7 +595,7 @@ export async function GET(req: Request, context: any) {
           .in('username', normIG)
           .gte('taken_at', (start || '1970-01-01') + 'T00:00:00Z')
           .lte('taken_at', (end || new Date().toISOString().slice(0,10)) + 'T23:59:59Z')
-          .order('play_count', { ascending: false })
+          .order('play_count', { ascending: false }).order('id', { ascending: true })
       );
       // Deduplicate by id/code first
       const dedupIG = new Map<string, any>();
@@ -634,7 +634,7 @@ export async function GET(req: Request, context: any) {
             .in('channel_id', normYT)
             .gte('post_date', start || '1970-01-01')
             .lte('post_date', end || new Date().toISOString().slice(0,10))
-            .order('views', { ascending: false })
+            .order('views', { ascending: false }).order('video_id', { ascending: true })
         );
         // Deduplicate by video_id first
         const dedupYT = new Map<string, any>();

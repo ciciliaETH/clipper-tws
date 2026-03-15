@@ -16,18 +16,15 @@ function supabaseAdmin() {
 // Paginated fetch: keeps fetching pages until all rows are retrieved.
 // This bypasses Supabase/PostgREST max-rows server limit which silently
 // truncates results even when .limit() is set higher.
+// IMPORTANT: The caller MUST include .order() with a stable (unique) secondary
+// sort column in the query builder to prevent rows being skipped across pages.
 const PAGE_SIZE = 10000
 
-async function fetchAllPages(
-  query: () => ReturnType<ReturnType<ReturnType<typeof createClient>['from']>['select']>,
-  orderCol: string
-): Promise<any[]> {
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
   const all: any[] = []
   let offset = 0
   while (true) {
-    const { data, error } = await query()
-      .order(orderCol, { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1) as any
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1)
     if (error) { console.error('[PAGINATE] error:', error.message); break }
     if (!data || data.length === 0) break
     all.push(...data)
@@ -140,8 +137,9 @@ export async function GET(req: Request, context: any) {
             .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
             .in('username', ttUsernames)
             .gte('taken_at', startISO + 'T00:00:00Z')
-            .lte('taken_at', endISO + 'T23:59:59Z'),
-          'play_count'
+            .lte('taken_at', endISO + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+            .order('video_id', { ascending: true })
         )
 
         console.log(`[VIDEOS] TikTok: fetched ${ttPosts.length} raw rows for ${ttUsernames.length} usernames`)
@@ -192,8 +190,9 @@ export async function GET(req: Request, context: any) {
             .select('id, code, username, taken_at, caption, play_count, like_count, comment_count')
             .in('username', igUsernames)
             .gte('taken_at', startISO + 'T00:00:00Z')
-            .lte('taken_at', endISO + 'T23:59:59Z'),
-          'play_count'
+            .lte('taken_at', endISO + 'T23:59:59Z')
+            .order('play_count', { ascending: false })
+            .order('id', { ascending: true })
         )
 
         console.log(`[VIDEOS] Instagram: fetched ${igPosts.length} raw rows for ${igUsernames.length} usernames`)
@@ -267,8 +266,9 @@ export async function GET(req: Request, context: any) {
             .select('video_id, channel_id, post_date, title, views, likes, comments')
             .in('channel_id', uniqueChannels)
             .gte('post_date', startISO)
-            .lte('post_date', endISO),
-          'views'
+            .lte('post_date', endISO)
+            .order('views', { ascending: false })
+            .order('video_id', { ascending: true })
         )
 
         console.log(`[VIDEOS] YouTube: fetched ${ytRows.length} raw rows for ${uniqueChannels.length} channels`)

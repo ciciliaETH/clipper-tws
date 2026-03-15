@@ -8,17 +8,13 @@ export const maxDuration = 60; // 60 seconds to stay safe
 
 // Paginated fetch: keeps fetching pages until all rows are retrieved.
 // Bypasses Supabase/PostgREST max-rows server limit.
+// IMPORTANT: The caller MUST include .order() with a stable secondary sort.
 const PAGE_SIZE = 10000;
-async function fetchAllPages(
-  queryFn: () => any,
-  orderCol: string
-): Promise<any[]> {
+async function fetchAllPages(queryFn: () => any): Promise<any[]> {
   const all: any[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await queryFn()
-      .order(orderCol, { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
+    const { data, error } = await queryFn().range(offset, offset + PAGE_SIZE - 1);
     if (error) { console.error('[PAGINATE] error:', error.message); break; }
     if (!data || data.length === 0) break;
     all.push(...data);
@@ -445,8 +441,8 @@ export async function GET(req: Request, context: any) {
               .in('username', ttUnion)
               .gte('taken_at', start + 'T00:00:00Z')
               .lte('taken_at', end + 'T23:59:59Z')
-              .order('play_count', { ascending: false }),
-            'play_count'
+              .order('play_count', { ascending: false })
+              .order('video_id', { ascending: true })
           );
           // Deduplicate by video_id (same logic as participant detail page)
           const dedupedTT = new Map<string, any>();
@@ -484,8 +480,8 @@ export async function GET(req: Request, context: any) {
               .in('username', igUnion)
               .gte('taken_at', start + 'T00:00:00Z')
               .lte('taken_at', end + 'T23:59:59Z')
-              .order('play_count', { ascending: false }),
-            'play_count'
+              .order('play_count', { ascending: false })
+              .order('id', { ascending: true })
           );
           // Deduplicate by id/code (same logic as participant detail page)
           const dedupedIG = new Map<string, any>();
@@ -605,8 +601,9 @@ export async function GET(req: Request, context: any) {
             .select('video_id, username, play_count, digg_count, comment_count, share_count, save_count, title')
             .gte('taken_at', start + 'T00:00:00Z')
             .lte('taken_at', end + 'T23:59:59Z')
-            .in('username', Array.from(tikNeed)),
-          'play_count'
+            .in('username', Array.from(tikNeed))
+            .order('play_count', { ascending: false })
+            .order('video_id', { ascending: true })
         );
         // Deduplicate by video_id (same logic as participant detail page)
         const deduped = new Map<string, any>();
@@ -638,8 +635,9 @@ export async function GET(req: Request, context: any) {
             .select('id, code, username, play_count, like_count, comment_count, caption')
             .gte('taken_at', start + 'T00:00:00Z')
             .lte('taken_at', end + 'T23:59:59Z')
-            .in('username', Array.from(igNeed)),
-          'play_count'
+            .in('username', Array.from(igNeed))
+            .order('play_count', { ascending: false })
+            .order('id', { ascending: true })
         );
         // Deduplicate by id/code (same logic as participant detail page)
         const dedupedIG = new Map<string, any>();
@@ -671,8 +669,9 @@ export async function GET(req: Request, context: any) {
               .select('video_id, channel_id, views, likes, comments, title')
               .gte('post_date', start)
               .lte('post_date', end)
-              .in('channel_id', Array.from(ytNeed)),
-            'views'
+              .in('channel_id', Array.from(ytNeed))
+              .order('views', { ascending: false })
+              .order('video_id', { ascending: true })
           );
           const dedupedYT = new Map<string, any>();
           for (const r of rowsYT) {

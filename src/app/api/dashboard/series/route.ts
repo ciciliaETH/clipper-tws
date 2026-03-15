@@ -306,6 +306,7 @@ export async function GET(req: Request) {
             .in('username', Array.from(handlesTT))
             .gte('taken_at', rtStartISO+'T00:00:00Z')
             .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
+            .order('video_id', { ascending: true })
         );
         // Deduplicate by video_id (PK, defensive)
         const seenTT = new Map<string, any>();
@@ -347,6 +348,7 @@ export async function GET(req: Request) {
             .in('username', Array.from(handlesIG))
             .gte('taken_at', rtStartISO+'T00:00:00Z')
             .lte('taken_at', rtFetchEndISO+'T23:59:59Z')
+            .order('id', { ascending: true })
         );
         // Deduplicate by id/code
         const seenIG = new Map<string, any>();
@@ -385,6 +387,7 @@ export async function GET(req: Request) {
             .in('channel_id', Array.from(handlesYT))
             .gte('post_date', rtStartISO)
             .lte('post_date', rtFetchEndISO)
+            .order('video_id', { ascending: true })
         );
         // Deduplicate by video_id — keep EARLIEST post_date per video so it stays
         // in the correct weekly bucket regardless of later scrapes
