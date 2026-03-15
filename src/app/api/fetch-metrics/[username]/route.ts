@@ -13,9 +13,9 @@ export const maxDuration = 60; // 60 seconds - Vercel Hobby plan limit
 const AGGREGATOR_BASE = process.env.AGGREGATOR_API_BASE || 'http://202.10.44.90/api/v1';
 const AGGREGATOR_ENABLED = process.env.AGGREGATOR_ENABLED !== '0'; // Default: enabled
 const AGGREGATOR_UNLIMITED = process.env.AGGREGATOR_UNLIMITED !== '0'; // Default: unlimited
-const AGGREGATOR_MAX_PAGES = Number(process.env.AGGREGATOR_MAX_PAGES || '10'); // Limit to 10 pages for 60s timeout
+const AGGREGATOR_MAX_PAGES = Number(process.env.AGGREGATOR_MAX_PAGES || '50'); // 50 pages x 100 = 5000 videos per window
 const AGGREGATOR_PER_PAGE = Number(process.env.AGGREGATOR_PER_PAGE || '100'); // 100 per page (faster)
-const AGGREGATOR_RATE_MS = Number(process.env.AGGREGATOR_RATE_MS || '200'); // 200ms delay (faster)
+const AGGREGATOR_RATE_MS = Number(process.env.AGGREGATOR_RATE_MS || '100'); // 100ms delay (fast, aggregator is local)
 
 // ========================================
 // RAPIDAPI - FALLBACK #2
@@ -137,7 +137,14 @@ async function fetchFromAggregator(
   let emptyWindows = 0;
   
   // Fetch in reverse chronological order (newest to oldest)
+  const fetchStartTime = Date.now();
+  const MAX_FETCH_TIME_MS = 50000; // 50s hard limit to fit within 60s Vercel timeout
   while (windowEnd > startBound && emptyWindows < 3) {
+    // Time guard: stop if we're approaching the timeout
+    if (Date.now() - fetchStartTime > MAX_FETCH_TIME_MS) {
+      console.log(`[Aggregator] ⏱️ Time limit reached (${Math.round((Date.now()-fetchStartTime)/1000)}s), stopping with ${allVideos.length} videos`);
+      break;
+    }
     // 90-day window for efficient pagination
     const windowStart = new Date(Math.max(
       startBound.getTime(),
@@ -155,8 +162,13 @@ async function fetchFromAggregator(
     let noNewData = 0;
     
     for (let page = 0; page < AGGREGATOR_MAX_PAGES; page++) {
+      // Time guard inside page loop too
+      if (Date.now() - fetchStartTime > MAX_FETCH_TIME_MS) {
+        console.log(`[Aggregator] ⏱️ Time limit hit during pagination, stopping`);
+        break;
+      }
       totalPages++;
-      
+
       try {
         const url = new URL(`${AGGREGATOR_BASE}/user/posts`);
         url.searchParams.set('username', normalized);
