@@ -158,21 +158,39 @@ export async function GET(req: Request, context: any) {
     const videos: any[] = []
 
     // === TIKTOK ===
+    // TWO queries: posts WITH taken_at + posts with NULL taken_at (fallback to created_at)
     if (platform === 'all' || platform === 'tiktok') {
       const ttUsernames = buildUsernameSet(ttUserToId, ttOriginalCase)
       if (ttUsernames.length > 0) {
-        const ttPosts = await fetchAllPages(
+        // Query 1: Posts WITH taken_at
+        const ttPostsWithDate = await fetchAllPages(
           () => supabase
             .from('tiktok_posts_daily')
             .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count')
             .in('username', ttUsernames)
+            .not('taken_at', 'is', null)
             .gte('taken_at', startISO + 'T00:00:00Z')
             .lte('taken_at', endISO + 'T23:59:59Z')
             .order('play_count', { ascending: false })
             .order('video_id', { ascending: true })
         )
 
-        console.log(`[VIDEOS] TikTok: fetched ${ttPosts.length} raw rows for ${ttUsernames.length} usernames`)
+        // Query 2: Posts WITHOUT taken_at (fallback to post_date or created_at)
+        let ttPostsNoDate: any[] = []
+        try {
+          ttPostsNoDate = await fetchAllPages(
+            () => supabase
+              .from('tiktok_posts_daily')
+              .select('video_id, username, taken_at, title, play_count, digg_count, comment_count, share_count, save_count, created_at')
+              .in('username', ttUsernames)
+              .is('taken_at', null)
+              .order('play_count', { ascending: false })
+              .order('video_id', { ascending: true })
+          )
+        } catch {} // column might not exist
+
+        const ttPosts = [...ttPostsWithDate, ...ttPostsNoDate]
+        console.log(`[VIDEOS] TikTok: fetched ${ttPosts.length} raw rows (${ttPostsWithDate.length} with taken_at, ${ttPostsNoDate.length} without) for ${ttUsernames.length} usernames`)
 
         // Deduplicate: keep first occurrence per video_id (= highest play_count due to order)
         const seen = new Map<string, any>()
@@ -184,8 +202,16 @@ export async function GET(req: Request, context: any) {
         console.log(`[VIDEOS] TikTok: ${seen.size} unique videos after dedup`)
 
         let hashtagFiltered = 0
+        const hashtagFilteredSamples: string[] = []
         for (const [videoId, row] of seen.entries()) {
-          if (!hasRequiredHashtag(row.title, requiredHashtags)) { hashtagFiltered++; continue }
+          if (!hasRequiredHashtag(row.title, requiredHashtags)) {
+            hashtagFiltered++
+            // Log first 5 filtered videos for debugging
+            if (hashtagFilteredSamples.length < 5) {
+              hashtagFilteredSamples.push(`${videoId} (${row.username}, ${Number(row.play_count||0).toLocaleString()} views): "${(row.title||'').slice(0,80)}"`)
+            }
+            continue
+          }
           if (extraHashtag && !hasRequiredHashtag(row.title, [extraHashtag])) { hashtagFiltered++; continue }
 
           const ownerId = ttUserToId.get(norm(row.username)) || null
@@ -206,7 +232,11 @@ export async function GET(req: Request, context: any) {
             shares: Number(row.share_count || 0),
           })
         }
-        if (hashtagFiltered > 0) console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos filtered by hashtag requirement`)
+        if (hashtagFiltered > 0) {
+          console.log(`[VIDEOS] TikTok: ${hashtagFiltered} videos EXCLUDED by hashtag filter (required: ${JSON.stringify(requiredHashtags)})`)
+          console.log(`[VIDEOS] TikTok: Sample excluded videos:`)
+          hashtagFilteredSamples.forEach(s => console.log(`  - ${s}`))
+        }
       }
     }
 
