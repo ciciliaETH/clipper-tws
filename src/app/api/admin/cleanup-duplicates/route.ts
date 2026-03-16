@@ -40,9 +40,9 @@ export async function POST(req: Request) {
     const ttRows = await fetchAll(
       () => supa.from('tiktok_posts_daily')
         .select('video_id, username, title, play_count')
-        .order('play_count', { ascending: false })
         .order('video_id', { ascending: true })
     );
+    console.log(`[Cleanup] TikTok: scanned ${ttRows.length} total rows`);
 
     // Group by fingerprint: username + title (first 50 chars) + play_count
     const fpMap = new Map<string, any[]>();
@@ -106,9 +106,9 @@ export async function POST(req: Request) {
     const igRows = await fetchAll(
       () => supa.from('instagram_posts_daily')
         .select('id, code, username, caption, play_count')
-        .order('play_count', { ascending: false })
         .order('id', { ascending: true })
     );
+    console.log(`[Cleanup] Instagram: scanned ${igRows.length} total rows`);
 
     // Group by code (shortcode) - most reliable unique identifier
     const codeMap = new Map<string, any[]>();
