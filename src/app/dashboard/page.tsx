@@ -1496,6 +1496,29 @@ export default function DashboardTotalPage() {
     return { labels, datasets };
   }, [postsData, chartData, postsShowTotal, postsShowTikTok, postsShowInstagram, postsShowYouTube]);
 
+  // Export chart data to CSV
+  const exportChartCSV = () => {
+    if (!chartData) return;
+    const labels = chartData.labels as string[];
+    const datasets = chartData.datasets as Array<{ label: string; data: number[] }>;
+    // Header row
+    const headers = ['Period', ...datasets.map(ds => ds.label)];
+    const rows = labels.map((label, i) => {
+      return [label, ...datasets.map(ds => ds.data[i] ?? 0)];
+    });
+    // Totals row
+    const totals = ['TOTAL', ...datasets.map(ds => ds.data.reduce((a, b) => a + (b ?? 0), 0))];
+    const csvContent = [headers, ...rows, totals].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dashboard-chart-${metric}-${interval}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Crosshair + floating label, like Groups
   const chartRef = useRef<any>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -1713,6 +1736,14 @@ export default function DashboardTotalPage() {
           <button className={`px-2 py-1 rounded ${metric==='views'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('views')}>Views</button>
           <button className={`px-2 py-1 rounded ${metric==='likes'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('likes')}>Likes</button>
           <button className={`px-2 py-1 rounded ${metric==='comments'?'bg-white/20 text-white':'text-white/70 hover:text-white hover:bg-white/10'}`} onClick={()=>setMetric('comments')}>Comments</button>
+          <button
+            onClick={exportChartCSV}
+            disabled={!chartData}
+            className="ml-2 px-3 py-1 rounded bg-green-600 hover:bg-green-500 text-white text-xs flex items-center gap-1 disabled:opacity-40"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" /></svg>
+            Export CSV
+          </button>
         </div>
       </div>
       
