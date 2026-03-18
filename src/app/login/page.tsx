@@ -52,14 +52,14 @@ export default function LoginPage() {
                 <div className="relative w-10 h-10">
                   <Image
                     src="/logo.png"
-                    alt="Trade With Suli"
+                    alt="TWS"
                     width={40}
                     height={40}
                     className="w-10 h-10 object-contain"
                     priority
                   />
                 </div>
-                <h1 className="text-xl font-semibold tracking-tight"><span className="bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Trade With Suli</span></h1>
+                <h1 className="text-xl font-semibold tracking-tight"><span className="bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">TWS</span></h1>
                 <span className="hidden md:inline-flex text-xs px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/60">Clipper</span>
               </div>
             </div>

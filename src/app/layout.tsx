@@ -13,7 +13,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Clipper - Trade With Suli",
+  title: "Clipper - TWS",
   description: "Clipper Analytics Dashboard",
 };
 

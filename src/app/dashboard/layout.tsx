@@ -110,14 +110,14 @@ export default function DashboardLayout({
                 <div className="relative w-9 h-9 sm:w-10 sm:h-10 shrink-0">
                   <Image
                     src="/logo.png"
-                    alt="Trade With Suli"
+                    alt="TWS"
                     width={40}
                     height={40}
                     className="w-full h-full object-contain"
                     priority
                   />
                 </div>
-                <h1 className="hidden sm:block text-lg sm:text-xl font-semibold tracking-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[40vw]"><span className="bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">Trade With Suli</span></h1>
+                <h1 className="hidden sm:block text-lg sm:text-xl font-semibold tracking-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[40vw]"><span className="bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">TWS</span></h1>
                 <span className="hidden md:inline-flex text-xs px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/60 shrink-0">Clipper</span>
               </div>
 
