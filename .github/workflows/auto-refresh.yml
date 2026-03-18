@@ -2,25 +2,139 @@ name: Auto Refresh Data
 
 on:
   schedule:
-    # Run every 6 hours at minute 0 (00:00, 06:00, 12:00, 18:00)
-    - cron: '0 */6 * * *'
+    # Run every 4 hours (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
   workflow_dispatch: # Allow manual trigger from Actions tab
 
 jobs:
-  refresh-data:
+  refresh-tiktok:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Refresh TikTok Data
+      - name: Refresh ALL TikTok accounts
         run: |
-          echo "Triggering TikTok refresh..."
-          curl -v "${{ secrets.APP_URL }}/api/cron/tiktok-refresh?limit=100&concurrency=3&secret=${{ secrets.CRON_SECRET }}" || echo "TikTok refresh failed"
-        continue-on-error: true
+          echo "=== Starting TikTok Refresh ==="
+          REMAINING=999
+          BATCH=0
+          TOTAL_SUCCESS=0
+          TOTAL_FAILED=0
 
-      - name: Wait before Instagram refresh
-        run: sleep 60
+          while [ "$REMAINING" -gt 0 ] && [ "$BATCH" -lt 150 ]; do
+            BATCH=$((BATCH + 1))
+            echo ""
+            echo "--- Batch $BATCH ---"
 
-      - name: Refresh Instagram Data
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              "${{ secrets.APP_URL }}/api/cron/tiktok-refresh?limit=100&concurrency=3&secret=${{ secrets.CRON_SECRET }}" \
+              --max-time 120 2>/dev/null || echo -e "\n000")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "504" ]; then
+              echo "Request timeout or network error (HTTP $HTTP_CODE), retrying in 10s..."
+              sleep 10
+              continue
+            fi
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "HTTP $HTTP_CODE - Error response, retrying in 10s..."
+              sleep 10
+              continue
+            fi
+
+            # Parse response
+            SUCCESS=$(echo "$BODY" | jq -r '.success // 0' 2>/dev/null || echo "0")
+            FAILED=$(echo "$BODY" | jq -r '.failed // 0' 2>/dev/null || echo "0")
+            REMAINING=$(echo "$BODY" | jq -r '.remaining // 0' 2>/dev/null || echo "0")
+            PROCESSED=$(echo "$BODY" | jq -r '.processed // 0' 2>/dev/null || echo "0")
+            TOTAL=$(echo "$BODY" | jq -r '.total_usernames // 0' 2>/dev/null || echo "0")
+
+            TOTAL_SUCCESS=$((TOTAL_SUCCESS + SUCCESS))
+            TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+
+            echo "Processed: $PROCESSED | Success: $SUCCESS | Failed: $FAILED | Remaining: $REMAINING / $TOTAL"
+
+            # If no accounts were processed, we're done
+            if [ "$PROCESSED" = "0" ] && [ "$SUCCESS" = "0" ]; then
+              echo "No accounts processed, finishing."
+              REMAINING=0
+              break
+            fi
+
+            # Small delay between batches to avoid rate limits
+            if [ "$REMAINING" -gt 0 ]; then
+              sleep 3
+            fi
+          done
+
+          echo ""
+          echo "=== TikTok Refresh Complete ==="
+          echo "Total batches: $BATCH"
+          echo "Total success: $TOTAL_SUCCESS"
+          echo "Total failed: $TOTAL_FAILED"
+
+  refresh-instagram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: refresh-tiktok
+    steps:
+      - name: Refresh ALL Instagram accounts
         run: |
-          echo "Triggering Instagram refresh..."
-          curl -v "${{ secrets.APP_URL }}/api/cron/instagram-refresh?limit=100&concurrency=3&secret=${{ secrets.CRON_SECRET }}" || echo "Instagram refresh failed"
-        continue-on-error: true
+          echo "=== Starting Instagram Refresh ==="
+          REMAINING=999
+          BATCH=0
+          TOTAL_SUCCESS=0
+          TOTAL_FAILED=0
+
+          while [ "$REMAINING" -gt 0 ] && [ "$BATCH" -lt 150 ]; do
+            BATCH=$((BATCH + 1))
+            echo ""
+            echo "--- Batch $BATCH ---"
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              "${{ secrets.APP_URL }}/api/cron/instagram-refresh?limit=100&concurrency=3&secret=${{ secrets.CRON_SECRET }}" \
+              --max-time 120 2>/dev/null || echo -e "\n000")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "504" ]; then
+              echo "Request timeout or network error (HTTP $HTTP_CODE), retrying in 10s..."
+              sleep 10
+              continue
+            fi
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "HTTP $HTTP_CODE - Error response, retrying in 10s..."
+              sleep 10
+              continue
+            fi
+
+            SUCCESS=$(echo "$BODY" | jq -r '.success // 0' 2>/dev/null || echo "0")
+            FAILED=$(echo "$BODY" | jq -r '.failed // 0' 2>/dev/null || echo "0")
+            REMAINING=$(echo "$BODY" | jq -r '.remaining // 0' 2>/dev/null || echo "0")
+            PROCESSED=$(echo "$BODY" | jq -r '.processed // 0' 2>/dev/null || echo "0")
+            TOTAL=$(echo "$BODY" | jq -r '.total_usernames // 0' 2>/dev/null || echo "0")
+
+            TOTAL_SUCCESS=$((TOTAL_SUCCESS + SUCCESS))
+            TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+
+            echo "Processed: $PROCESSED | Success: $SUCCESS | Failed: $FAILED | Remaining: $REMAINING / $TOTAL"
+
+            if [ "$PROCESSED" = "0" ] && [ "$SUCCESS" = "0" ]; then
+              echo "No accounts processed, finishing."
+              REMAINING=0
+              break
+            fi
+
+            if [ "$REMAINING" -gt 0 ]; then
+              sleep 3
+            fi
+          done
+
+          echo ""
+          echo "=== Instagram Refresh Complete ==="
+          echo "Total batches: $BATCH"
+          echo "Total success: $TOTAL_SUCCESS"
+          echo "Total failed: $TOTAL_FAILED"
