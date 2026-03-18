@@ -883,10 +883,10 @@ export default function CampaignsPage() {
                   x: {
                     ticks: {
                       color: 'rgba(255,255,255,0.6)',
-                      // Tampilkan semua label untuk harian agar 1 Jan, 2 Jan, dst tidak terskip
-                      autoSkip: chartInterval !== 'daily' ? true : false,
-                      maxRotation: 0,
-                      minRotation: 0,
+                      autoSkip: true,
+                      maxRotation: 45,
+                      minRotation: 45,
+                      font: { size: 10 },
                     },
                     grid: { color: 'rgba(255,255,255,0.06)' }
                   },
@@ -1431,7 +1431,7 @@ export default function CampaignsPage() {
                   responsive:true,
                   interaction:{ mode:'index', intersect:false },
                   plugins:{ legend:{ labels:{ color:'rgba(255,255,255,0.8)'} } },
-                  scales:{ x:{ ticks:{ color:'rgba(255,255,255,0.6)' }, grid:{ color:'rgba(255,255,255,0.06)'}}, y:{ ticks:{ color:'rgba(255,255,255,0.6)'}, grid:{ color:'rgba(255,255,255,0.06)'}} },
+                  scales:{ x:{ ticks:{ color:'rgba(255,255,255,0.6)', maxRotation:45, minRotation:45, font:{size:10}, autoSkip:true }, grid:{ color:'rgba(255,255,255,0.06)'}}, y:{ ticks:{ color:'rgba(255,255,255,0.6)'}, grid:{ color:'rgba(255,255,255,0.06)'}} },
                   onHover: (event:any, elements:any[]) => { if (elements && elements.length>0) setUserActiveIndex(elements[0].index ?? null); else setUserActiveIndex(null); }
                 }} onMouseLeave={()=> setUserActiveIndex(null)} />
               )}
