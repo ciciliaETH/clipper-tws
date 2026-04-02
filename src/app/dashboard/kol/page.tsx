@@ -183,7 +183,7 @@ export default function KolPage() {
           <select
             value={selectedCampaign}
             onChange={e => setSelectedCampaign(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+            className="px-3 py-2 rounded-lg bg-[#0f1729] border border-white/10 text-white text-sm [&>option]:bg-[#0f1729] [&>option]:text-white"
           >
             <option value="">-- Pilih Campaign (opsional) --</option>
             {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -237,7 +237,7 @@ export default function KolPage() {
         <select
           value={filterCampaign}
           onChange={e => setFilterCampaign(e.target.value)}
-          className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+          className="px-3 py-1.5 rounded-lg bg-[#0f1729] border border-white/10 text-white text-sm [&>option]:bg-[#0f1729] [&>option]:text-white"
         >
           <option value="">Semua</option>
           {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
