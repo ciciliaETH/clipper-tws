@@ -78,21 +78,21 @@ async function fetchVideoMetrics(platform: string, videoId: string, username: st
       }
     }
 
-    // Try aggregator API for single video
+    // Try tikwm.com API for single video (most reliable for individual lookups)
     try {
-      const AGGREGATOR = process.env.AGGREGATOR_BASE_URL || 'http://202.10.44.90/api/v1'
-      const res = await fetch(`${AGGREGATOR}/video/info?video_id=${videoId}`, { signal: AbortSignal.timeout(10000) })
+      const tikwmUrl = `https://www.tikwm.com/api/?url=https://www.tiktok.com/@${username}/video/${videoId}`
+      const res = await fetch(tikwmUrl, { signal: AbortSignal.timeout(15000) })
       if (res.ok) {
         const json = await res.json()
-        const v = json?.data || json
-        if (v) {
+        const v = json?.data
+        if (v && (v.play_count || v.digg_count)) {
           return {
-            title: v.title || v.desc || '',
-            username: v.author?.unique_id || v.username || username,
-            views: Number(v.play_count || v.playCount || 0),
-            likes: Number(v.digg_count || v.diggCount || 0),
-            comments: Number(v.comment_count || v.commentCount || 0),
-            shares: Number(v.share_count || v.shareCount || 0),
+            title: v.title || '',
+            username: v.author?.unique_id || username,
+            views: Number(v.play_count || 0),
+            likes: Number(v.digg_count || 0),
+            comments: Number(v.comment_count || 0),
+            shares: Number(v.share_count || 0),
           }
         }
       }

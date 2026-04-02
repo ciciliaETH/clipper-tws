@@ -45,20 +45,21 @@ export async function POST() {
           const r = data[0]
           metrics = { views: Number(r.play_count||0), likes: Number(r.digg_count||0), comments: Number(r.comment_count||0), shares: Number(r.share_count||0), title: r.title, username: r.username }
         } else {
-          // Try aggregator
+          // Try tikwm.com API for individual video
           try {
-            const res = await fetch(`${AGGREGATOR}/video/info?video_id=${kol.video_id}`, { signal: AbortSignal.timeout(10000) })
+            const tikwmUrl = `https://www.tikwm.com/api/?url=https://www.tiktok.com/@${kol.username}/video/${kol.video_id}`
+            const res = await fetch(tikwmUrl, { signal: AbortSignal.timeout(15000) })
             if (res.ok) {
               const json = await res.json()
-              const v = json?.data || json
-              if (v) {
+              const v = json?.data
+              if (v && (v.play_count || v.digg_count)) {
                 metrics = {
-                  views: Number(v.play_count || v.playCount || 0),
-                  likes: Number(v.digg_count || v.diggCount || 0),
-                  comments: Number(v.comment_count || v.commentCount || 0),
-                  shares: Number(v.share_count || v.shareCount || 0),
-                  title: v.title || v.desc || '',
-                  username: v.author?.unique_id || '',
+                  views: Number(v.play_count || 0),
+                  likes: Number(v.digg_count || 0),
+                  comments: Number(v.comment_count || 0),
+                  shares: Number(v.share_count || 0),
+                  title: v.title || '',
+                  username: v.author?.unique_id || kol.username || '',
                 }
               }
             }
