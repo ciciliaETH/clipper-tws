@@ -85,7 +85,7 @@ export default function KolPage() {
   };
 
   const handleBulkAdd = async () => {
-    const urls = bulkUrls.split('\n').map(u => u.trim()).filter(Boolean);
+    const urls = bulkUrls.split(/[\n,]+/).map(u => u.trim()).filter(u => u && u.startsWith('http'));
     if (urls.length === 0) return;
     setAdding(true);
     setMessage(null);
@@ -225,7 +225,7 @@ export default function KolPage() {
               disabled={adding}
               className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium disabled:opacity-50"
             >
-              {adding ? 'Adding...' : `Tambah ${bulkUrls.split('\n').filter(u => u.trim()).length} Video`}
+              {adding ? 'Adding...' : `Tambah ${bulkUrls.split(/[\n,]+/).filter(u => u.trim().startsWith('http')).length} Video`}
             </button>
           </div>
         )}
