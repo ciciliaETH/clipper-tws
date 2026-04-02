@@ -13,13 +13,29 @@ function supabaseAdmin() {
 }
 
 // Extract platform, video_id, username from URL
+// Resolve short URLs (vt.tiktok.com, bit.ly, etc.) by following redirects
+async function resolveShortUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(10000) })
+    return res.url || url
+  } catch {
+    // Fallback: try GET with redirect follow
+    try {
+      const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10000) })
+      return res.url || url
+    } catch {
+      return url
+    }
+  }
+}
+
 function parseVideoUrl(url: string): { platform: string; video_id: string; username: string } | null {
   try {
     // TikTok: https://www.tiktok.com/@username/video/1234567890
     const ttMatch = url.match(/tiktok\.com\/@([^/]+)\/video\/(\d+)/)
     if (ttMatch) return { platform: 'tiktok', username: ttMatch[1], video_id: ttMatch[2] }
 
-    // TikTok short: https://vt.tiktok.com/xxx
+    // TikTok short URL (will be resolved before calling this)
     if (url.includes('tiktok.com')) return { platform: 'tiktok', username: '', video_id: '' }
 
     // Instagram: https://www.instagram.com/reel/CODE/ or /p/CODE/
@@ -157,8 +173,16 @@ export async function POST(req: Request) {
   const { video_url, campaign_id } = body
   if (!video_url) return NextResponse.json({ error: 'video_url is required' }, { status: 400 })
 
-  // Parse URL
-  const parsed = parseVideoUrl(video_url.trim())
+  // Resolve short URLs (vt.tiktok.com, bit.ly, etc.)
+  let resolvedUrl = video_url.trim()
+  const isShortUrl = /^https?:\/\/(vt\.tiktok|vm\.tiktok|bit\.ly|t\.co|tinyurl)/.test(resolvedUrl)
+  if (isShortUrl) {
+    resolvedUrl = await resolveShortUrl(resolvedUrl)
+    console.log(`[KOL] Resolved short URL: ${video_url} → ${resolvedUrl}`)
+  }
+
+  // Parse URL (use resolved URL for parsing, keep original for storage)
+  const parsed = parseVideoUrl(resolvedUrl)
   if (!parsed) return NextResponse.json({ error: 'Could not parse video URL. Supported: TikTok, Instagram, YouTube' }, { status: 400 })
 
   // Fetch metrics
@@ -167,7 +191,7 @@ export async function POST(req: Request) {
   const supabase = supabaseAdmin()
 
   const record: any = {
-    video_url: video_url.trim(),
+    video_url: resolvedUrl, // Store the full resolved URL
     platform: parsed.platform,
     video_id: parsed.video_id,
     username: metrics?.username || parsed.username || '',
