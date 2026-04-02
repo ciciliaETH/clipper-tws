@@ -151,6 +151,12 @@ export default function DashboardLayout({
                       <span className="text-sm font-medium">Groups</span>
                     </Link>
                   )}
+                  {(user.role === 'admin' || user.role === 'super_admin') && (
+                    <Link href="/dashboard/kol" className={getLinkClassName("/dashboard/kol")}>
+                      <FiBarChart size={18} />
+                      <span className="text-sm font-medium">KOL</span>
+                    </Link>
+                  )}
                   <Link href="/dashboard/account" className={getLinkClassName("/dashboard/account")}>
                     <FiSettings size={18} />
                     <span className="text-sm font-medium">Akun</span>
@@ -212,6 +218,12 @@ export default function DashboardLayout({
                     <Link href="/dashboard/groups" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/groups") + " justify-center text-center w-full"}>
                       <FiTrendingUp size={18} />
                       <span className="text-sm font-medium">Groups</span>
+                    </Link>
+                  )}
+                  {(user.role === 'admin' || user.role === 'super_admin') && (
+                    <Link href="/dashboard/kol" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/kol") + " justify-center text-center w-full"}>
+                      <FiBarChart size={18} />
+                      <span className="text-sm font-medium">KOL</span>
                     </Link>
                   )}
                   <Link href="/dashboard/account" onClick={()=>setMenuOpen(false)} className={getLinkClassName("/dashboard/account") + " justify-center text-center w-full"}>
