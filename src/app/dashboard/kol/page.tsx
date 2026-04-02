@@ -170,34 +170,34 @@ export default function KolPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="glass rounded-2xl p-6 border border-white/10">
-        <div className="flex items-center justify-between mb-4">
+      <div className="glass rounded-2xl p-4 sm:p-6 border border-white/10">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">Video KOL</h1>
-            <p className="text-white/50 text-sm mt-1">Key Opinion Leader Video Tracking</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-white">Video KOL</h1>
+            <p className="text-white/50 text-xs sm:text-sm mt-1">Key Opinion Leader Video Tracking</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setShowAddForm(!showAddForm)}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium flex items-center gap-2"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium flex items-center gap-1.5"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-              Tambah Video
+              <span className="hidden sm:inline">Tambah Video</span><span className="sm:hidden">Tambah</span>
             </button>
             <button
               onClick={exportCSV}
               disabled={displayVideos.length === 0}
-              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center gap-2 border border-white/10 disabled:opacity-40"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-medium flex items-center gap-1.5 border border-white/10 disabled:opacity-40"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" /></svg>
-              Export CSV
+              CSV
             </button>
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-50"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-medium disabled:opacity-50"
             >
-              {refreshing ? 'Refreshing...' : 'Refresh Metrics'}
+              {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
         </div>
@@ -210,40 +210,40 @@ export default function KolPage() {
       </div>
 
       {/* Stats Cards - matching Groups style */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="glass rounded-xl p-5 border border-white/10 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
+        <div className="glass rounded-xl p-3 sm:p-5 border border-white/10 flex items-center gap-3 sm:gap-4">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg shrink-0 bg-blue-500/20 flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
           </div>
           <div>
-            <p className="text-2xl font-bold text-white">{displayVideos.length.toLocaleString('id-ID')}</p>
+            <p className="text-lg sm:text-2xl font-bold text-white">{displayVideos.length.toLocaleString('id-ID')}</p>
             <p className="text-white/50 text-xs uppercase tracking-wider">Videos</p>
           </div>
         </div>
-        <div className="glass rounded-xl p-5 border border-white/10 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+        <div className="glass rounded-xl p-3 sm:p-5 border border-white/10 flex items-center gap-3 sm:gap-4">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg shrink-0 bg-emerald-500/20 flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
           </div>
           <div>
-            <p className="text-2xl font-bold text-emerald-400">{totals.views.toLocaleString('id-ID')}</p>
+            <p className="text-lg sm:text-2xl font-bold text-emerald-400">{totals.views.toLocaleString('id-ID')}</p>
             <p className="text-white/50 text-xs uppercase tracking-wider">Views</p>
           </div>
         </div>
-        <div className="glass rounded-xl p-5 border border-white/10 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-pink-500/20 flex items-center justify-center">
+        <div className="glass rounded-xl p-3 sm:p-5 border border-white/10 flex items-center gap-3 sm:gap-4">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg shrink-0 bg-pink-500/20 flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
           </div>
           <div>
-            <p className="text-2xl font-bold text-pink-400">{totals.likes.toLocaleString('id-ID')}</p>
+            <p className="text-lg sm:text-2xl font-bold text-pink-400">{totals.likes.toLocaleString('id-ID')}</p>
             <p className="text-white/50 text-xs uppercase tracking-wider">Likes</p>
           </div>
         </div>
-        <div className="glass rounded-xl p-5 border border-white/10 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+        <div className="glass rounded-xl p-3 sm:p-5 border border-white/10 flex items-center gap-3 sm:gap-4">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg shrink-0 bg-blue-500/20 flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
           </div>
           <div>
-            <p className="text-2xl font-bold text-blue-400">{totals.comments.toLocaleString('id-ID')}</p>
+            <p className="text-lg sm:text-2xl font-bold text-blue-400">{totals.comments.toLocaleString('id-ID')}</p>
             <p className="text-white/50 text-xs uppercase tracking-wider">Comments</p>
           </div>
         </div>
@@ -251,9 +251,9 @@ export default function KolPage() {
 
       {/* Add Video Form (collapsible) */}
       {showAddForm && (
-        <div className="glass rounded-xl p-4 border border-white/10 space-y-3">
+        <div className="glass rounded-xl p-3 sm:p-4 border border-white/10 space-y-3">
           <h2 className="text-sm font-semibold text-white">Tambah Video KOL</h2>
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col gap-2">
             <select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}
               className="px-3 py-2 rounded-lg bg-[#0f1729] border border-white/10 text-white text-sm [&>option]:bg-[#0f1729] [&>option]:text-white">
               <option value="">-- Campaign (opsional) --</option>
@@ -284,7 +284,7 @@ export default function KolPage() {
       )}
 
       {/* Filters Bar - matching Groups style */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
         <div className="flex items-center gap-2">
           {(['all', 'tiktok', 'instagram', 'youtube'] as const).map(p => (
             <button key={p} onClick={() => setFilterPlatform(p)}
@@ -318,7 +318,7 @@ export default function KolPage() {
           <p className="text-white/60">Belum ada video KOL. Klik "Tambah Video" untuk mulai tracking.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
           {displayVideos.map((v) => (
             <a key={v.id} href={v.video_url} target="_blank" rel="noopener noreferrer"
               className="glass rounded-xl border border-white/10 hover:border-white/20 transition group relative">
