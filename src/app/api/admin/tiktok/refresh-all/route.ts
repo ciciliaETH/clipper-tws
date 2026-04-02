@@ -13,7 +13,16 @@ function adminClient() {
   );
 }
 
-async function ensureAdmin() {
+async function ensureAdmin(req?: Request) {
+  // Allow cron/service calls via Bearer token matching CRON_SECRET or service role key
+  if (req) {
+    const authHeader = req.headers.get('authorization');
+    const token = authHeader?.replace(/^Bearer\s+/i, '');
+    const cronSecret = process.env.CRON_SECRET;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (token && (token === cronSecret || token === serviceKey)) return true;
+  }
+  // Otherwise check user session
   const supabase = await createServerSSR();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
@@ -461,12 +470,12 @@ async function refreshHandler(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const ok = await ensureAdmin();
+    const ok = await ensureAdmin(req);
     if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     return await refreshHandler(req);
   } catch (error: any) {
     console.error('[tiktok refresh-all GET] Error:', error);
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: error.message || 'Internal server error',
       details: error.toString()
     }, { status: 500 });
@@ -475,7 +484,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const ok = await ensureAdmin();
+    const ok = await ensureAdmin(req);
     if (!ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     return await refreshHandler(req);
   } catch (error: any) {
