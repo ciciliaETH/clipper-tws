@@ -142,6 +142,23 @@ export default function KolPage() {
     comments: acc.comments + (v.comments || 0),
   }), { views: 0, likes: 0, comments: 0 });
 
+  const exportCSV = () => {
+    if (displayVideos.length === 0) return;
+    const headers = ['No', 'Platform', 'Username', 'Title', 'Views', 'Likes', 'Comments', 'Shares', 'Link'];
+    const rows = displayVideos.map((v, i) => [
+      i + 1, v.platform, '@' + v.username, `"${(v.title || '').replace(/"/g, '""')}"`,
+      v.views || 0, v.likes || 0, v.comments || 0, v.shares || 0, v.video_url
+    ]);
+    const totalRow = ['', '', '', 'TOTAL', totals.views, totals.likes, totals.comments, '', ''];
+    const csv = [headers, ...rows, totalRow].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `kol-videos-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   const formatDate = (d: string) => {
     if (!d) return '';
     try {
@@ -166,6 +183,14 @@ export default function KolPage() {
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
               Tambah Video
+            </button>
+            <button
+              onClick={exportCSV}
+              disabled={displayVideos.length === 0}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center gap-2 border border-white/10 disabled:opacity-40"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" /></svg>
+              Export CSV
             </button>
             <button
               onClick={handleRefresh}
